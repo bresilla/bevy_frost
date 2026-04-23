@@ -134,9 +134,11 @@ pub const BORDER_INNER:  egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x4
 /// the unified widget border — kept tiny so the hue is felt, not
 /// seen, on a selected-vehicle accent shift.
 const BORDER_ACCENT_TINT: f32 = 0.06;
-/// Alpha applied to [`widget_border`]. 200 of 255 so surfaces below
-/// read through.
-const BORDER_ALPHA: u8 = 200;
+/// Alpha applied to [`widget_border`]. Lifted to 230 of 255 so the
+/// border reads as a real edge — at 200 the stroke faded into
+/// the panel fill too easily, especially for small surfaces
+/// (collapsed section headers, compact toggles).
+const BORDER_ALPHA: u8 = 230;
 
 /// The canonical border colour used by **every** widget surface —
 /// foldable cards, sub-section frames, DragValue / TextEdit input
@@ -331,6 +333,28 @@ pub fn apply_theme(
     style.spacing.slider_width      = 90.0;
     style.spacing.icon_width        = 14.0;
     style.spacing.icon_spacing      = 6.0;
+
+    // Scrollbar tinting — flip to `foreground_color` mode so the
+    // handle picks up each state's `fg_stroke.color` instead of its
+    // `bg_fill`. That lets us paint scrollbars in accent variants
+    // (rest / hover / drag) without touching every OTHER widget's
+    // `bg_fill` (which would re-tint buttons, inputs, frames, etc.
+    // at the same time).
+    style.spacing.scroll.foreground_color = true;
+    // Rest: a dimmed-accent track handle that still belongs to the
+    // accent family. Hover: full ACCENT_HOVER. Drag: ACCENT_PRESSED.
+    // `fg_stroke` is also used for fine foreground elements
+    // (checkmarks, focus rings) — re-tinting them to accent reads as
+    // an improvement, not a regression.
+    let accent_dim = egui::Color32::from_rgba_unmultiplied(
+        accent_col.r(),
+        accent_col.g(),
+        accent_col.b(),
+        160,
+    );
+    style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, accent_dim);
+    style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, ACCENT_HOVER);
+    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, ACCENT_PRESSED);
     style.text_styles = [
         (egui::TextStyle::Heading,   egui::FontId::new(16.0, egui::FontFamily::Proportional)),
         (egui::TextStyle::Body,      egui::FontId::new(13.0, egui::FontFamily::Proportional)),
@@ -449,6 +473,29 @@ pub fn divider(ui: &mut egui::Ui) {
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],
         egui::Stroke::new(1.0, BORDER_SUBTLE),
+    );
+}
+
+/// Title divider — same shape as [`divider`], painted hard enough to
+/// clearly read as "the container title ends here". Used under
+/// foldable section headers so the title block stands apart from the
+/// body content. Matches the opacity of the panel's main title rule
+/// so every title-to-body transition in the UI reads the same way.
+pub fn thin_divider(ui: &mut egui::Ui) {
+    let full_width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(full_width, 1.0),
+        egui::Sense::empty(),
+    );
+    let color = egui::Color32::from_rgba_unmultiplied(
+        BORDER_SUBTLE.r(),
+        BORDER_SUBTLE.g(),
+        BORDER_SUBTLE.b(),
+        220,
+    );
+    ui.painter().line_segment(
+        [rect.left_center(), rect.right_center()],
+        egui::Stroke::new(1.0, color),
     );
 }
 

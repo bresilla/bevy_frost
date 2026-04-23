@@ -190,6 +190,20 @@ struct DemoState {
     /// Bumped every time you double-click a row — demo readout that
     /// proves the body's double-click is independent of the radio.
     scene_double_click_count: u32,
+
+    // Scene-graph outliner (tree widget) — a recursive fake USD
+    // stage with per-node visibility / lock / select-restrict flags
+    // and a filter dropdown at the top of the panel.
+    scene_tree: Vec<SceneNode>,
+    scene_tree_selected: Option<String>,
+    scene_filter: usize,
+
+    // Per-section scroll heights — each scroll area has its own
+    // drag grip at its bottom edge that mutates its height
+    // independently (like the bottom border handle on a resizable
+    // panel). Lets the user grow whichever list they're working in.
+    scene_scroll_h: f32,
+    flat_scroll_h: f32,
 }
 
 impl Default for DemoState {
@@ -217,8 +231,193 @@ impl Default for DemoState {
             scene_selected: Some(0),
             scene_following: None,
             scene_double_click_count: 0,
+            scene_tree: default_scene_tree(),
+            scene_tree_selected: Some("/World/Robot/base_link".into()),
+            scene_filter: 0,
+            // Default = 8 visible rows worth of height. Anything
+            // past that scrolls; the user can drag the grip down to
+            // reveal more at once, up to the content's natural
+            // height (the widget clamps — can't pad with empty
+            // space past the content end).
+            scene_scroll_h: TREE_ROW_H * 8.0,
+            flat_scroll_h: HYBRID_SELECT_ROW_H * 8.0,
         }
     }
+}
+
+/// A stand-in for a USD prim or Bevy entity — one row in the scene
+/// outliner tree. Mirrors the shape the tree widget expects: caller
+/// owns `children` + `expanded`, and the filter/visibility/lock
+/// flags are state the widget presents but doesn't store.
+#[derive(Clone)]
+struct SceneNode {
+    path: String,
+    name: String,
+    kind: NodeKind,
+    visible: bool,
+    locked: bool,
+    expanded: bool,
+    children: Vec<SceneNode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    Group,
+    Mesh,
+    Light,
+    Camera,
+}
+
+impl NodeKind {
+    fn glyph(self) -> &'static str {
+        match self {
+            NodeKind::Group => "□",
+            NodeKind::Mesh => "▲",
+            NodeKind::Light => "☀",
+            NodeKind::Camera => "◉",
+        }
+    }
+}
+
+/// Options shown in the filter dropdown. Index 0 = no filter.
+const SCENE_FILTERS: &[&str] = &["All kinds", "Meshes only", "Lights only", "Cameras only"];
+
+fn default_scene_tree() -> Vec<SceneNode> {
+    fn node(
+        path: &str,
+        name: &str,
+        kind: NodeKind,
+        expanded: bool,
+        children: Vec<SceneNode>,
+    ) -> SceneNode {
+        SceneNode {
+            path: path.into(),
+            name: name.into(),
+            kind,
+            visible: true,
+            locked: false,
+            expanded,
+            children,
+        }
+    }
+    vec![node(
+        "/World",
+        "World",
+        NodeKind::Group,
+        true,
+        vec![
+            node(
+                "/World/Robot",
+                "Robot",
+                NodeKind::Group,
+                true,
+                vec![
+                    node("/World/Robot/base_link", "base_link", NodeKind::Mesh, false, vec![]),
+                    node(
+                        "/World/Robot/arm",
+                        "arm",
+                        NodeKind::Group,
+                        false,
+                        vec![
+                            node("/World/Robot/arm/shoulder", "shoulder", NodeKind::Mesh, false, vec![]),
+                            node("/World/Robot/arm/elbow", "elbow", NodeKind::Mesh, false, vec![]),
+                            node("/World/Robot/arm/gripper", "gripper", NodeKind::Mesh, false, vec![]),
+                        ],
+                    ),
+                ],
+            ),
+            node(
+                "/World/Environment",
+                "Environment",
+                NodeKind::Group,
+                true,
+                vec![
+                    node("/World/Environment/Ground", "Ground", NodeKind::Mesh, false, vec![]),
+                    node(
+                        "/World/Environment/Lights",
+                        "Lights",
+                        NodeKind::Group,
+                        false,
+                        vec![
+                            node("/World/Environment/Lights/Key", "KeyLight", NodeKind::Light, false, vec![]),
+                            node("/World/Environment/Lights/Fill", "FillLight", NodeKind::Light, false, vec![]),
+                        ],
+                    ),
+                    node("/World/Environment/SkyDome", "SkyDome", NodeKind::Mesh, false, vec![]),
+                ],
+            ),
+            node("/World/Camera", "Camera", NodeKind::Camera, false, vec![]),
+        ],
+    )]
+}
+
+/// Walk one node + its descendants and render a [`tree_row`] per
+/// visible entry. Children are only painted when the parent's
+/// `expanded` flag is set. `filter` (0 = no filter) hides nodes
+/// whose kind doesn't match; group nodes are always visible so
+/// their filtered descendants still reach the reader.
+fn draw_scene_tree(
+    ui: &mut egui::Ui,
+    nodes: &mut [SceneNode],
+    depth: u32,
+    selected: &mut Option<String>,
+    filter: usize,
+    accent: egui::Color32,
+) {
+    for node in nodes.iter_mut() {
+        if !node_passes_filter(node, filter) {
+            continue;
+        }
+        let is_branch = !node.children.is_empty();
+        let is_selected = selected.as_deref() == Some(node.path.as_str());
+        let path_for_click = node.path.clone();
+        // Per-row uniform gutter: every row has exactly two slots in
+        // the same order (eye, lock), so the column reads as a
+        // coherent set of toggles rather than per-row ad-hoc
+        // controls. Widget flips the backing fields in place on
+        // click.
+        let mut slots = [
+            TreeIconSlot::new(TreeIconKind::Eye, &mut node.visible)
+                .with_tooltip("visibility"),
+            TreeIconSlot::new(TreeIconKind::Lock, &mut node.locked)
+                .with_tooltip("lock transform"),
+        ];
+        let resp = tree_row(
+            ui,
+            node.path.as_str(),
+            depth,
+            if is_branch { Some(&mut node.expanded) } else { None },
+            Some(node.kind.glyph()),
+            &node.name,
+            is_selected,
+            accent,
+            &mut slots,
+        );
+        if resp.body.clicked() {
+            *selected = Some(path_for_click);
+        }
+        if is_branch && node.expanded {
+            draw_scene_tree(ui, &mut node.children, depth + 1, selected, filter, accent);
+        }
+    }
+}
+
+/// Does this node (or any descendant) match the filter? Group nodes
+/// pass when *any* of their children pass, so the path to a leaf is
+/// never hidden by the filter.
+fn node_passes_filter(node: &SceneNode, filter: usize) -> bool {
+    let kind_ok = match filter {
+        1 => matches!(node.kind, NodeKind::Mesh),
+        2 => matches!(node.kind, NodeKind::Light),
+        3 => matches!(node.kind, NodeKind::Camera),
+        _ => true,
+    };
+    if kind_ok {
+        return true;
+    }
+    // Groups are kept if any descendant matches.
+    matches!(node.kind, NodeKind::Group)
+        && node.children.iter().any(|c| node_passes_filter(c, filter))
 }
 
 // ─── Scene setup ────────────────────────────────────────────────────
@@ -968,7 +1167,7 @@ fn draw_panels(
     if is_open(MENU_SCENE) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_SCENE, "Elements", egui::vec2(320.0, 360.0),
+            MENU_SCENE, "Elements", egui::vec2(340.0, 520.0),
             &mut keep_open, accent_col,
             |ui| elements_panel(ui, &mut state, accent_col),
         );
@@ -1040,43 +1239,120 @@ fn widgets_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32
 }
 
 fn elements_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
-    section(ui, "demo_elements", "Elements", accent, true, |ui| {
-        // Scrollable list of rows. Body click = transient select,
-        // body double-click = arbitrary action (here we bump a
-        // counter), right-edge radio = durable "pin" (one-at-a-time).
-        // The two click targets do NOT leak into each other.
-        egui::ScrollArea::vertical()
-            .max_height(180.0)
-            .show(ui, |ui| {
-                for (idx, name) in state.scene_entities.iter().enumerate() {
-                    let selected = state.scene_selected == Some(idx);
-                    let pinned = state.scene_following == Some(idx);
-                    let trailing = format!("#{idx}");
-                    let resp = hybrid_select_row(
-                        ui,
-                        idx,
-                        name,
-                        Some(&trailing),
-                        selected,
-                        pinned,
-                        accent,
-                    );
-                    if resp.body.clicked() {
-                        state.scene_selected = Some(idx);
-                    }
-                    if resp.body.double_clicked() {
-                        state.scene_double_click_count =
-                            state.scene_double_click_count.wrapping_add(1);
-                    }
-                    if resp.radio.clicked() {
-                        state.scene_following = if pinned { None } else { Some(idx) };
-                    }
-                }
-            });
+    // Scene outliner — full tree widget with per-row uniform icon
+    // gutter (visibility + lock) and a filter dropdown at the top.
+    // This is the Blender-style layers panel: a recursive stage
+    // view with direct per-entity controls in the gutter.
+    section(ui, "demo_scene_tree", "Scene", accent, true, |ui| {
+        dropdown(ui, "filter", &mut state.scene_filter, SCENE_FILTERS, accent);
 
-        // Readouts that prove the split semantics — sit in the same
-        // container so you can see the list + its state side by side.
-        row_separator(ui);
+        // `id_salt` required on BOTH ScrollAreas in this panel —
+        // without it, two structurally identical `ScrollArea::
+        // vertical().show` calls hash to the same auto-id and egui
+        // warns "first/second use of scroll area id" as soon as the
+        // lower section is unfolded.
+        // Force a fixed rect for the scroll via an outer
+        // `allocate_ui_with_layout` so the scroll actually honours
+        // the requested height. `ScrollArea::max_height` alone is
+        // clamped to the *parent's* available height, and the
+        // foldable section body nominally has 0 height.
+        let scroll_w = ui.available_width();
+        let scroll_out = ui.allocate_ui_with_layout(
+            egui::vec2(scroll_w, state.scene_scroll_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("demo_scene_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        draw_scene_tree(
+                            ui,
+                            &mut state.scene_tree,
+                            0,
+                            &mut state.scene_tree_selected,
+                            state.scene_filter,
+                            accent,
+                        );
+                    })
+            },
+        );
+        // `content_size.y` is the tree's natural height. Passing it
+        // as the grip's `max` means the user can't drag down past
+        // the point where the scroll would start padding with empty
+        // space — once every row is visible, further drag is
+        // clamped.
+        let content_h = scroll_out.inner.content_size.y;
+        let min_h = TREE_ROW_H * 3.0;
+        let max_h = content_h.max(min_h);
+        row_separator_resize(
+            ui,
+            "scene_scroll_grip",
+            &mut state.scene_scroll_h,
+            min_h,
+            max_h,
+            accent,
+        );
+        readout_row(
+            ui,
+            "selected",
+            state.scene_tree_selected.as_deref().unwrap_or("—"),
+        );
+    });
+
+    // Flat hybrid-select list — kept so the two row styles can be
+    // compared side-by-side. Body click = transient select, body
+    // double-click = arbitrary action (here we bump a counter),
+    // right-edge radio = durable "pin". The two click targets do
+    // NOT leak into each other.
+    section(ui, "demo_elements", "Flat list", accent, true, |ui| {
+        let scroll_w = ui.available_width();
+        let scroll_out = ui.allocate_ui_with_layout(
+            egui::vec2(scroll_w, state.flat_scroll_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("demo_flat_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (idx, name) in state.scene_entities.iter().enumerate() {
+                            let selected = state.scene_selected == Some(idx);
+                            let pinned = state.scene_following == Some(idx);
+                            let trailing = format!("#{idx}");
+                            let resp = hybrid_select_row(
+                                ui,
+                                idx,
+                                name,
+                                Some(&trailing),
+                                selected,
+                                pinned,
+                                accent,
+                            );
+                            if resp.body.clicked() {
+                                state.scene_selected = Some(idx);
+                            }
+                            if resp.body.double_clicked() {
+                                state.scene_double_click_count =
+                                    state.scene_double_click_count.wrapping_add(1);
+                            }
+                            if resp.radio.clicked() {
+                                state.scene_following =
+                                    if pinned { None } else { Some(idx) };
+                            }
+                        }
+                    })
+            },
+        );
+        let content_h = scroll_out.inner.content_size.y;
+        let min_h = HYBRID_SELECT_ROW_H * 3.0;
+        let max_h = content_h.max(min_h);
+        row_separator_resize(
+            ui,
+            "flat_scroll_grip",
+            &mut state.flat_scroll_h,
+            min_h,
+            max_h,
+            accent,
+        );
         let selected = state
             .scene_selected
             .and_then(|i| state.scene_entities.get(i))

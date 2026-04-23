@@ -16,7 +16,9 @@
 
 use bevy_egui::egui;
 
-use crate::style::{glass_alpha_card, glass_fill, radius, section_caps, widget_border, BG_2_RAISED};
+use crate::style::{
+    glass_alpha_card, glass_fill, radius, section_caps, thin_divider, widget_border, BG_2_RAISED,
+};
 
 /// Horizontal inner padding inside the container, in px.
 pub const PAD_X: i8 = 4;
@@ -72,6 +74,13 @@ pub fn section(
                             // the separator's own 1+1+1 px is the only
                             // inter-row gap.
                             ui.spacing_mut().item_spacing.y = 0.0;
+                            // Hairline under the section title, then
+                            // breathing space before the first body
+                            // element so the title block reads as
+                            // visually distinct from the content it
+                            // heads.
+                            thin_divider(ui);
+                            ui.add_space(6.0);
                             body(ui);
                         });
                 },

@@ -33,6 +33,7 @@ pub mod button;
 pub mod caption;
 pub mod color;
 pub mod drag;
+pub mod dropdown;
 pub mod foldable;
 pub mod group;
 pub mod icon;
@@ -42,13 +43,16 @@ pub mod progressbar;
 pub mod row;
 mod shared;
 pub mod slider;
+pub mod splitter;
 pub mod subsection;
 pub mod toggle;
+pub mod tree;
 
 pub use button::{card_button, wide_button};
 pub use caption::{keybinding_row, sub_caption};
 pub use color::{color_rgb, color_rgba};
 pub use drag::{axis_drag, drag_value};
+pub use dropdown::{dropdown, dropdown_control};
 
 /// Public alias for the widget trailing divider. Use it after a
 /// bespoke inline row (e.g. a cluster of small buttons rendered
@@ -73,5 +77,9 @@ pub use row::{
     axis_readout_row, labelled_row, labelled_row_custom_left, readout_row, LABEL_COL_WIDTH,
 };
 pub use slider::{pretty_slider, slider_control};
+pub use splitter::row_separator_resize;
 pub use subsection::{subsection, SUBSECTION_BODY_INDENT};
 pub use toggle::{toggle, toggle_control};
+pub use tree::{
+    tree_row, TreeIconKind, TreeIconSlot, TreeRowResponse, TREE_INDENT, TREE_ROW_H,
+};
