@@ -1428,7 +1428,7 @@ fn theme_panel(
             c.g() as f32 / 255.0,
             c.b() as f32 / 255.0,
         ];
-        if color_rgb(ui, "accent", &mut rgb).changed() {
+        if color_rgb(ui, "accent", &mut rgb, accent).changed() {
             accent_res.0 = srgb_to_egui(rgb);
         }
         sub_caption(
