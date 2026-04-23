@@ -1,0 +1,47 @@
+[package]
+name = "bevy_frost"
+description = "Generic glass-themed Bevy + egui editor UI kit: floating dock windows, side-rail button ribbons, design-system tokens, reusable widgets, transform-gizmo always-on-top material. Project-agnostic — plug it into any Bevy app that wants an editor-style interface."
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/bresilla/bevy_frost"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = [
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_state",
+    "bevy_log",
+    "bevy_window",
+    "bevy_winit",
+    "bevy_input_focus",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_light",
+    "bevy_mesh",
+    "bevy_camera",
+    "bevy_image",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
+    "bevy_scene",
+    "default_font",
+    "tonemapping_luts",
+    "smaa_luts",
+    "ktx2",
+    "zstd_rust",
+    "png",
+    "x11",
+    "reflect_auto_register",
+] }
+bevy_egui = { version = "0.39", default-features = false, features = [
+    "default_fonts",
+    "render",
+] }
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
