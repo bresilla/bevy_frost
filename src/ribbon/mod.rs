@@ -16,6 +16,8 @@
 //! installed the full frost stack.
 
 pub mod active;
+pub mod assembly;
+pub mod declare;
 pub mod ghost;
 pub mod kinds;
 pub mod layout;
@@ -23,6 +25,12 @@ mod paint;
 pub mod static_ribbon;
 
 pub use active::SideActive;
+pub use assembly::{
+    draw_assembly, find_item, find_ribbon, floating_window_for_item, panel_anchor,
+    panel_anchor_for_item, RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
+    RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth,
+};
+pub use declare::{draw_ribbon_buttons, RibbonButton};
 pub use ghost::{paint_drop_ghost_system, RibbonGhostSet};
 pub use kinds::{Bar, RibbonConstraint, RibbonKind, Side};
 pub use layout::RibbonLayout;
@@ -43,6 +51,10 @@ impl Plugin for RibbonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RibbonLayout>()
             .init_resource::<SideActive>()
+            .init_resource::<RibbonOpen>()
+            .init_resource::<RibbonWidth>()
+            .init_resource::<RibbonPlacement>()
+            .init_resource::<RibbonDrag>()
             .configure_sets(
                 EguiPrimaryContextPass,
                 RibbonGhostSet.after(style::apply_theme),

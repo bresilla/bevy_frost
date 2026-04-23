@@ -9,11 +9,15 @@
 //! pick individual symbols if you prefer.
 
 pub use crate::{
-    floating::floating_window,
+    floating::{floating_window, floating_window_scoped},
     gizmo_material::GizmoMaterial,
     ribbon::{
-        paint_drop_ghost_system, Bar, BarRibbon, RibbonConstraint, RibbonGhostSet, RibbonKind,
-        RibbonLayout, RibbonPlugin, Side, SideActive, SideRibbon,
+        draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,
+        paint_drop_ghost_system, panel_anchor, panel_anchor_for_item, Bar, BarRibbon,
+        RibbonButton, RibbonClick, RibbonCluster, RibbonConstraint, RibbonDef, RibbonDrag,
+        RibbonEdge, RibbonGhostSet, RibbonItem, RibbonKind, RibbonLayout, RibbonMode,
+        RibbonOpen, RibbonPlacement, RibbonPlugin, RibbonRole, RibbonWidth, Side, SideActive,
+        SideRibbon,
     },
     style::{AccentColor, GlassOpacity, ThemePlugin},
     widgets::{

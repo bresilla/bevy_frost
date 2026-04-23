@@ -49,10 +49,13 @@ pub mod widgets;
 
 // Crate-root re-exports — stable surface so consumers don't have
 // to reach into submodules.
-pub use floating::floating_window;
+pub use floating::{floating_window, floating_window_scoped};
 pub use ribbon::{
-    paint_drop_ghost_system, Bar, BarRibbon, RibbonConstraint, RibbonGhostSet, RibbonKind,
-    RibbonLayout, RibbonPlugin, Side, SideActive, SideRibbon,
+    draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,
+    paint_drop_ghost_system, panel_anchor, panel_anchor_for_item, Bar, BarRibbon, RibbonButton,
+    RibbonClick, RibbonCluster, RibbonConstraint, RibbonDef, RibbonDrag, RibbonEdge,
+    RibbonGhostSet, RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen,
+    RibbonPlacement, RibbonPlugin, RibbonRole, RibbonWidth, Side, SideActive, SideRibbon,
 };
 pub use style::{AccentColor, GlassOpacity, ThemePlugin};
 

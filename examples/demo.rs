@@ -36,14 +36,103 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_frost::prelude::*;
 use bevy_frost::style::srgb_to_egui;
 
-// Menu identifiers. One per button. `SideActive` holds "which of
-// these is open on the left rail / on the right rail" (at most one
-// each) — we just compare these constants against it.
+// Ribbon + menu identifiers. `RibbonOpen` indexes by ribbon id and
+// holds at most one open menu per ribbon; `draw_assembly` dispatches
+// button clicks using these constants.
+const RIBBON_LEFT: &str = "demo_ribbon_left";
+const RIBBON_RIGHT: &str = "demo_ribbon_right";
+
 const MENU_WIDGETS: &str = "demo_menu_widgets";
 const MENU_CONTAINERS: &str = "demo_menu_containers";
 const MENU_SCENE: &str = "demo_menu_scene";
 const MENU_THEME: &str = "demo_menu_theme";
+const MENU_KEYS: &str = "demo_menu_keys";
 const MENU_ABOUT: &str = "demo_menu_about";
+
+/// The ribbons the app declares this run. Left is **TwoSided**
+/// (two button clusters at top / bottom of the left rail); Right is
+/// **ThreeSided** (three clusters — top / middle / bottom of the
+/// right rail). Both are Panel ribbons, so exclusivity is one-open-
+/// per-ribbon regardless of which cluster the open button is in.
+const RIBBONS: &[RibbonDef] = &[
+    RibbonDef {
+        id: RIBBON_LEFT,
+        edge: RibbonEdge::Left,
+        role: RibbonRole::Panel,
+        mode: RibbonMode::TwoSided,
+        draggable: true,
+        accepts: &[RIBBON_RIGHT],
+    },
+    RibbonDef {
+        id: RIBBON_RIGHT,
+        edge: RibbonEdge::Right,
+        role: RibbonRole::Panel,
+        mode: RibbonMode::ThreeSided,
+        draggable: true,
+        accepts: &[RIBBON_LEFT],
+    },
+];
+
+/// Buttons on each ribbon. Cluster field decides which corner /
+/// centre the button hugs inside its ribbon.
+const RIBBON_ITEMS: &[RibbonItem] = &[
+    // Left rail — two clusters.
+    RibbonItem {
+        id: MENU_WIDGETS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: "W",
+        tooltip: "Widgets gallery",
+        child_ribbon: None,
+    },
+    RibbonItem {
+        id: MENU_CONTAINERS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 1,
+        glyph: "C",
+        tooltip: "Containers showcase",
+        child_ribbon: None,
+    },
+    RibbonItem {
+        id: MENU_SCENE,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: "S",
+        tooltip: "Scene outliner",
+        child_ribbon: None,
+    },
+    // Right rail — three clusters.
+    RibbonItem {
+        id: MENU_THEME,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: "T",
+        tooltip: "Theme & colour",
+        child_ribbon: None,
+    },
+    RibbonItem {
+        id: MENU_KEYS,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Middle,
+        slot: 0,
+        glyph: "K",
+        tooltip: "Keys & gestures",
+        child_ribbon: None,
+    },
+    RibbonItem {
+        id: MENU_ABOUT,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: "?",
+        tooltip: "About this demo",
+        child_ribbon: None,
+    },
+];
 
 fn main() {
     App::new()
@@ -59,10 +148,18 @@ fn main() {
         .add_plugins(FrostPlugin)
         .init_resource::<DemoState>()
         .init_resource::<GroundGrid>()
+        .init_resource::<SelectedSwatch>()
         .add_systems(Startup, setup_scene)
         .add_systems(
             Update,
-            (camera_control, camera_zoom, update_grid).chain(),
+            (
+                camera_control,
+                camera_zoom,
+                update_grid,
+                pick_cube,
+                update_swatch_selection,
+            )
+                .chain(),
         )
         .add_systems(EguiPrimaryContextPass, (draw_ribbons, draw_panels).chain())
         .run();
@@ -172,6 +269,23 @@ struct LocalGrid {
     material: Handle<StandardMaterial>,
 }
 
+/// Tag + swatch colour carried on each clickable cube — picked up
+/// by [`pick_cube`] when the user left-clicks one. `base_color` is
+/// the Bevy material colour we reinstate when deselected, so the
+/// selection effect can mutate the material's emissive without
+/// stomping on the base tint.
+#[derive(Component)]
+struct ColorCube {
+    egui_col: egui::Color32,
+    base_color: Color,
+}
+
+/// Which swatch is currently selected — updated by [`pick_cube`]
+/// and read by [`update_swatch_selection`] to lift + glow the
+/// winning cube.
+#[derive(Resource, Default)]
+struct SelectedSwatch(Option<Entity>);
+
 // ── Chase camera (simplified copy of gearbox_viz::camera) ───────────
 
 /// Orbit camera rig — pan / orbit / zoom like gearbox.
@@ -278,16 +392,47 @@ fn setup_scene(
         ));
     }
 
-    // ── Origin marker — small accent-tinted cube so the scene isn't
-    //    totally empty.
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::from_length(1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.65, 0.54, 0.98),
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 0.5, 0.0),
-    ));
+    // ── Swatch cubes — 3 × 2 grid of 1×1×1 m cubes, each a
+    //    different colour. Clicking one sets the app's `AccentColor`
+    //    (whole UI re-tints) and marks it as selected so it lifts +
+    //    glows in the scene.
+    let cube_mesh = meshes.add(Cuboid::from_length(1.0));
+    let swatch: [(f32, f32, f32); 6] = [
+        (0.90, 0.30, 0.30), // red
+        (0.95, 0.65, 0.20), // orange
+        (0.95, 0.90, 0.30), // yellow
+        (0.35, 0.85, 0.45), // green
+        (0.30, 0.60, 0.95), // blue
+        (0.75, 0.45, 0.95), // violet
+    ];
+    const GRID_COLS: usize = 3;
+    const GRID_SPACING: f32 = 2.0;
+    for (i, &(r, g, b)) in swatch.iter().enumerate() {
+        let col = (i % GRID_COLS) as f32;
+        let row = (i / GRID_COLS) as f32;
+        let x = (col - (GRID_COLS as f32 - 1.0) * 0.5) * GRID_SPACING;
+        let z = (row - 0.5) * GRID_SPACING;
+        let bevy_col = Color::srgb(r, g, b);
+        let egui_col = egui::Color32::from_rgb(
+            (r * 255.0).round() as u8,
+            (g * 255.0).round() as u8,
+            (b * 255.0).round() as u8,
+        );
+        commands.spawn((
+            Name::new(format!("Swatch[{i}]")),
+            Mesh3d(cube_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: bevy_col,
+                perceptual_roughness: 0.6,
+                ..default()
+            })),
+            Transform::from_xyz(x, 0.5, z),
+            ColorCube {
+                egui_col,
+                base_color: bevy_col,
+            },
+        ));
+    }
 
     // ── Sun — single cascade, ~100 m max, matches gearbox's
     //    vehicle-neighbourhood shadow quality.
@@ -554,6 +699,141 @@ fn camera_control(
     }
 }
 
+/// Left-click on a swatch cube → recolour the whole app. Uses a
+/// plain ray-AABB test (the swatches are axis-aligned 1 m cubes, no
+/// need for a full picking plugin). Ignored when:
+///
+/// * the pointer is over an egui panel / ribbon (so panel clicks
+///   don't double-fire as world picks),
+/// * the right mouse button is also held (user is starting an orbit
+///   gesture, not clicking).
+fn pick_cube(
+    mouse: Res<ButtonInput<MouseButton>>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    bevy_cameras: Query<(&Camera, &GlobalTransform)>,
+    cubes: Query<(Entity, &Transform, &ColorCube)>,
+    mut contexts: EguiContexts,
+    mut accent: ResMut<AccentColor>,
+    mut selected: ResMut<SelectedSwatch>,
+) {
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if mouse.pressed(MouseButton::Right) {
+        return;
+    }
+    if contexts
+        .ctx_mut()
+        .map(|c| c.wants_pointer_input())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let Some(cursor) = primary_window
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+    else {
+        return;
+    };
+    let Ok((camera, cam_tr)) = bevy_cameras.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(cam_tr, cursor) else {
+        return;
+    };
+    let origin = ray.origin;
+    let direction = *ray.direction;
+
+    let mut best: Option<(f32, Entity, egui::Color32)> = None;
+    for (entity, tr, cube) in &cubes {
+        let min = tr.translation - Vec3::splat(0.5);
+        let max = tr.translation + Vec3::splat(0.5);
+        if let Some(t) = ray_aabb_hit(origin, direction, min, max) {
+            match best {
+                Some((bt, _, _)) if bt <= t => {}
+                _ => best = Some((t, entity, cube.egui_col)),
+            }
+        }
+    }
+    if let Some((_, entity, color)) = best {
+        accent.0 = color;
+        selected.0 = Some(entity);
+    }
+}
+
+/// Smoothly lift the selected swatch off the ground and give its
+/// material an accent-matched emissive glow; flatten + un-glow the
+/// others. Runs every frame so the y-axis animation eases rather
+/// than snaps.
+fn update_swatch_selection(
+    time: Res<Time>,
+    selected: Res<SelectedSwatch>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cubes: Query<(
+        Entity,
+        &ColorCube,
+        &MeshMaterial3d<StandardMaterial>,
+        &mut Transform,
+    )>,
+) {
+    const REST_Y: f32 = 0.5;
+    const LIFT_Y: f32 = 0.9;
+    const EASE: f32 = 8.0;
+
+    let k = (EASE * time.delta_secs()).min(0.9);
+
+    for (entity, cube, mat_handle, mut tr) in &mut cubes {
+        let is_sel = selected.0 == Some(entity);
+        let target_y = if is_sel { LIFT_Y } else { REST_Y };
+        tr.translation.y += (target_y - tr.translation.y) * k;
+
+        if let Some(mat) = materials.get_mut(&mat_handle.0) {
+            let base = cube.base_color.to_linear();
+            let gain = if is_sel { 1.8 } else { 0.0 };
+            mat.emissive = LinearRgba::new(
+                base.red * gain,
+                base.green * gain,
+                base.blue * gain,
+                1.0,
+            );
+        }
+    }
+}
+
+/// Slab-method ray vs axis-aligned box. Returns the near-hit `t`
+/// along `direction` if the ray intersects the box from outside, or
+/// `None` when it misses.
+fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+    let mut tmin = 0.0_f32;
+    let mut tmax = f32::INFINITY;
+    for i in 0..3 {
+        let (o, d, lo, hi) = match i {
+            0 => (origin.x, direction.x, min.x, max.x),
+            1 => (origin.y, direction.y, min.y, max.y),
+            _ => (origin.z, direction.z, min.z, max.z),
+        };
+        if d.abs() < 1e-6 {
+            if o < lo || o > hi {
+                return None;
+            }
+        } else {
+            let mut t1 = (lo - o) / d;
+            let mut t2 = (hi - o) / d;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            tmin = tmin.max(t1);
+            tmax = tmax.min(t2);
+            if tmin > tmax {
+                return None;
+            }
+        }
+    }
+    Some(tmin.max(0.0))
+}
+
 /// Scroll-wheel zoom — logarithmic with exponential smoothing.
 fn camera_zoom(
     time: Res<Time>,
@@ -618,86 +898,39 @@ fn camera_zoom(
 // follows the drag — one open menu per rail, no matter where the
 // button was originally declared.
 
+/// Declarative button list — frost's `draw_ribbon_buttons` takes
+/// this slice and handles layout, drag, stale-invalidation and
+/// click-toggle routing in one call. Reordering / adding / removing
+/// a button is a single-line edit here, nothing else to change.
 fn draw_ribbons(
     mut contexts: EguiContexts,
     accent: Res<AccentColor>,
-    mut side_active: ResMut<SideActive>,
-    mut layout: ResMut<RibbonLayout>,
+    mut open: ResMut<RibbonOpen>,
+    mut placement: ResMut<RibbonPlacement>,
+    mut drag: ResMut<RibbonDrag>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
-    let accent_col = accent.0;
-
-    // If a button changed sides on the previous frame, drop whatever
-    // `SideActive` was remembering there — otherwise the ribbon
-    // highlight and the panel anchor disagree for a frame.
-    side_active.invalidate_stale(&layout);
-
-    // Snapshot open state so the button closure can write a click
-    // flag without conflicting with the immutable borrow below.
-    let widgets_open = side_active.is_menu_open(&layout, MENU_WIDGETS);
-    let containers_open = side_active.is_menu_open(&layout, MENU_CONTAINERS);
-    let scene_open = side_active.is_menu_open(&layout, MENU_SCENE);
-    let theme_open = side_active.is_menu_open(&layout, MENU_THEME);
-    let about_open = side_active.is_menu_open(&layout, MENU_ABOUT);
-
-    let mut click_widgets = false;
-    let mut click_containers = false;
-    let mut click_scene = false;
-    let mut click_theme = false;
-    let mut click_about = false;
-
-    // Left rail — draggable to the right rail; can NOT leave the side
-    // rails (SideRails constraint).
-    layout.button(
-        ctx, MENU_WIDGETS,
-        RibbonConstraint::SideRails, RibbonKind::Left, 0,
-        "W", "Widgets gallery",
-        widgets_open, accent_col,
-        || { click_widgets = true; },
+    // `draw_assembly` handles: button paint, panel-exclusive toggle
+    // routing for RibbonOpen, drag-to-swap with the `accepts` list
+    // gating cross-ribbon moves, and returns Icon clicks (none in
+    // this demo).
+    let _clicks = draw_assembly(
+        ctx,
+        accent.0,
+        RIBBONS,
+        RIBBON_ITEMS,
+        &mut open,
+        &mut placement,
+        &mut drag,
     );
-    layout.button(
-        ctx, MENU_CONTAINERS,
-        RibbonConstraint::SideRails, RibbonKind::Left, 1,
-        "C", "Containers showcase",
-        containers_open, accent_col,
-        || { click_containers = true; },
-    );
-    layout.button(
-        ctx, MENU_SCENE,
-        RibbonConstraint::SideRails, RibbonKind::Left, 2,
-        "S", "Scene outliner",
-        scene_open, accent_col,
-        || { click_scene = true; },
-    );
-    layout.button(
-        ctx, MENU_THEME,
-        RibbonConstraint::SideRails, RibbonKind::Right, 0,
-        "T", "Theme & colour",
-        theme_open, accent_col,
-        || { click_theme = true; },
-    );
-    layout.button(
-        ctx, MENU_ABOUT,
-        RibbonConstraint::SideRails, RibbonKind::Right, 1,
-        "?", "About this demo",
-        about_open, accent_col,
-        || { click_about = true; },
-    );
-
-    // Apply clicks after the immutable borrow above has ended.
-    if click_widgets { side_active.toggle_menu(&layout, MENU_WIDGETS); }
-    if click_containers { side_active.toggle_menu(&layout, MENU_CONTAINERS); }
-    if click_scene { side_active.toggle_menu(&layout, MENU_SCENE); }
-    if click_theme { side_active.toggle_menu(&layout, MENU_THEME); }
-    if click_about { side_active.toggle_menu(&layout, MENU_ABOUT); }
 }
 
-// ─── Panels — each anchors to whichever rail its button sits on ─────
+// ─── Panels — each anchors to whichever cluster its button sits in ──
 
 fn draw_panels(
     mut contexts: EguiContexts,
-    side_active: Res<SideActive>,
-    layout: Res<RibbonLayout>,
+    open: Res<RibbonOpen>,
+    placement: Res<RibbonPlacement>,
     mut accent: ResMut<AccentColor>,
     mut glass: ResMut<GlassOpacity>,
     mut state: ResMut<DemoState>,
@@ -706,63 +939,60 @@ fn draw_panels(
     let accent_col = accent.0;
     let mut keep_open = true;
 
-    if side_active.is_menu_open(&layout, MENU_WIDGETS) {
-        floating_window(
-            ctx,
-            "demo_panel_widgets",
-            "Widgets",
-            layout.panel_anchor(MENU_WIDGETS),
-            egui::vec2(320.0, 600.0),
-            &mut keep_open,
-            accent_col,
+    // "Is this menu currently open?" — checks against whichever
+    // ribbon the button currently lives on (may differ from its
+    // declaration if the user dragged it).
+    let is_open = |id: &'static str| -> bool {
+        let Some(item) = find_item(RIBBON_ITEMS, id) else { return false };
+        let (rid, _, _) = placement.resolve(item);
+        open.is_open(rid, id)
+    };
+
+    if is_open(MENU_WIDGETS) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_WIDGETS, "Widgets", egui::vec2(320.0, 600.0),
+            &mut keep_open, accent_col,
             |ui| widgets_panel(ui, &mut state, accent_col),
         );
     }
-    if side_active.is_menu_open(&layout, MENU_CONTAINERS) {
-        floating_window(
-            ctx,
-            "demo_panel_containers",
-            "Containers",
-            layout.panel_anchor(MENU_CONTAINERS),
-            egui::vec2(320.0, 400.0),
-            &mut keep_open,
-            accent_col,
+    if is_open(MENU_CONTAINERS) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_CONTAINERS, "Containers", egui::vec2(320.0, 400.0),
+            &mut keep_open, accent_col,
             |ui| containers_panel(ui, &mut state, accent_col),
         );
     }
-    if side_active.is_menu_open(&layout, MENU_SCENE) {
-        floating_window(
-            ctx,
-            "demo_panel_scene",
-            "Elements",
-            layout.panel_anchor(MENU_SCENE),
-            egui::vec2(320.0, 360.0),
-            &mut keep_open,
-            accent_col,
+    if is_open(MENU_SCENE) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_SCENE, "Elements", egui::vec2(320.0, 360.0),
+            &mut keep_open, accent_col,
             |ui| elements_panel(ui, &mut state, accent_col),
         );
     }
-    if side_active.is_menu_open(&layout, MENU_THEME) {
-        floating_window(
-            ctx,
-            "demo_panel_theme",
-            "Theme",
-            layout.panel_anchor(MENU_THEME),
-            egui::vec2(300.0, 280.0),
-            &mut keep_open,
-            accent_col,
+    if is_open(MENU_THEME) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_THEME, "Theme", egui::vec2(300.0, 280.0),
+            &mut keep_open, accent_col,
             |ui| theme_panel(ui, &mut accent, &mut glass, accent_col),
         );
     }
-    if side_active.is_menu_open(&layout, MENU_ABOUT) {
-        floating_window(
-            ctx,
-            "demo_panel_about",
-            "About",
-            layout.panel_anchor(MENU_ABOUT),
-            egui::vec2(300.0, 220.0),
-            &mut keep_open,
-            accent_col,
+    if is_open(MENU_KEYS) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_KEYS, "Keys", egui::vec2(300.0, 220.0),
+            &mut keep_open, accent_col,
+            |ui| keys_panel(ui, accent_col),
+        );
+    }
+    if is_open(MENU_ABOUT) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_ABOUT, "About", egui::vec2(300.0, 220.0),
+            &mut keep_open, accent_col,
             |ui| about_panel(ui, accent_col),
         );
     }
@@ -940,6 +1170,20 @@ fn theme_panel(
             ui,
             "Lower values let the 3D scene bleed through every panel.",
         );
+    });
+}
+
+fn keys_panel(ui: &mut egui::Ui, accent: egui::Color32) {
+    section(ui, "demo_keys_mouse", "Mouse", accent, true, |ui| {
+        keybinding_row(ui, "MMB drag", "pan the camera focus");
+        keybinding_row(ui, "LMB+RMB drag", "orbit the camera");
+        keybinding_row(ui, "Scroll", "log-smooth zoom");
+        keybinding_row(ui, "MMB × 2", "snap focus to cursor's ground point");
+        keybinding_row(ui, "LMB on cube", "re-tint the whole UI accent");
+    });
+    section(ui, "demo_keys_layout", "Layout", accent, false, |ui| {
+        keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
+        keybinding_row(ui, "Toggle ribbon btn", "open / close the panel");
     });
 }
 
