@@ -204,6 +204,10 @@ struct DemoState {
     // panel). Lets the user grow whichever list they're working in.
     scene_scroll_h: f32,
     flat_scroll_h: f32,
+
+    // RGBA demo colour — bound to `color_rgba` in the Theme panel to
+    // showcase the alpha-capable variant of the inline colour picker.
+    tint_rgba: [f32; 4],
 }
 
 impl Default for DemoState {
@@ -241,6 +245,7 @@ impl Default for DemoState {
             // space past the content end).
             scene_scroll_h: TREE_ROW_H * 8.0,
             flat_scroll_h: HYBRID_SELECT_ROW_H * 8.0,
+            tint_rgba: [0.30, 0.70, 0.95, 0.60],
         }
     }
 }
@@ -1177,7 +1182,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_THEME, "Theme", egui::vec2(300.0, 280.0),
             &mut keep_open, accent_col,
-            |ui| theme_panel(ui, &mut accent, &mut glass, accent_col),
+            |ui| theme_panel(ui, &mut accent, &mut glass, &mut state.tint_rgba, accent_col),
         );
     }
     if is_open(MENU_KEYS) {
@@ -1415,6 +1420,7 @@ fn theme_panel(
     ui: &mut egui::Ui,
     accent_res: &mut AccentColor,
     glass: &mut GlassOpacity,
+    tint_rgba: &mut [f32; 4],
     accent: egui::Color32,
 ) {
     // Accent. Mutating `AccentColor` triggers the crate's `apply_theme`
@@ -1431,9 +1437,13 @@ fn theme_panel(
         if color_rgb(ui, "accent", &mut rgb, accent).changed() {
             accent_res.0 = srgb_to_egui(rgb);
         }
+        // RGBA variant — same inline-expanding picker, plus an alpha
+        // slider inside the expanded body. Demo-only; doesn't feed
+        // back into the theme.
+        color_rgba(ui, "tint (rgba)", tint_rgba, accent);
         sub_caption(
             ui,
-            "Changing this recolours every widget in the app — one resource, one brush.",
+            "Changing accent recolours every widget in the app — one resource, one brush.",
         );
     });
 
