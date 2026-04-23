@@ -49,11 +49,11 @@ const MENU_THEME: &str = "demo_menu_theme";
 const MENU_KEYS: &str = "demo_menu_keys";
 const MENU_ABOUT: &str = "demo_menu_about";
 
-/// The ribbons the app declares this run. Left is **TwoSided**
-/// (two button clusters at top / bottom of the left rail); Right is
-/// **ThreeSided** (three clusters — top / middle / bottom of the
-/// right rail). Both are Panel ribbons, so exclusivity is one-open-
-/// per-ribbon regardless of which cluster the open button is in.
+/// Two ribbons — Left is **TwoSided**, Right is **ThreeSided**.
+/// Both Panel role, both accept drops from each other. Every button
+/// starts in the `Start` cluster (the UPPER corner of each rail);
+/// the Middle / End clusters remain declared but empty so you can
+/// drag buttons down into them whenever you want.
 const RIBBONS: &[RibbonDef] = &[
     RibbonDef {
         id: RIBBON_LEFT,
@@ -73,10 +73,11 @@ const RIBBONS: &[RibbonDef] = &[
     },
 ];
 
-/// Buttons on each ribbon. Cluster field decides which corner /
-/// centre the button hugs inside its ribbon.
+/// Initial button layout: all three left buttons in the upper (Start)
+/// cluster of the Left rail; all three right buttons in the upper
+/// (Start) cluster of the Right rail. End / Middle clusters stay
+/// empty until the user drags something into them.
 const RIBBON_ITEMS: &[RibbonItem] = &[
-    // Left rail — two clusters.
     RibbonItem {
         id: MENU_WIDGETS,
         ribbon: RIBBON_LEFT,
@@ -98,13 +99,12 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     RibbonItem {
         id: MENU_SCENE,
         ribbon: RIBBON_LEFT,
-        cluster: RibbonCluster::End,
-        slot: 0,
+        cluster: RibbonCluster::Start,
+        slot: 2,
         glyph: "S",
         tooltip: "Scene outliner",
         child_ribbon: None,
     },
-    // Right rail — three clusters.
     RibbonItem {
         id: MENU_THEME,
         ribbon: RIBBON_RIGHT,
@@ -117,8 +117,8 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     RibbonItem {
         id: MENU_KEYS,
         ribbon: RIBBON_RIGHT,
-        cluster: RibbonCluster::Middle,
-        slot: 0,
+        cluster: RibbonCluster::Start,
+        slot: 1,
         glyph: "K",
         tooltip: "Keys & gestures",
         child_ribbon: None,
@@ -126,8 +126,8 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     RibbonItem {
         id: MENU_ABOUT,
         ribbon: RIBBON_RIGHT,
-        cluster: RibbonCluster::End,
-        slot: 0,
+        cluster: RibbonCluster::Start,
+        slot: 2,
         glyph: "?",
         tooltip: "About this demo",
         child_ribbon: None,
@@ -922,6 +922,7 @@ fn draw_ribbons(
         &mut open,
         &mut placement,
         &mut drag,
+        |_| false,
     );
 }
 

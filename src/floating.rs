@@ -102,7 +102,6 @@ pub fn floating_window_scoped(
         .data(|d| d.get_temp::<f32>(width_id))
         .unwrap_or(size.x)
         .clamp(MIN_PANEL_W, MAX_PANEL_W);
-    let effective_size = egui::vec2(stored_width, size.y);
 
     let side_inset = EDGE_GAP + SIDE_BTN_SIZE + RAIL_PANEL_GAP;
     // Handle every anchor that a ribbon cluster might hand us —
@@ -138,13 +137,17 @@ pub fn floating_window_scoped(
         },
     };
 
+    // Width is pinned (from `stored_width`); height is content-
+    // driven. `size.y` was the caller's initial / max-ish hint; we
+    // don't enforce it as min so empty panels don't stretch to it.
     let inner = egui::Window::new(title)
         .id(egui::Id::new(id))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
         .anchor(anchor, anchor_offset)
-        .fixed_size(effective_size)
+        .min_size(egui::vec2(stored_width, 0.0))
+        .max_size(egui::vec2(stored_width, f32::INFINITY))
         .frame(frame)
         .show(ctx, |ui| {
             // Inner-margin (2 px) × 2 sides + stroke accounts for
@@ -187,16 +190,10 @@ pub fn floating_window_scoped(
 
             add_contents(ui);
 
-            // Fill the remaining vertical space so the window's
-            // painted rect matches `effective_size.y`. Without this,
-            // egui auto-shrinks the window to its content and the
-            // resize handle on the scene-facing edge would either
-            // overshoot (when we trust `effective_size.y`) or stop
-            // at the title (when we trust the returned rect).
-            let remaining = ui.available_height();
-            if remaining > 0.0 {
-                ui.add_space(remaining);
-            }
+            // No vertical filler — panel height is content-driven.
+            // The resize handle below reads `inner.response.rect`,
+            // which is the ACTUAL painted rect, so it always hugs
+            // the visible panel regardless of content size.
         });
 
     // ── Resize handle ──────────────────────────────────────────────

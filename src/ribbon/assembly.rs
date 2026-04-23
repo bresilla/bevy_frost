@@ -599,6 +599,7 @@ pub fn draw_assembly(
     open: &mut RibbonOpen,
     placement: &mut RibbonPlacement,
     drag: &mut RibbonDrag,
+    active: impl Fn(&'static str) -> bool,
 ) -> Vec<RibbonClick> {
     let insets = compute_side_insets(ribbons);
 
@@ -766,9 +767,13 @@ pub fn draw_assembly(
             continue;
         };
         let is_dragging_this = drag.item == Some(item.id);
+        // Panel role reads from `RibbonOpen`; Icon role reads from
+        // the caller-supplied `active` closure. Both may OR with
+        // each other so a caller can also tint a Panel button
+        // active for reasons outside the menu-open state.
         let is_active = match def.role {
-            RibbonRole::Panel => open.is_open(def.id, item.id),
-            RibbonRole::Icon => false,
+            RibbonRole::Panel => open.is_open(def.id, item.id) || active(item.id),
+            RibbonRole::Icon => active(item.id),
         };
 
         // Resting rect (where the button would sit if released now).
