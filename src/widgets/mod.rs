@@ -36,6 +36,7 @@ pub mod drag;
 pub mod foldable;
 pub mod group;
 pub mod icon;
+pub mod hybrid_select;
 pub mod layout;
 pub mod progressbar;
 pub mod row;
@@ -59,6 +60,9 @@ pub fn row_separator(ui: &mut bevy_egui::egui::Ui) {
 pub use foldable::section;
 pub use group::group_frame;
 pub use icon::{icon, icon_button, ICON_BODY_SIZE};
+pub use hybrid_select::{
+    hybrid_select_row, hybrid_select_row_divided, HybridSelectResponse, HYBRID_SELECT_ROW_H,
+};
 pub use layout::{
     dual_pane, dual_pane_labelled, stacked_pane, stacked_pane_labelled, DUAL_PANE_LEFT_FRACTION,
 };
