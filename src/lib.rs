@@ -50,7 +50,7 @@ pub mod widgets;
 
 // Crate-root re-exports — stable surface so consumers don't have
 // to reach into submodules.
-pub use floating::{floating_window, floating_window_scoped};
+pub use floating::{floating_window, floating_window_scoped, PaneBuilder};
 pub use ribbon::{
     draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,
     paint_drop_ghost_system, panel_anchor, panel_anchor_for_item, Bar, BarRibbon, RibbonButton,

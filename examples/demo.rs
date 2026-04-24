@@ -35,7 +35,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_frost::prelude::*;
 use bevy_frost::snarl::{
-    frost_snarl_style, InPin, OutPin, PinInfo, Snarl, SnarlPin, SnarlViewer, SnarlWidget,
+    frost_snarl, InPin, OutPin, PinInfo, Snarl, SnarlPin, SnarlViewer,
 };
 use bevy_frost::style::srgb_to_egui;
 
@@ -1347,7 +1347,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_WIDGETS, "Widgets", egui::vec2(320.0, 600.0),
             &mut keep_open, accent_col,
-            |ui| widgets_panel(ui, &mut state, accent_col),
+            |pane| widgets_panel(pane, &mut state),
         );
     }
     if is_open(MENU_CONTAINERS) {
@@ -1355,7 +1355,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_CONTAINERS, "Containers", egui::vec2(320.0, 400.0),
             &mut keep_open, accent_col,
-            |ui| containers_panel(ui, &mut state, accent_col),
+            |pane| containers_panel(pane, &mut state),
         );
     }
     if is_open(MENU_SCENE) {
@@ -1363,7 +1363,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_SCENE, "Elements", egui::vec2(340.0, 520.0),
             &mut keep_open, accent_col,
-            |ui| elements_panel(ui, &mut state, accent_col),
+            |pane| elements_panel(pane, &mut state),
         );
     }
     if is_open(MENU_GRAPH) {
@@ -1371,7 +1371,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_GRAPH, "Graph", egui::vec2(560.0, 420.0),
             &mut keep_open, accent_col,
-            |ui| graph_panel(ui, &mut state, accent_col),
+            |pane| graph_panel(pane, &mut state),
         );
     }
     if is_open(MENU_THEME) {
@@ -1379,7 +1379,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_THEME, "Theme", egui::vec2(300.0, 280.0),
             &mut keep_open, accent_col,
-            |ui| theme_panel(ui, &mut accent, &mut glass, &mut state.tint_rgba, accent_col),
+            |pane| theme_panel(pane, &mut accent, &mut glass, &mut state.tint_rgba),
         );
     }
     if is_open(MENU_KEYS) {
@@ -1387,7 +1387,7 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_KEYS, "Keys", egui::vec2(300.0, 220.0),
             &mut keep_open, accent_col,
-            |ui| keys_panel(ui, accent_col),
+            |pane| keys_panel(pane),
         );
     }
     if is_open(MENU_ABOUT) {
@@ -1395,26 +1395,27 @@ fn draw_panels(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
             MENU_ABOUT, "About", egui::vec2(300.0, 220.0),
             &mut keep_open, accent_col,
-            |ui| about_panel(ui, accent_col),
+            |pane| about_panel(pane),
         );
     }
 }
 
 // ─── Panel bodies ───────────────────────────────────────────────────
 
-fn widgets_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
-    section(ui, "demo_flags", "Flags", accent, true, |ui| {
+fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
+    let accent = pane.accent();
+    pane.section("demo_flags", "Flags", true, |ui| {
         toggle(ui, "power", &mut state.power, accent);
         toggle(ui, "headlights", &mut state.headlights, accent);
     });
 
-    section(ui, "demo_numbers", "Numbers", accent, true, |ui| {
+    pane.section("demo_numbers", "Numbers", true, |ui| {
         drag_value(ui, "gravity (m/s²)", &mut state.gravity, 0.05, 0.0..=30.0, 2, "");
         drag_value(ui, "speed limit (m/s)", &mut state.speed_limit, 0.1, 0.0..=100.0, 1, "");
         drag_value(ui, "engine power (kW)", &mut state.engine_power, 1.0, 0.0..=2_000.0, 0, "");
     });
 
-    section(ui, "demo_bars", "Bars", accent, true, |ui| {
+    pane.section("demo_bars", "Bars", true, |ui| {
         pretty_slider(ui, "throttle", &mut state.throttle, 0.0..=1.0, 2, "", accent);
         pretty_slider(ui, "brake", &mut state.brake, 0.0..=1.0, 2, "", accent);
         pretty_progressbar_text(
@@ -1426,7 +1427,7 @@ fn widgets_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32
         );
     });
 
-    section(ui, "demo_buttons", "Buttons", accent, false, |ui| {
+    pane.section("demo_buttons", "Buttons", false, |ui| {
         if wide_button(ui, "Refuel", accent).clicked() {
             state.fuel_fraction = 1.0;
         }
@@ -1440,12 +1441,13 @@ fn widgets_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32
     });
 }
 
-fn elements_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
+fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
+    let accent = pane.accent();
     // Scene outliner — full tree widget with per-row uniform icon
     // gutter (visibility + lock) and a filter dropdown at the top.
     // This is the Blender-style layers panel: a recursive stage
     // view with direct per-entity controls in the gutter.
-    section(ui, "demo_scene_tree", "Scene", accent, true, |ui| {
+    pane.section("demo_scene_tree", "Scene", true, |ui| {
         dropdown(ui, "filter", &mut state.scene_filter, SCENE_FILTERS, accent);
 
         // `id_salt` required on BOTH ScrollAreas in this panel —
@@ -1506,7 +1508,7 @@ fn elements_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color3
     // double-click = arbitrary action (here we bump a counter),
     // right-edge radio = durable "pin". The two click targets do
     // NOT leak into each other.
-    section(ui, "demo_elements", "Flat list", accent, true, |ui| {
+    pane.section("demo_elements", "Flat list", true, |ui| {
         let scroll_w = ui.available_width();
         let scroll_out = ui.allocate_ui_with_layout(
             egui::vec2(scroll_w, state.flat_scroll_h),
@@ -1575,8 +1577,9 @@ fn elements_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color3
     });
 }
 
-fn containers_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
-    section(ui, "demo_transform", "Transform", accent, true, |ui| {
+fn containers_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
+    let accent = pane.accent();
+    pane.section("demo_transform", "Transform", true, |ui| {
         subsection(
             ui,
             "demo_tr_pos",
@@ -1613,33 +1616,42 @@ fn containers_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Colo
     });
 }
 
-fn graph_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
-    section(ui, "demo_graph", "Node graph", accent, true, |ui| {
-        sub_caption(ui, "right-click the canvas to add nodes");
-        // Split-borrow through the `&mut DemoState` so the snarl
-        // widget can take `&mut graph` AND `&mut graph_viewer`
-        // simultaneously.
+fn graph_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
+    let accent = pane.accent();
+    pane.section("demo_graph", "Node graph", true, |ui| {
+        sub_caption(ui, "right-click to add nodes · click ▢ to maximise the graph");
+        // `frost_snarl` is the plain `SnarlWidget` plus a maximise
+        // toggle bolted onto its top-left corner. Clicking the
+        // toggle lifts ONLY the graph into a full-window overlay —
+        // the surrounding pane and this section stay exactly where
+        // they are. Split-borrow through `&mut DemoState` so the
+        // widget can take `&mut graph` + `&mut graph_viewer` at the
+        // same time.
         let s: &mut DemoState = state;
-        SnarlWidget::new()
-            .id_salt("demo_graph_snarl")
-            .style(frost_snarl_style(accent))
-            .min_size(egui::vec2(ui.available_width(), 300.0))
-            .show(&mut s.graph, &mut s.graph_viewer, ui);
+        let w = ui.available_width();
+        frost_snarl(
+            ui,
+            "demo_graph_snarl",
+            &mut s.graph,
+            &mut s.graph_viewer,
+            accent,
+            egui::vec2(w, 300.0),
+        );
     });
 }
 
 fn theme_panel(
-    ui: &mut egui::Ui,
+    pane: &mut PaneBuilder,
     accent_res: &mut AccentColor,
     glass: &mut GlassOpacity,
     tint_rgba: &mut [f32; 4],
-    accent: egui::Color32,
 ) {
+    let accent = pane.accent();
     // Accent. Mutating `AccentColor` triggers the crate's `apply_theme`
     // system, which re-paints *every* widget — buttons, frames,
     // borders, slider fills, the lot — from this single source of
     // truth.
-    section(ui, "demo_theme_colour", "Accent", accent, true, |ui| {
+    pane.section("demo_theme_colour", "Accent", true, |ui| {
         let c = accent_res.0;
         let mut rgb = [
             c.r() as f32 / 255.0,
@@ -1660,7 +1672,7 @@ fn theme_panel(
     });
 
     // Glass opacity — ditto. `GlassOpacity(u8)` in `0..=100`.
-    section(ui, "demo_theme_glass", "Glass", accent, true, |ui| {
+    pane.section("demo_theme_glass", "Glass", true, |ui| {
         let mut v = glass.0 as f64;
         if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
             glass.0 = v.round().clamp(1.0, 100.0) as u8;
@@ -1672,22 +1684,22 @@ fn theme_panel(
     });
 }
 
-fn keys_panel(ui: &mut egui::Ui, accent: egui::Color32) {
-    section(ui, "demo_keys_mouse", "Mouse", accent, true, |ui| {
+fn keys_panel(pane: &mut PaneBuilder) {
+    pane.section("demo_keys_mouse", "Mouse", true, |ui| {
         keybinding_row(ui, "MMB drag", "pan the camera focus");
         keybinding_row(ui, "LMB+RMB drag", "orbit the camera");
         keybinding_row(ui, "Scroll", "log-smooth zoom");
         keybinding_row(ui, "MMB × 2", "snap focus to cursor's ground point");
         keybinding_row(ui, "LMB on cube", "re-tint the whole UI accent");
     });
-    section(ui, "demo_keys_layout", "Layout", accent, false, |ui| {
+    pane.section("demo_keys_layout", "Layout", false, |ui| {
         keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
         keybinding_row(ui, "Toggle ribbon btn", "open / close the panel");
     });
 }
 
-fn about_panel(ui: &mut egui::Ui, accent: egui::Color32) {
-    section(ui, "demo_about_intro", "bevy_frost", accent, true, |ui| {
+fn about_panel(pane: &mut PaneBuilder) {
+    pane.section("demo_about_intro", "bevy_frost", true, |ui| {
         sub_caption(
             ui,
             "Reusable glass-themed editor UI kit for Bevy + egui.",

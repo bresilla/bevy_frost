@@ -9,7 +9,7 @@
 //! pick individual symbols if you prefer.
 
 pub use crate::{
-    floating::{floating_window, floating_window_scoped},
+    floating::{floating_window, floating_window_scoped, PaneBuilder},
     gizmo_material::GizmoMaterial,
     ribbon::{
         draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,

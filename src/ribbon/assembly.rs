@@ -1063,7 +1063,7 @@ pub fn floating_window_for_item(
     size: egui::Vec2,
     open: &mut bool,
     accent: egui::Color32,
-    add_contents: impl FnOnce(&mut egui::Ui),
+    add_contents: impl FnOnce(&mut crate::floating::PaneBuilder),
 ) {
     let Some(item) = find_item(items, item_id) else {
         return;
