@@ -25,7 +25,7 @@ $(info ------------------------------------------)
 .PHONY: build b compile c run r test t check fmt bench clean help h
 
 build:
-	@$(CARGO) build --example $(EXAMPLE)
+	@$(CARGO) build -p bevy_frost --example $(EXAMPLE)
 
 b: build
 
@@ -36,7 +36,14 @@ compile:
 c: compile
 
 run:
-	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release --example $(EXAMPLE)
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release -p bevy_frost --example $(EXAMPLE)
+
+# Plain-egui (no Bevy) demo — `eframe` with the `wgpu` backend,
+# same Vulkan path Bevy uses. Runs under the `nixVulkan` wrapper
+# out of the box on nix systems; override with `RUN_WITH=` on
+# distros with a native Vulkan driver.
+run-egui:
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release -p egui_frost --example simple
 
 r: run
 

@@ -1,0 +1,25 @@
+[package]
+name = "frostcore"
+description = "Core glass-themed editor UI primitives for egui: palette + tokens, floating dock windows, side-rail ribbons, reusable widgets (toggles, sliders, inspector rows, colour pickers, trees, dropdowns, code editor, node-graph wrapper). Framework-agnostic — plug it into bevy_egui, eframe, or any other egui host."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+egui = { workspace = true, default-features = false, features = ["default_fonts"] }
+egui-snarl = { workspace = true }
+egui_code_editor = { workspace = true }
+# Optional Bevy integration — enabled by `bevy_frost`. When OFF,
+# frostcore compiles as a pure-egui crate with no Bevy types
+# anywhere in the public API.
+bevy = { workspace = true, optional = true }
+
+[features]
+# OFF by default — plain egui.
+default = []
+# Enables `bevy::prelude::Resource` + `bevy::ecs::schedule::SystemSet`
+# derives on frostcore state types (ribbon placement, accent colour,
+# glass opacity, …) so they can be used as Bevy resources without
+# wrapper types.
+bevy = ["dep:bevy"]

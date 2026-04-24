@@ -1,56 +1,31 @@
-[package]
-name = "bevy_frost"
-description = "Generic glass-themed Bevy + egui editor UI kit: floating dock windows, side-rail button ribbons, design-system tokens, reusable widgets, transform-gizmo always-on-top material. Project-agnostic — plug it into any Bevy app that wants an editor-style interface."
+[workspace]
+resolver = "3"
+members = [
+    "crates/frostcore",
+    "crates/egui_frost",
+    "crates/bevy_frost",
+]
+
+
+[workspace.package]
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
-readme = "README.md"
 repository = "https://github.com/bresilla/bevy_frost"
 
-[dependencies]
-bevy = { version = "0.18", default-features = false, features = [
-    "std",
-    "async_executor",
-    "multi_threaded",
-    "bevy_asset",
-    "bevy_state",
-    "bevy_log",
-    "bevy_window",
-    "bevy_winit",
-    "bevy_input_focus",
-    "bevy_render",
-    "bevy_core_pipeline",
-    "bevy_pbr",
-    "bevy_light",
-    "bevy_mesh",
-    "bevy_camera",
-    "bevy_image",
-    "bevy_gizmos",
-    "bevy_gizmos_render",
-    "bevy_scene",
-    "default_font",
-    "tonemapping_luts",
-    "smaa_luts",
-    "ktx2",
-    "zstd_rust",
-    "png",
-    "x11",
-    "reflect_auto_register",
-] }
-bevy_egui = { version = "0.39", default-features = false, features = [
-    "default_fonts",
-    "render",
-] }
-# egui-snarl — node-graph widget for egui. Pulls the matching
-# egui 0.33.x transitively, so it co-exists with bevy_egui 0.39
-# without pinning.
+[workspace.dependencies]
+# Shared egui / egui-ecosystem dependency versions — every member
+# crate pulls egui through `workspace = true` so the three crates
+# compile against a single resolved egui.
+egui = { version = "0.33", default-features = false }
 egui-snarl = "0.9"
-# egui_code_editor — multiline text editor with syntax highlighting
-# + line numbers. Powers `bevy_frost::code::frost_code_editor`.
-# Pinned to 0.2.21 — newer versions (0.2.22+) jump to egui 0.34,
-# which doesn't co-exist cleanly with bevy_egui 0.39's egui 0.33.
 egui_code_editor = "=0.2.21"
+# bevy + bevy_egui are only used by `bevy_frost`; listed here so
+# the version is managed in one place.
+bevy = { version = "0.18", default-features = false }
+bevy_egui = { version = "0.39", default-features = false }
 
-[[example]]
-name = "demo"
-path = "examples/demo.rs"
+# Internal crates — kept in the workspace `dependencies` table so a
+# member can say `frostcore = { workspace = true }` without repeating
+# the path.
+frostcore = { path = "crates/frostcore", version = "0.0.1" }
