@@ -6,20 +6,66 @@ use egui;
 
 use crate::style::BORDER_SUBTLE;
 
-/// Thin horizontal rule painted across the current row. Widget
-/// modules append one of these after their body so every row has a
-/// subtle trailing divider — looks like "between rows" visually;
-/// on the last row of a container the division is a hair against
-/// the inner bottom padding, which reads as expected rather than
-/// as an extra border.
+/// Key under which the "pending trailing separator" flag lives in
+/// egui temp data, scoped to the current `ui`'s id. Stored value is
+/// the `cumulative_pass_nr` at which the mark was set, so a stale
+/// mark left over from a previous frame (e.g. the last widget
+/// disappeared between frames) is ignored on the current frame.
+fn pending_separator_key(ui: &egui::Ui) -> egui::Id {
+    ui.id().with("frost_pending_separator")
+}
+
+/// Trailing divider marker appended by every widget module. Does
+/// NOT paint immediately — it only records that *this frame* the
+/// current `ui` has a pending trailing separator. The paint is
+/// performed lazily by [`flush_pending_separator`] at the START of
+/// whichever widget comes next.
+///
+/// Consequence: if nothing follows (the mark is the last thing in
+/// its container), the mark simply decays without ever being
+/// painted — so a container's last row auto-hides its trailing
+/// divider without the caller needing to know or annotate it.
 ///
 /// Also re-exported publicly as [`super::row_separator`] so callers
-/// who assemble bespoke inline row layouts (e.g. a tight cluster of
-/// small buttons) can paint the matching divider themselves.
+/// who assemble bespoke inline row layouts can request the matching
+/// divider with the same smart behaviour.
 pub(super) fn widget_separator(ui: &mut egui::Ui) {
-    // Hairline breathing room — 1 px above, 1 px line, 1 px below.
-    // Tight on purpose: at panel density, 3 px top + bottom made the
-    // rows feel airy rather than tabular.
+    let pass = ui.ctx().cumulative_pass_nr();
+    let key = pending_separator_key(ui);
+    ui.ctx().data_mut(|d| d.insert_temp::<u64>(key, pass));
+}
+
+/// Paint the deferred trailing separator — if any — that the prior
+/// widget marked on this same frame. Call this at the very start of
+/// every widget body. Idempotent; cheap no-op when no mark is
+/// pending or the mark is stale. Clears the mark after handling so
+/// subsequent calls on the same frame (e.g. during a re-run inside
+/// the same pass) don't double-paint.
+pub(super) fn flush_pending_separator(ui: &mut egui::Ui) {
+    let key = pending_separator_key(ui);
+    let current = ui.ctx().cumulative_pass_nr();
+    let stored: Option<u64> = ui.ctx().data(|d| d.get_temp::<u64>(key));
+    if stored.is_some() {
+        ui.ctx().data_mut(|d| d.remove::<u64>(key));
+    }
+    if stored == Some(current) {
+        paint_hairline(ui);
+    }
+}
+
+/// Discard any pending trailing separator WITHOUT painting it. Used
+/// by the resize-grip separator so a widget stack above + grip below
+/// doesn't stack a hairline on top of the grip — the grip itself IS
+/// the visual separator at that boundary.
+pub(super) fn clear_pending_separator(ui: &mut egui::Ui) {
+    let key = pending_separator_key(ui);
+    ui.ctx().data_mut(|d| d.remove::<u64>(key));
+}
+
+/// Unconditional hairline — 1 px above, 1 px line, 1 px below. Tight
+/// cadence matches the tabular density of frost panels; used only
+/// by [`flush_pending_separator`].
+fn paint_hairline(ui: &mut egui::Ui) {
     ui.add_space(1.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());

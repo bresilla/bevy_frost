@@ -39,6 +39,8 @@ use egui;
 
 use crate::style::{BG_2_RAISED, BG_3_HOVER, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY};
 
+use super::shared::flush_pending_separator;
+
 /// Row height — matches [`super::hybrid_select::HYBRID_SELECT_ROW_H`]
 /// so trees and outliner-style lists stack at the same rhythm.
 pub const TREE_ROW_H: f32 = 20.0;
@@ -170,6 +172,7 @@ pub fn tree_row(
     accent: egui::Color32,
     slots: &mut [TreeIconSlot<'_>],
 ) -> TreeRowResponse {
+    flush_pending_separator(ui);
     let w = ui.available_width();
 
     // Reserve z-slots for the row background fill + indent guides

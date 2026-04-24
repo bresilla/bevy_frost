@@ -20,6 +20,8 @@ use crate::style::{
     glass_alpha_card, glass_fill, radius, section_caps, thin_divider, widget_border, BG_2_RAISED,
 };
 
+use super::shared::flush_pending_separator;
+
 /// Horizontal inner padding inside the container, in px.
 pub const PAD_X: i8 = 4;
 /// Vertical inner padding inside the container, in px.
@@ -36,6 +38,7 @@ pub fn section(
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
+    flush_pending_separator(ui);
     let full_w = ui.available_width();
     let inner_w = (full_w - OUTER_INSET).max(0.0);
     egui::Frame::new()

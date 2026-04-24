@@ -25,7 +25,7 @@ use std::hash::Hash;
 use egui;
 
 use super::layout::dual_pane_labelled;
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 use crate::style::{
     glass_alpha_card, glass_fill, radius, widget_border, BG_2_RAISED, BG_3_HOVER,
     TEXT_PRIMARY, TEXT_SECONDARY,
@@ -55,6 +55,7 @@ pub fn dropdown(
     options: &[&str],
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp = dual_pane_labelled(ui, label, |ui| {
         dropdown_control(ui, label, selected, options, accent)
     });

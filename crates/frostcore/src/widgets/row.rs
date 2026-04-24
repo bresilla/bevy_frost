@@ -8,7 +8,7 @@
 use egui;
 
 use super::layout::{dual_pane, dual_pane_labelled};
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 use crate::style::{body_label, TEXT_PRIMARY};
 
 /// Width of the label column. Picked to fit every typical label at
@@ -40,6 +40,7 @@ pub fn labelled_row_custom_left(
     left: impl FnOnce(&mut egui::Ui),
     right: impl FnOnce(&mut egui::Ui),
 ) {
+    flush_pending_separator(ui);
     ui.horizontal(|ui| {
         let row_h = ui.spacing().interact_size.y;
         ui.allocate_ui_with_layout(
@@ -65,6 +66,7 @@ pub fn labelled_row_custom_left(
 /// monospaced value in the 30 % right pane, trailing separator
 /// under the row. Same layout language as [`super::toggle`].
 pub fn readout_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    flush_pending_separator(ui);
     dual_pane_labelled(ui, label, |ui| {
         ui.label(
             egui::RichText::new(value)
@@ -91,6 +93,7 @@ pub fn badge_row(
     badges: &[&str],
     accent: egui::Color32,
 ) {
+    flush_pending_separator(ui);
     labelled_row(ui, label, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -115,6 +118,7 @@ pub fn axis_readout_row(
     glyph_color: egui::Color32,
     value: &str,
 ) {
+    flush_pending_separator(ui);
     dual_pane(
         ui,
         |ui| {

@@ -5,16 +5,20 @@ use egui;
 
 use crate::style::{caption, radius, space, TEXT_SECONDARY};
 
+use super::shared::flush_pending_separator;
+
 /// Subtle caption text (italic, small, tertiary colour). Use
 /// between related sub-blocks inside a section to describe what
 /// follows.
 pub fn sub_caption(ui: &mut egui::Ui, text: &str) {
+    flush_pending_separator(ui);
     ui.label(caption(text));
 }
 
 /// Key-chip + action-label row, used in "Keys" help sections.
 /// Action text truncates with `…` if the full line would overflow.
 pub fn keybinding_row(ui: &mut egui::Ui, keys: &str, action: &str) {
+    flush_pending_separator(ui);
     ui.horizontal(|ui| {
         let chip = egui::RichText::new(keys)
             .monospace()

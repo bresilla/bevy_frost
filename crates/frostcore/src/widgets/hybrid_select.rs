@@ -37,7 +37,7 @@ use egui;
 
 use crate::style::{BG_2_RAISED, BG_3_HOVER, TEXT_PRIMARY, TEXT_SECONDARY};
 
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 
 /// Row height. Matches the Blender 4 outliner / UE5 world-outliner
 /// rhythm (20 px row, 12 px label).
@@ -72,6 +72,7 @@ pub fn hybrid_select_row(
     radio_on: bool,
     accent: egui::Color32,
 ) -> HybridSelectResponse {
+    flush_pending_separator(ui);
     // Geometry — compact so the label still owns most of the row.
     const RADIO_OUTER_R: f32 = 4.5;
     const RADIO_SLOT_W: f32 = 14.0;

@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 use egui;
 
 use super::layout::{dual_pane, dual_pane_labelled};
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 
 /// Fixed width of the DragValue box, in px. Every numeric input in a
 /// panel allocates this same width, so rows with short values
@@ -32,6 +32,7 @@ pub fn drag_value(
     decimals: usize,
     suffix: &str,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp = dual_pane_labelled(ui, label, |ui| {
         let size = input_size(ui);
         ui.add_sized(
@@ -59,6 +60,7 @@ pub fn axis_drag(
     suffix: &str,
     decimals: usize,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp = dual_pane(
         ui,
         |ui| {

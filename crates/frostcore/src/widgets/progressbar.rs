@@ -15,7 +15,7 @@
 use egui;
 
 use super::layout::stacked_pane_labelled;
-use super::shared::{paint_value_bar, widget_separator};
+use super::shared::{flush_pending_separator, paint_value_bar, widget_separator};
 use crate::style::{contrast_text_for, radius, TEXT_PRIMARY};
 
 const BAR_H: f32 = 18.0;
@@ -32,6 +32,7 @@ pub fn pretty_progressbar(
     suffix: &str,
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp = stacked_pane_labelled(ui, label, |ui| {
         let (lo, hi) = (*range.start(), *range.end());
         let denom = (hi - lo).max(f64::EPSILON);
@@ -53,6 +54,7 @@ pub fn pretty_progressbar_text(
     inner_text: &str,
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp =
         stacked_pane_labelled(ui, label, |ui| progressbar_control(ui, fraction, inner_text, accent));
     widget_separator(ui);

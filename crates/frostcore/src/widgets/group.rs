@@ -8,11 +8,14 @@ use egui;
 
 use crate::style::{glass_alpha_group, glass_fill, radius, BG_3_HOVER, BORDER_SUBTLE};
 
+use super::shared::flush_pending_separator;
+
 pub fn group_frame(
     ui: &mut egui::Ui,
     accent: egui::Color32,
     body: impl FnOnce(&mut egui::Ui),
 ) {
+    flush_pending_separator(ui);
     // Uses `BG_3_HOVER` as the base so groups sit a touch brighter
     // than cards, reinforcing the stacked-pane feel.
     egui::Frame::new()

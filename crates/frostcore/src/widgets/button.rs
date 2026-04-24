@@ -8,7 +8,7 @@ use crate::style::{
     glass_alpha_card, radius, widget_border, BG_2_RAISED, TEXT_PRIMARY, TEXT_SECONDARY,
 };
 
-use super::shared::{lerp_color, widget_separator};
+use super::shared::{flush_pending_separator, lerp_color, widget_separator};
 
 // ─── Wide button ────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ use super::shared::{lerp_color, widget_separator};
 /// it's interactive at a glance without the button screaming for
 /// attention.
 pub fn wide_button(ui: &mut egui::Ui, label: &str, accent: egui::Color32) -> egui::Response {
+    flush_pending_separator(ui);
     const ROW_H: f32 = 24.0;
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::click());
@@ -48,6 +49,7 @@ pub fn card_button(
     subtitle: &str,
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     // Reserving the SAME blank space on the right as the glyph
     // column consumes on the left keeps the text optically centred
     // and leaves a clean "runway" for the ellipsis when either line

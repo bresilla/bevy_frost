@@ -25,6 +25,8 @@ use egui;
 
 use crate::style::{glass_alpha_card, glass_fill, radius, widget_border, BG_4_INPUT, TEXT_SECONDARY};
 
+use super::shared::flush_pending_separator;
+
 /// Total field height. Matches the shared `interact_size.y`
 /// (20 px) so the search field aligns with every other frost
 /// row-height control (toggle, slider, dropdown).
@@ -46,6 +48,7 @@ pub fn search_field(
     placeholder: &str,
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(w, SEARCH_H),

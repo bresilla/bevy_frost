@@ -28,7 +28,7 @@ use crate::style::{
 };
 
 use super::foldable::{OUTER_INSET, PAD_X, PAD_Y};
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 
 /// Left indent applied to the body so it steps in from the chevron
 /// column — reinforces the "each layer goes narrower" look.
@@ -49,6 +49,7 @@ pub fn subsection(
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
+    flush_pending_separator(ui);
     let full_w = ui.available_width();
     let inner_w = (full_w - OUTER_INSET).max(0.0);
 

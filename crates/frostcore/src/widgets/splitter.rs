@@ -34,6 +34,8 @@ use egui;
 
 use crate::style::BORDER_SUBTLE;
 
+use super::shared::clear_pending_separator;
+
 /// Strip height — the invisible hit-rect the handle interacts on.
 /// Tall enough for an easy drag target while the painted dots stay
 /// thin visually.
@@ -80,6 +82,11 @@ pub fn row_separator_resize(
     max: f32,
     accent: egui::Color32,
 ) -> egui::Response {
+    // The grip IS the separator at this boundary — drop any pending
+    // hairline from the widget above so we don't stack a plain line
+    // on top of the grip. Callers placing this right after a widget
+    // stack get the resize handle cleanly in the separator slot.
+    clear_pending_separator(ui);
     let w = ui.available_width();
     // Reserve the strip with `hover` sense so allocate_exact_size
     // doesn't claim an interaction id; the explicit interact below

@@ -12,7 +12,7 @@
 use egui;
 
 use super::layout::dual_pane_labelled;
-use super::shared::{lerp_color, widget_separator};
+use super::shared::{flush_pending_separator, lerp_color, widget_separator};
 use crate::style::{radius, widget_border, BG_3_HOVER};
 
 /// Overall track width.
@@ -39,6 +39,7 @@ pub fn toggle(
     on: &mut bool,
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let resp = dual_pane_labelled(ui, label, |ui| toggle_control(ui, on, accent));
     widget_separator(ui);
     resp

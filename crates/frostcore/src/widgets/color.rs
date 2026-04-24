@@ -16,7 +16,7 @@
 use egui;
 
 use super::layout::dual_pane_labelled;
-use super::shared::widget_separator;
+use super::shared::{flush_pending_separator, widget_separator};
 use crate::style::{radius, widget_border};
 
 /// Swatch button size — matches the DragValue input width
@@ -33,6 +33,7 @@ pub fn color_rgb(
     rgb: &mut [f32; 3],
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let id = ui.id().with(("frost_color_expand", label));
     let mut open: bool = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
 
@@ -89,6 +90,7 @@ pub fn color_rgba(
     rgba: &mut [f32; 4],
     accent: egui::Color32,
 ) -> egui::Response {
+    flush_pending_separator(ui);
     let id = ui.id().with(("frost_color_expand", label));
     let mut open: bool = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
 
