@@ -36,7 +36,7 @@ compile:
 c: compile
 
 run:
-	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --example $(EXAMPLE)
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release --example $(EXAMPLE)
 
 r: run
 

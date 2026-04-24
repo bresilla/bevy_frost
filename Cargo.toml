@@ -41,6 +41,10 @@ bevy_egui = { version = "0.39", default-features = false, features = [
     "default_fonts",
     "render",
 ] }
+# egui-snarl — node-graph widget for egui. Pulls the matching
+# egui 0.33.x transitively, so it co-exists with bevy_egui 0.39
+# without pinning.
+egui-snarl = "0.9"
 
 [[example]]
 name = "demo"

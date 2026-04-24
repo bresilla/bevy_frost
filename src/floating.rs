@@ -1,15 +1,23 @@
-//! Fixed-height floating-panel helper, with a drag-to-resize width
-//! handle on the panel's scene-facing edge.
+//! Floating-panel helper, with drag-to-resize handles on the
+//! panel's scene-facing edge (horizontal) AND bottom / top edge
+//! (vertical).
 //!
 //! Anchored to one of the four screen corners via [`egui::Align2`].
 //! No title bar, no close button; the title sits at the rail-facing
-//! edge (same side as the [`crate::ribbon`] it's paired with), and a
-//! hair-thin hover strip sits on the *opposite* edge. Dragging that
-//! strip grows / shrinks the panel width and remembers the value
-//! via `egui::Context::data` so it survives across frames.
+//! edge (same side as the [`crate::ribbon`] it's paired with). Two
+//! hit-thin strips sit on the *opposite* edges:
 //!
-//! Height stays driven by the caller — resize it in your own panel
-//! code if you want that too.
+//! * **Horizontal handle** — scene-facing edge. Drag to grow / shrink
+//!   width.
+//! * **Vertical handle** — the edge facing away from the panel's
+//!   vertical anchor (bottom for `*_TOP` / `*_CENTER`, top for
+//!   `*_BOTTOM`). Drag to grow / shrink height.
+//!
+//! Both values are stored per-panel-id in `egui::Context::data` so
+//! the user's drags survive across frames. Width and height are both
+//! clamped every frame to the current window size, so shrinking the
+//! Bevy window never leaves the panel extending past the visible
+//! screen.
 
 use bevy_egui::egui;
 
@@ -22,35 +30,34 @@ const EDGE_GAP: f32 = 8.0;
 const SIDE_BTN_SIZE: f32 = 34.0;
 const RAIL_PANEL_GAP: f32 = 6.0;
 
-/// Width of the resize-handle hit zone, in pixels. Wide enough to be
-/// easy to land on without a designer-pixel hunt, narrow enough that
-/// the panel doesn't look like it has a gutter.
+/// Width of the horizontal (scene-facing) resize-handle hit zone.
 const RESIZE_HANDLE_W: f32 = 6.0;
+/// Height of the vertical (bottom/top) resize-handle hit zone.
+const RESIZE_HANDLE_H: f32 = 6.0;
 
 /// Minimum / maximum panel widths. Caller's `size.x` clamps inside
 /// this range on first draw; the user's drag does the same.
 const MIN_PANEL_W: f32 = 220.0;
-const MAX_PANEL_W: f32 = 900.0;
+const MAX_PANEL_W: f32 = 1600.0;
+/// Minimum / maximum panel heights — same intent as the widths.
+const MIN_PANEL_H: f32 = 120.0;
+const MAX_PANEL_H: f32 = 1600.0;
 
-/// Tiny sanity check: keeps the layout constants in this file in
-/// sync with the ribbon module's source-of-truth, through a simple
-/// `const` assertion (no runtime cost).
 const _: () = {
     assert!(EDGE_GAP == 8.0);
     assert!(SIDE_BTN_SIZE == 34.0);
     assert!(RAIL_PANEL_GAP == 6.0);
 };
 
-/// Paint a floating panel anchored to `anchor`. `size.x` is the
-/// *initial* width; once the user drags the resize handle on the
-/// scene-facing edge, the new width is stored per-panel-id in
-/// `egui::Context::data` and used on subsequent frames. `size.y` is
-/// the panel height (not resizable by this widget — drive it from
-/// caller state if you need it dynamic).
+/// Paint a floating panel anchored to `anchor`. `size.x` / `size.y`
+/// are the *initial* dimensions; once the user drags a resize
+/// handle the new values are stored per-panel-id in
+/// [`egui::Context::data`] and used on subsequent frames.
 ///
 /// Title alignment flips automatically on right-side anchors so a
-/// menu dragged across rails reads correctly, and the resize handle
-/// follows to the opposite side.
+/// menu dragged across rails reads correctly, and the horizontal
+/// resize handle follows to the opposite side. The vertical handle
+/// follows the same anchor-opposite rule.
 pub fn floating_window(
     ctx: &egui::Context,
     id: &'static str,
@@ -61,9 +68,6 @@ pub fn floating_window(
     accent: egui::Color32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    // Default scope keys width per-rail (Left / Right only). Used by
-    // callers that don't care about per-cluster widths — those hit
-    // `floating_window_scoped` directly with a bespoke scope id.
     let on_right_side = matches!(
         anchor,
         egui::Align2::RIGHT_TOP | egui::Align2::RIGHT_BOTTOM
@@ -76,11 +80,11 @@ pub fn floating_window(
     floating_window_scoped(ctx, id, title, anchor, size, open, accent, scope, add_contents)
 }
 
-/// Same as [`floating_window`] but the width-storage key is supplied
-/// by the caller. Use this when you want independent widths for
-/// panels that *share* an anchor side — e.g. a TwoSided ribbon's
-/// Start and End clusters both anchored to `LEFT_*` but each with
-/// its own width memory.
+/// Same as [`floating_window`] but the dim-storage key is supplied
+/// by the caller. Use this when you want independent widths /
+/// heights for panels that *share* an anchor side — e.g. a
+/// TwoSided ribbon's Start and End clusters both anchored to
+/// `LEFT_*` but each with its own memory.
 pub fn floating_window_scoped(
     ctx: &egui::Context,
     id: &'static str,
@@ -96,14 +100,61 @@ pub fn floating_window_scoped(
         anchor,
         egui::Align2::RIGHT_TOP | egui::Align2::RIGHT_CENTER | egui::Align2::RIGHT_BOTTOM
     );
+    // "Bottom-anchored" — panel grows upward from the bottom edge,
+    // so its vertical-resize handle lives on its TOP edge (the edge
+    // facing *away* from the anchor, same logic as the horizontal
+    // handle).
+    let bottom_anchored = matches!(
+        anchor,
+        egui::Align2::LEFT_BOTTOM
+            | egui::Align2::CENTER_BOTTOM
+            | egui::Align2::RIGHT_BOTTOM
+    );
 
     let width_id = width_scope;
+    let height_id = width_scope.with("_height");
+    // Maximise state keyed by panel-id (NOT the width scope, which is
+    // shared by all panels on a rail) — every panel has its own
+    // independent maximised flag.
+    let max_id = egui::Id::new(id).with("_maximized");
+
+    // Load stored values. Clamp to the current content_rect so
+    // shrinking the Bevy window never leaves the panel wider / taller
+    // than the visible area.
+    let screen = ctx.content_rect();
+    let side_inset = EDGE_GAP + SIDE_BTN_SIZE + RAIL_PANEL_GAP;
+    let max_allowed_w = (screen.width() - side_inset - EDGE_GAP)
+        .clamp(MIN_PANEL_W, MAX_PANEL_W);
+    let max_allowed_h = (screen.height() - 2.0 * EDGE_GAP)
+        .clamp(MIN_PANEL_H, MAX_PANEL_H);
+
     let stored_width: f32 = ctx
         .data(|d| d.get_temp::<f32>(width_id))
         .unwrap_or(size.x)
-        .clamp(MIN_PANEL_W, MAX_PANEL_W);
+        .clamp(MIN_PANEL_W, max_allowed_w);
+    let stored_height: f32 = ctx
+        .data(|d| d.get_temp::<f32>(height_id))
+        .unwrap_or(size.y)
+        .clamp(MIN_PANEL_H, max_allowed_h);
 
-    let side_inset = EDGE_GAP + SIDE_BTN_SIZE + RAIL_PANEL_GAP;
+    // Write the clamped values back so a shrunken Bevy window
+    // permanently shrinks the stored values (user's drag wasn't
+    // wasted, but it no longer exceeds the visible area).
+    ctx.data_mut(|d| {
+        d.insert_temp::<f32>(width_id, stored_width);
+        d.insert_temp::<f32>(height_id, stored_height);
+    });
+
+    // If maximised, the effective size jumps to the full window
+    // (minus the ribbon inset on the anchor side) WITHOUT overwriting
+    // the user's remembered width/height — so un-maximising snaps
+    // the panel straight back to whatever it was before.
+    let maximized: bool = ctx
+        .data(|d| d.get_temp::<bool>(max_id))
+        .unwrap_or(false);
+    let effective_width = if maximized { max_allowed_w } else { stored_width };
+    let effective_height = if maximized { max_allowed_h } else { stored_height };
+
     // Handle every anchor that a ribbon cluster might hand us —
     // corners AND the three `*_CENTER` variants used by `Middle`
     // clusters. Centre anchors keep the non-anchored axis at 0 so
@@ -121,9 +172,6 @@ pub fn floating_window_scoped(
     };
 
     let frame = egui::Frame {
-        // Tight inner margin — containers sit almost flush with the
-        // panel edge. Bump these back up if content starts clipping
-        // against the rounded corner.
         inner_margin: egui::Margin { left: 2, right: 2, top: 2, bottom: 2 },
         outer_margin: egui::Margin::ZERO,
         fill: glass_fill(BG_1_PANEL, accent, glass_alpha_window()),
@@ -137,38 +185,60 @@ pub fn floating_window_scoped(
         },
     };
 
-    // Width is pinned (from `stored_width`); height is content-
-    // driven. `size.y` was the caller's initial / max-ish hint; we
-    // don't enforce it as min so empty panels don't stretch to it.
+    // Both dimensions are pinned — `min_size == max_size`. That lets
+    // the vertical handle actually do something (before this, height
+    // was content-driven and nothing a vertical drag could change).
+    let pinned_size = egui::vec2(effective_width, effective_height);
+    let mut toggle_max = false;
     let inner = egui::Window::new(title)
         .id(egui::Id::new(id))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
         .anchor(anchor, anchor_offset)
-        .min_size(egui::vec2(stored_width, 0.0))
-        .max_size(egui::vec2(stored_width, f32::INFINITY))
+        .min_size(pinned_size)
+        .max_size(pinned_size)
         .frame(frame)
         .show(ctx, |ui| {
-            // Inner-margin (2 px) × 2 sides + stroke accounts for
-            // the inset beyond the effective width.
-            ui.set_max_width(stored_width - 6.0);
+            ui.set_max_width(effective_width - 6.0);
 
-            // Title row — UPPERCASE accent at the rail-facing edge,
-            // with a hairline underneath and breathing space before
-            // the content. `TITLE_INSET` keeps the title from kissing
-            // the rounded corner.
             const TITLE_INSET: f32 = 8.0;
+            const MAX_BTN_W: f32 = 18.0;
+            const MAX_BTN_GAP: f32 = 4.0;
             let title_size = 15.0 * 1.15;
             let title_h = 25.0;
             let (rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), title_h),
                 egui::Sense::hover(),
             );
+
+            // Maximise / restore button — always at the TOP-LEFT of
+            // the panel, regardless of anchor. Left-aligned titles
+            // shift right to make room; right-aligned titles sit far
+            // away on the other edge so they don't overlap.
+            let btn_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.min.x + TITLE_INSET - 4.0,
+                    rect.center().y - MAX_BTN_W * 0.5,
+                ),
+                egui::vec2(MAX_BTN_W, MAX_BTN_W),
+            );
+            let btn_id = ui.id().with(("frost_floating_maximize", id));
+            let btn_resp = ui.interact(btn_rect, btn_id, egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if maximized { "Restore" } else { "Maximize" });
+            if btn_resp.clicked() {
+                toggle_max = true;
+            }
+            paint_max_glyph(&ui.painter(), btn_rect, maximized, accent, btn_resp.hovered());
+
+            // Title row — shift the left-aligned text past the
+            // maximise button so the two don't collide.
+            let left_inset = TITLE_INSET + MAX_BTN_W + MAX_BTN_GAP;
             let (align, tx) = if on_right_side {
                 (egui::Align2::RIGHT_CENTER, rect.max.x - TITLE_INSET)
             } else {
-                (egui::Align2::LEFT_CENTER, rect.min.x + TITLE_INSET)
+                (egui::Align2::LEFT_CENTER, rect.min.x + left_inset)
             };
             let pos = egui::pos2(tx, rect.center().y);
             let font = egui::FontId::new(title_size, egui::FontFamily::Proportional);
@@ -189,24 +259,17 @@ pub fn floating_window_scoped(
             ui.add_space(6.0);
 
             add_contents(ui);
-
-            // No vertical filler — panel height is content-driven.
-            // The resize handle below reads `inner.response.rect`,
-            // which is the ACTUAL painted rect, so it always hugs
-            // the visible panel regardless of content size.
         });
 
-    // ── Resize handle ──────────────────────────────────────────────
-    //
-    // Use the window's ACTUAL painted rect (not a rect we compute
-    // ourselves) so the hit zone + visual hint match exactly the
-    // panel the user sees. The body's trailing `add_space` above
-    // guarantees that rect is the full `effective_size.y`, so the
-    // handle covers the entire scene-facing edge and no more.
+    if toggle_max {
+        ctx.data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
+    }
+
     let Some(inner) = inner else { return };
     let win_rect = inner.response.rect;
 
-    let handle_rect = if on_right_side {
+    // ── Horizontal resize handle (scene-facing edge) ──────────────
+    let h_handle_rect = if on_right_side {
         egui::Rect::from_min_size(
             egui::pos2(win_rect.min.x - RESIZE_HANDLE_W * 0.5, win_rect.min.y),
             egui::vec2(RESIZE_HANDLE_W, win_rect.height()),
@@ -217,16 +280,12 @@ pub fn floating_window_scoped(
             egui::vec2(RESIZE_HANDLE_W, win_rect.height()),
         )
     };
-
-    // Handle Area id derives from the width scope, so each scope
-    // (per-rail, per-cluster, or whatever the caller picked) gets
-    // its own hit zone.
-    let area_id = width_id.with("resize_handle");
-    egui::Area::new(area_id)
+    let h_area_id = width_id.with("resize_handle_w");
+    egui::Area::new(h_area_id)
         .order(egui::Order::Foreground)
-        .fixed_pos(handle_rect.min)
+        .fixed_pos(h_handle_rect.min)
         .show(ctx, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(handle_rect.size(), egui::Sense::drag());
+            let (rect, resp) = ui.allocate_exact_size(h_handle_rect.size(), egui::Sense::drag());
             let hot = resp.hovered() || resp.dragged();
             if hot {
                 ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -241,19 +300,99 @@ pub fn floating_window_scoped(
                     ),
                 );
             }
-            if resp.dragged() {
+            if resp.dragged() && !maximized {
                 let dx = resp.drag_delta().x;
-                // Right-anchored panels grow LEFT-ward, so a negative
-                // dx there should *add* width. Left-anchored panels
-                // grow RIGHT-ward, so positive dx adds width.
+                // Right-anchored panels grow LEFT-ward, so negative
+                // dx ADDS width there.
                 let new_w = if on_right_side {
                     stored_width - dx
                 } else {
                     stored_width + dx
                 };
-                let clamped = new_w.clamp(MIN_PANEL_W, MAX_PANEL_W);
+                let clamped = new_w.clamp(MIN_PANEL_W, max_allowed_w);
                 ctx.data_mut(|d| d.insert_temp::<f32>(width_id, clamped));
             }
         });
 
+    // ── Vertical resize handle (anchor-opposite edge) ─────────────
+    //
+    // Bottom edge for TOP/CENTER-anchored panels; top edge for
+    // BOTTOM-anchored ones — the edge that a drag "pulls" along the
+    // panel's growth direction.
+    let v_handle_rect = if bottom_anchored {
+        egui::Rect::from_min_size(
+            egui::pos2(win_rect.min.x, win_rect.min.y - RESIZE_HANDLE_H * 0.5),
+            egui::vec2(win_rect.width(), RESIZE_HANDLE_H),
+        )
+    } else {
+        egui::Rect::from_min_size(
+            egui::pos2(win_rect.min.x, win_rect.max.y - RESIZE_HANDLE_H * 0.5),
+            egui::vec2(win_rect.width(), RESIZE_HANDLE_H),
+        )
+    };
+    let v_area_id = width_id.with("resize_handle_h");
+    egui::Area::new(v_area_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(v_handle_rect.min)
+        .show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(v_handle_rect.size(), egui::Sense::drag());
+            let hot = resp.hovered() || resp.dragged();
+            if hot {
+                ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                ui.painter().rect_filled(
+                    rect,
+                    egui::CornerRadius::same(2),
+                    egui::Color32::from_rgba_unmultiplied(
+                        accent.r(),
+                        accent.g(),
+                        accent.b(),
+                        if resp.dragged() { 120 } else { 70 },
+                    ),
+                );
+            }
+            if resp.dragged() && !maximized {
+                let dy = resp.drag_delta().y;
+                // Bottom-anchored grows UP; drag up (negative dy) ADDS
+                // height. Top-anchored grows DOWN; drag down (positive
+                // dy) ADDS height.
+                let new_h = if bottom_anchored {
+                    stored_height - dy
+                } else {
+                    stored_height + dy
+                };
+                let clamped = new_h.clamp(MIN_PANEL_H, max_allowed_h);
+                ctx.data_mut(|d| d.insert_temp::<f32>(height_id, clamped));
+            }
+        });
+}
+
+/// Paint the maximise / restore glyph inside `rect`. Maximise =
+/// single hollow square. Restore = two overlapping hollow squares
+/// (classic Win9x motif). Hover brightens the stroke to the full
+/// accent.
+fn paint_max_glyph(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    maximized: bool,
+    accent: egui::Color32,
+    hovered: bool,
+) {
+    let color = if hovered {
+        accent
+    } else {
+        egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 190)
+    };
+    let stroke = egui::Stroke::new(1.2, color);
+    if maximized {
+        // Two overlapping hollow squares — back one up-left, front
+        // one down-right. Reads as "restore from maximised".
+        let back = rect.shrink(2.5).translate(egui::vec2(1.2, -1.2));
+        let front = rect.shrink(3.5).translate(egui::vec2(-1.2, 1.2));
+        painter.rect_stroke(back, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
+        painter.rect_stroke(front, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
+    } else {
+        // Single hollow square — "maximise".
+        let inner = rect.shrink(3.0);
+        painter.rect_stroke(inner, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
+    }
 }

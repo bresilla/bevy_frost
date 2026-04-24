@@ -44,6 +44,7 @@ pub mod floating;
 pub mod gizmo_material;
 pub mod prelude;
 pub mod ribbon;
+pub mod snarl;
 pub mod style;
 pub mod widgets;
 

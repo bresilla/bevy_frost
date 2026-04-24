@@ -34,6 +34,9 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_frost::prelude::*;
+use bevy_frost::snarl::{
+    frost_snarl_style, InPin, OutPin, PinInfo, Snarl, SnarlPin, SnarlViewer, SnarlWidget,
+};
 use bevy_frost::style::srgb_to_egui;
 
 // Ribbon + menu identifiers. `RibbonOpen` indexes by ribbon id and
@@ -45,6 +48,7 @@ const RIBBON_RIGHT: &str = "demo_ribbon_right";
 const MENU_WIDGETS: &str = "demo_menu_widgets";
 const MENU_CONTAINERS: &str = "demo_menu_containers";
 const MENU_SCENE: &str = "demo_menu_scene";
+const MENU_GRAPH: &str = "demo_menu_graph";
 const MENU_THEME: &str = "demo_menu_theme";
 const MENU_KEYS: &str = "demo_menu_keys";
 const MENU_ABOUT: &str = "demo_menu_about";
@@ -103,6 +107,17 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         slot: 2,
         glyph: "S",
         tooltip: "Scene outliner",
+        child_ribbon: None,
+    },
+    // Graph — LEFT rail, BOTTOM (`End`) cluster. Shows the
+    // egui-snarl integration with frost-styled nodes / wires.
+    RibbonItem {
+        id: MENU_GRAPH,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: "N",
+        tooltip: "Node graph",
         child_ribbon: None,
     },
     RibbonItem {
@@ -208,6 +223,12 @@ struct DemoState {
     // RGBA demo colour — bound to `color_rgba` in the Theme panel to
     // showcase the alpha-capable variant of the inline colour picker.
     tint_rgba: [f32; 4],
+
+    // Node-graph state for the Graph panel — the `Snarl<GraphNode>`
+    // holds the graph data (nodes + connections) and `GraphViewer`
+    // is the frost-styled viewer that drives rendering.
+    graph: Snarl<GraphNode>,
+    graph_viewer: GraphViewer,
 }
 
 impl Default for DemoState {
@@ -246,8 +267,176 @@ impl Default for DemoState {
             scene_scroll_h: TREE_ROW_H * 8.0,
             flat_scroll_h: HYBRID_SELECT_ROW_H * 8.0,
             tint_rgba: [0.30, 0.70, 0.95, 0.60],
+            graph: default_graph(),
+            graph_viewer: GraphViewer,
         }
     }
+}
+
+// ─── Graph (egui-snarl) data + viewer ──────────────────────────────
+
+/// Nodes in the demo graph. Kept deliberately small so the focus is
+/// on wiring / UI — Number sources a value, Add sums two inputs,
+/// Output shows the arriving value.
+#[derive(Clone)]
+enum GraphNode {
+    Number(f64),
+    Add,
+    Output,
+}
+
+impl GraphNode {
+    fn title(&self) -> &'static str {
+        match self {
+            GraphNode::Number(_) => "Number",
+            GraphNode::Add => "Add",
+            GraphNode::Output => "Output",
+        }
+    }
+    fn inputs(&self) -> usize {
+        match self {
+            GraphNode::Number(_) => 0,
+            GraphNode::Add => 2,
+            GraphNode::Output => 1,
+        }
+    }
+    fn outputs(&self) -> usize {
+        match self {
+            GraphNode::Number(_) => 1,
+            GraphNode::Add => 1,
+            GraphNode::Output => 0,
+        }
+    }
+}
+
+fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
+    match snarl.get_node(pin.id.node) {
+        Some(GraphNode::Number(v)) => *v,
+        Some(GraphNode::Add) => {
+            let mut sum = 0.0;
+            for i in 0..2 {
+                let in_pin = snarl.in_pin(egui_snarl::InPinId {
+                    node: pin.id.node,
+                    input: i,
+                });
+                for remote in &in_pin.remotes {
+                    let out_pin = snarl.out_pin(*remote);
+                    sum += eval_output(snarl, &out_pin);
+                }
+            }
+            sum
+        }
+        _ => 0.0,
+    }
+}
+
+fn eval_input(snarl: &Snarl<GraphNode>, pin: &InPin) -> f64 {
+    pin.remotes
+        .iter()
+        .map(|remote| eval_output(snarl, &snarl.out_pin(*remote)))
+        .sum()
+}
+
+#[derive(Default)]
+struct GraphViewer;
+
+impl SnarlViewer<GraphNode> for GraphViewer {
+    fn title(&mut self, node: &GraphNode) -> String {
+        node.title().into()
+    }
+    fn inputs(&mut self, node: &GraphNode) -> usize {
+        node.inputs()
+    }
+    fn outputs(&mut self, node: &GraphNode) -> usize {
+        node.outputs()
+    }
+
+    fn show_input(
+        &mut self,
+        pin: &InPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        match snarl.get_node(pin.id.node) {
+            Some(GraphNode::Add) => {
+                let name = if pin.id.input == 0 { "a" } else { "b" };
+                if pin.remotes.is_empty() {
+                    ui.label(format!("{name} = 0"));
+                } else {
+                    ui.label(format!("{name} = {:.2}", eval_input(snarl, pin)));
+                }
+            }
+            Some(GraphNode::Output) => {
+                let v = eval_input(snarl, pin);
+                ui.label(format!("= {v:.3}"));
+            }
+            _ => {}
+        }
+        PinInfo::circle()
+    }
+
+    fn show_output(
+        &mut self,
+        pin: &OutPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        if let Some(GraphNode::Number(v)) = snarl.get_node_mut(pin.id.node) {
+            ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
+        } else if let Some(GraphNode::Add) = snarl.get_node(pin.id.node) {
+            let v = eval_output(snarl, pin);
+            ui.label(format!("= {v:.3}"));
+        }
+        PinInfo::circle()
+    }
+
+    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<GraphNode>) -> bool {
+        true
+    }
+
+    fn show_graph_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
+        ui.label("Add node");
+        if ui.button("Number").clicked() {
+            snarl.insert_node(pos, GraphNode::Number(0.0));
+            ui.close();
+        }
+        if ui.button("Add").clicked() {
+            snarl.insert_node(pos, GraphNode::Add);
+            ui.close();
+        }
+        if ui.button("Output").clicked() {
+            snarl.insert_node(pos, GraphNode::Output);
+            ui.close();
+        }
+    }
+}
+
+/// Seed: `2 + 3 → Output` so the panel opens with something to look
+/// at. Right-click the canvas for `Add node` to extend.
+fn default_graph() -> Snarl<GraphNode> {
+    let mut g = Snarl::new();
+    let a = g.insert_node(egui::pos2(30.0, 40.0), GraphNode::Number(2.0));
+    let b = g.insert_node(egui::pos2(30.0, 130.0), GraphNode::Number(3.0));
+    let add = g.insert_node(egui::pos2(220.0, 80.0), GraphNode::Add);
+    let out = g.insert_node(egui::pos2(420.0, 80.0), GraphNode::Output);
+    g.connect(
+        egui_snarl::OutPinId { node: a, output: 0 },
+        egui_snarl::InPinId { node: add, input: 0 },
+    );
+    g.connect(
+        egui_snarl::OutPinId { node: b, output: 0 },
+        egui_snarl::InPinId { node: add, input: 1 },
+    );
+    g.connect(
+        egui_snarl::OutPinId { node: add, output: 0 },
+        egui_snarl::InPinId { node: out, input: 0 },
+    );
+    g
 }
 
 /// A stand-in for a USD prim or Bevy entity — one row in the scene
@@ -1177,6 +1366,14 @@ fn draw_panels(
             |ui| elements_panel(ui, &mut state, accent_col),
         );
     }
+    if is_open(MENU_GRAPH) {
+        floating_window_for_item(
+            ctx, RIBBONS, RIBBON_ITEMS, &placement,
+            MENU_GRAPH, "Graph", egui::vec2(560.0, 420.0),
+            &mut keep_open, accent_col,
+            |ui| graph_panel(ui, &mut state, accent_col),
+        );
+    }
     if is_open(MENU_THEME) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
@@ -1413,6 +1610,21 @@ fn containers_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Colo
                     &mut state.rotation_deg[2], 1.0, "°", 2);
             },
         );
+    });
+}
+
+fn graph_panel(ui: &mut egui::Ui, state: &mut DemoState, accent: egui::Color32) {
+    section(ui, "demo_graph", "Node graph", accent, true, |ui| {
+        sub_caption(ui, "right-click the canvas to add nodes");
+        // Split-borrow through the `&mut DemoState` so the snarl
+        // widget can take `&mut graph` AND `&mut graph_viewer`
+        // simultaneously.
+        let s: &mut DemoState = state;
+        SnarlWidget::new()
+            .id_salt("demo_graph_snarl")
+            .style(frost_snarl_style(accent))
+            .min_size(egui::vec2(ui.available_width(), 300.0))
+            .show(&mut s.graph, &mut s.graph_viewer, ui);
     });
 }
 
