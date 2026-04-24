@@ -181,6 +181,21 @@ impl RibbonOpen {
             self.per_ribbon.insert(ribbon, item);
         }
     }
+
+    /// Close every currently-open pane across every ribbon. Use
+    /// from command-palette actions that open ONE pane — call
+    /// this first so previously-open panes don't leak through.
+    pub fn close_all(&mut self) {
+        self.per_ribbon.clear();
+    }
+
+    /// Force a specific pane open, closing any other panes on
+    /// the same ribbon. Equivalent to `close_all()` +
+    /// `toggle(ribbon, item)` with the guarantee that `item`
+    /// ends up open afterwards regardless of the previous state.
+    pub fn set(&mut self, ribbon: &'static str, item: &'static str) {
+        self.per_ribbon.insert(ribbon, item);
+    }
 }
 
 /// Panel widths keyed by `(ribbon_id, cluster)`. Widths persist

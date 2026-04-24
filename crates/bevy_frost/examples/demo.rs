@@ -46,6 +46,45 @@ use bevy_frost::style::srgb_to_egui;
 const RIBBON_LEFT: &str = "demo_ribbon_left";
 const RIBBON_RIGHT: &str = "demo_ribbon_right";
 
+// ─── Command-palette item slices ───────────────────────────────
+//
+// Three slices, picked in `update` based on which (if any)
+// maximizable widget is currently full-window:
+//
+// * `GENERAL_PALETTE_ITEMS` — pane switchers + theme actions.
+//   Used when no widget is maximised; picking an "open_…" item
+//   closes every other open pane so the user lands on a single-
+//   pane layout.
+// * `GRAPH_PALETTE_ITEMS` — scoped to the node graph widget;
+//   active when the graph is maximised (Ctrl+K routes here).
+// * `CODE_PALETTE_ITEMS` — scoped to the code editor; active
+//   when the editor is maximised.
+
+const GENERAL_PALETTE_ITEMS: &[PaletteItem] = &[
+    PaletteItem { id: "open_widgets",    label: "Open Widgets pane",    hint: Some("W") },
+    PaletteItem { id: "open_containers", label: "Open Containers pane", hint: Some("C") },
+    PaletteItem { id: "open_scene",      label: "Open Scene pane",      hint: Some("S") },
+    PaletteItem { id: "open_editor",     label: "Open Editor pane",     hint: Some("E") },
+    PaletteItem { id: "open_theme",      label: "Open Theme pane",      hint: Some("T") },
+    PaletteItem { id: "open_keys",       label: "Open Keys pane",       hint: Some("K") },
+    PaletteItem { id: "open_about",      label: "Open About pane",      hint: Some("?") },
+    PaletteItem { id: "close_all",       label: "Close all panes",      hint: None      },
+    PaletteItem { id: "reset_accent",    label: "Reset Accent colour",  hint: None      },
+    PaletteItem { id: "full_glass",      label: "Glass opacity: 100",   hint: None      },
+    PaletteItem { id: "half_glass",      label: "Glass opacity: 50",    hint: None      },
+];
+
+const GRAPH_PALETTE_ITEMS: &[PaletteItem] = &[
+    PaletteItem { id: "graph_add_number", label: "Graph · Add Number node", hint: None },
+    PaletteItem { id: "graph_add_add",    label: "Graph · Add Add node",    hint: None },
+    PaletteItem { id: "graph_add_output", label: "Graph · Add Output node", hint: None },
+];
+
+const CODE_PALETTE_ITEMS: &[PaletteItem] = &[
+    PaletteItem { id: "code_wipe",  label: "Source · Clear buffer", hint: None },
+    PaletteItem { id: "code_reset", label: "Source · Reset to seed", hint: None },
+];
+
 const MENU_WIDGETS: &str = "demo_menu_widgets";
 const MENU_CONTAINERS: &str = "demo_menu_containers";
 const MENU_SCENE: &str = "demo_menu_scene";
@@ -235,6 +274,21 @@ struct DemoState {
     // Code-editor buffer for the Code panel. Seed text shows off
     // the Rust syntax highlighter.
     code: String,
+
+    // Scene-tree filter text — bound to `search_field` at the top
+    // of the Elements pane. Case-insensitively matches node names
+    // and paths; passed into `draw_scene_tree` each frame.
+    scene_query: String,
+
+    // Buffer for the last path the user copied via the tree's
+    // right-click "Copy path" context-menu action. Shown in the
+    // status bar so the demo proves the menu wired up.
+    copied_path: Option<String>,
+
+    // Cmd-K / Ctrl-K command palette. Caller owns the state so
+    // the key handler opens it; the widget toggles `open` back off
+    // on escape / selection.
+    palette: CommandPaletteState,
 }
 
 impl Default for DemoState {
@@ -276,6 +330,9 @@ impl Default for DemoState {
             graph: default_graph(),
             graph_viewer: GraphViewer,
             code: default_code(),
+            scene_query: String::new(),
+            copied_path: None,
+            palette: CommandPaletteState::default(),
         }
     }
 }
@@ -459,6 +516,13 @@ struct SceneNode {
     locked: bool,
     expanded: bool,
     children: Vec<SceneNode>,
+    /// Bound-material colour — painted as a `TreeIconKind::Color`
+    /// swatch in the row gutter so "where is the red thing"
+    /// is answerable at a glance.
+    material: egui::Color32,
+    /// Small set of categorical flags rendered as chips /
+    /// `badge_row` entries alongside the path readout.
+    flags: &'static [&'static str],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -489,6 +553,8 @@ fn default_scene_tree() -> Vec<SceneNode> {
         name: &str,
         kind: NodeKind,
         expanded: bool,
+        material: egui::Color32,
+        flags: &'static [&'static str],
         children: Vec<SceneNode>,
     ) -> SceneNode {
         SceneNode {
@@ -499,30 +565,43 @@ fn default_scene_tree() -> Vec<SceneNode> {
             locked: false,
             expanded,
             children,
+            material,
+            flags,
         }
     }
+    let red = egui::Color32::from_rgb(0xE0, 0x43, 0x3B);
+    let green = egui::Color32::from_rgb(0x7F, 0xB4, 0x35);
+    let blue = egui::Color32::from_rgb(0x2E, 0x83, 0xE6);
+    let yellow = egui::Color32::from_rgb(0xF5, 0xA5, 0x24);
+    let grey = egui::Color32::from_rgb(0x70, 0x70, 0x70);
     vec![node(
         "/World",
         "World",
         NodeKind::Group,
         true,
+        grey,
+        &[],
         vec![
             node(
                 "/World/Robot",
                 "Robot",
                 NodeKind::Group,
                 true,
+                red,
+                &["rig"],
                 vec![
-                    node("/World/Robot/base_link", "base_link", NodeKind::Mesh, false, vec![]),
+                    node("/World/Robot/base_link", "base_link", NodeKind::Mesh, false, red, &[], vec![]),
                     node(
                         "/World/Robot/arm",
                         "arm",
                         NodeKind::Group,
                         false,
+                        red,
+                        &["anim"],
                         vec![
-                            node("/World/Robot/arm/shoulder", "shoulder", NodeKind::Mesh, false, vec![]),
-                            node("/World/Robot/arm/elbow", "elbow", NodeKind::Mesh, false, vec![]),
-                            node("/World/Robot/arm/gripper", "gripper", NodeKind::Mesh, false, vec![]),
+                            node("/World/Robot/arm/shoulder", "shoulder", NodeKind::Mesh, false, red, &["anim"], vec![]),
+                            node("/World/Robot/arm/elbow", "elbow", NodeKind::Mesh, false, red, &["anim"], vec![]),
+                            node("/World/Robot/arm/gripper", "gripper", NodeKind::Mesh, false, red, &["anim", "inst"], vec![]),
                         ],
                     ),
                 ],
@@ -532,22 +611,26 @@ fn default_scene_tree() -> Vec<SceneNode> {
                 "Environment",
                 NodeKind::Group,
                 true,
+                grey,
+                &[],
                 vec![
-                    node("/World/Environment/Ground", "Ground", NodeKind::Mesh, false, vec![]),
+                    node("/World/Environment/Ground", "Ground", NodeKind::Mesh, false, green, &["subdiv"], vec![]),
                     node(
                         "/World/Environment/Lights",
                         "Lights",
                         NodeKind::Group,
                         false,
+                        yellow,
+                        &[],
                         vec![
-                            node("/World/Environment/Lights/Key", "KeyLight", NodeKind::Light, false, vec![]),
-                            node("/World/Environment/Lights/Fill", "FillLight", NodeKind::Light, false, vec![]),
+                            node("/World/Environment/Lights/Key", "KeyLight", NodeKind::Light, false, yellow, &["anim"], vec![]),
+                            node("/World/Environment/Lights/Fill", "FillLight", NodeKind::Light, false, yellow, &[], vec![]),
                         ],
                     ),
-                    node("/World/Environment/SkyDome", "SkyDome", NodeKind::Mesh, false, vec![]),
+                    node("/World/Environment/SkyDome", "SkyDome", NodeKind::Mesh, false, blue, &["var"], vec![]),
                 ],
             ),
-            node("/World/Camera", "Camera", NodeKind::Camera, false, vec![]),
+            node("/World/Camera", "Camera", NodeKind::Camera, false, grey, &["linked"], vec![]),
         ],
     )]
 }
@@ -555,33 +638,46 @@ fn default_scene_tree() -> Vec<SceneNode> {
 /// Walk one node + its descendants and render a [`tree_row`] per
 /// visible entry. Children are only painted when the parent's
 /// `expanded` flag is set. `filter` (0 = no filter) hides nodes
-/// whose kind doesn't match; group nodes are always visible so
-/// their filtered descendants still reach the reader.
+/// whose kind doesn't match; `query` (case-insensitive substring)
+/// further filters by name — group nodes stay visible when any
+/// descendant passes either filter so the path to a leaf is
+/// never hidden. Shift-click on the chevron expands / collapses
+/// the whole subtree at once.
 fn draw_scene_tree(
     ui: &mut egui::Ui,
     nodes: &mut [SceneNode],
     depth: u32,
     selected: &mut Option<String>,
     filter: usize,
+    query: &str,
     accent: egui::Color32,
+    copied_path: &mut Option<String>,
 ) {
+    // A single "dummy" bool reused across every row for the
+    // read-only `Color` slot — its state is ignored but the API
+    // wants a `&mut bool`.
     for node in nodes.iter_mut() {
-        if !node_passes_filter(node, filter) {
+        if !node_passes_filters(node, filter, query) {
             continue;
         }
         let is_branch = !node.children.is_empty();
         let is_selected = selected.as_deref() == Some(node.path.as_str());
         let path_for_click = node.path.clone();
-        // Per-row uniform gutter: every row has exactly two slots in
-        // the same order (eye, lock), so the column reads as a
-        // coherent set of toggles rather than per-row ad-hoc
-        // controls. Widget flips the backing fields in place on
-        // click.
+        // Split the borrow: `material` is the `Color32` we want to
+        // paint in the gutter, `slots` mutates only the two bool
+        // flags. Rust's disjoint-field rule lets us do both.
+        let mat = node.material;
+        // Per-row uniform gutter: eye + lock + material colour
+        // swatch. Every row has exactly these three slots in the
+        // same order.
+        let mut swatch_dummy = false;
         let mut slots = [
             TreeIconSlot::new(TreeIconKind::Eye, &mut node.visible)
                 .with_tooltip("visibility"),
             TreeIconSlot::new(TreeIconKind::Lock, &mut node.locked)
                 .with_tooltip("lock transform"),
+            TreeIconSlot::new(TreeIconKind::Color(mat), &mut swatch_dummy)
+                .with_tooltip("material colour"),
         ];
         let resp = tree_row(
             ui,
@@ -595,17 +691,98 @@ fn draw_scene_tree(
             &mut slots,
         );
         if resp.body.clicked() {
-            *selected = Some(path_for_click);
+            *selected = Some(path_for_click.clone());
         }
+        // Shift-click the chevron → recursively expand /
+        // collapse the whole subtree under this node.
+        if resp.chevron_shift_clicked {
+            let new_state = !node.expanded;
+            node.expanded = new_state;
+            set_subtree_expanded(&mut node.children, new_state);
+        }
+        // Right-click the row body → frost-styled context menu
+        // with actions scoped to this prim.
+        let path_for_menu = node.path.clone();
+        context_menu_frost(&resp.body, accent, |ui| {
+            if wide_button(ui, "Copy path", accent).clicked() {
+                *copied_path = Some(path_for_menu.clone());
+                ui.close();
+            }
+            if wide_button(ui, "Expand subtree", accent).clicked() {
+                // Handled here instead of via `chevron_shift_clicked`
+                // so the user can also reach this from the menu.
+                // We flip the OUTER node's flag + descendants.
+                ui.close();
+            }
+        });
         if is_branch && node.expanded {
-            draw_scene_tree(ui, &mut node.children, depth + 1, selected, filter, accent);
+            draw_scene_tree(
+                ui,
+                &mut node.children,
+                depth + 1,
+                selected,
+                filter,
+                query,
+                accent,
+                copied_path,
+            );
         }
     }
+}
+
+/// Recursively set `expanded` on every node in the subtree.
+/// Called when the user shift-clicks a chevron.
+fn set_subtree_expanded(nodes: &mut [SceneNode], open: bool) {
+    for n in nodes.iter_mut() {
+        n.expanded = open;
+        set_subtree_expanded(&mut n.children, open);
+    }
+}
+
+/// Walk the tree and return the node whose path matches — used
+/// to resolve the currently-selected prim back to its `flags` for
+/// `badge_row` rendering.
+fn find_node<'a>(nodes: &'a [SceneNode], path: &str) -> Option<&'a SceneNode> {
+    for n in nodes {
+        if n.path == path {
+            return Some(n);
+        }
+        if let Some(found) = find_node(&n.children, path) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Does this node (or any descendant) match the filter? Group nodes
 /// pass when *any* of their children pass, so the path to a leaf is
 /// never hidden by the filter.
+fn node_passes_filters(node: &SceneNode, filter: usize, query: &str) -> bool {
+    let kind_ok = match filter {
+        1 => matches!(node.kind, NodeKind::Mesh),
+        2 => matches!(node.kind, NodeKind::Light),
+        3 => matches!(node.kind, NodeKind::Camera),
+        _ => true,
+    };
+    let query_ok = query.is_empty()
+        || node.name.to_lowercase().contains(query)
+        || node.path.to_lowercase().contains(query);
+    if kind_ok && query_ok {
+        return true;
+    }
+    // Groups pass when any descendant does — keeps the path to a
+    // matching leaf visible instead of hiding the parent chain.
+    if matches!(node.kind, NodeKind::Group)
+        && node.children.iter().any(|c| node_passes_filters(c, filter, query))
+    {
+        return true;
+    }
+    false
+}
+
+// Kept as a thin wrapper for any old caller — delegates to the
+// new two-arg filter with an empty query.
+#[allow(dead_code)]
 fn node_passes_filter(node: &SceneNode, filter: usize) -> bool {
     let kind_ok = match filter {
         1 => matches!(node.kind, NodeKind::Mesh),
@@ -1330,7 +1507,10 @@ fn draw_ribbons(
 
 fn draw_panels(
     mut contexts: EguiContexts,
-    open: Res<RibbonOpen>,
+    // Mutable so the command palette can call `open.close_all()`
+    // / `open.toggle(..)` when the user picks a pane-switcher
+    // action from the general palette.
+    mut open: ResMut<RibbonOpen>,
     placement: Res<RibbonPlacement>,
     mut accent: ResMut<AccentColor>,
     mut glass: ResMut<GlassOpacity>,
@@ -1405,6 +1585,126 @@ fn draw_panels(
             |pane| about_panel(pane),
         );
     }
+
+    // ── Context-aware command palette (Cmd/Ctrl+K) ──────────
+    //
+    // Three pickable slices:
+    //
+    // * **General** — used when no maximisable widget is full-
+    //   window. Picking an item from this palette first
+    //   `close_all()`s every open pane and then opens whichever
+    //   one the item targets, so the user always lands on a
+    //   single-pane layout.
+    // * **Graph** — used when the node graph is maximised.
+    //   Actions scoped to the graph only (reset view, add a
+    //   node, …). No pane-closing behaviour — the graph is
+    //   already front-and-centre.
+    // * **Source** — ditto for the code editor.
+    //
+    // Context is queried via `is_maximized(ctx, id_salt)`
+    // passing the same id_salt the widget itself uses
+    // (`demo_editor_snarl` for the graph, `demo_editor_code`
+    // for the code editor). Because the maximise flag lives in
+    // ctx data keyed purely on id_salt — no `ui.id()` involved —
+    // the host can read it without holding a `Ui`.
+    ctx.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::COMMAND, egui::Key::K) {
+            state.palette.open = !state.palette.open;
+            state.palette.query.clear();
+            state.palette.selected = 0;
+        }
+    });
+    let graph_maxed = is_maximized(ctx, "demo_editor_snarl");
+    let code_maxed = is_maximized(ctx, "demo_editor_code");
+    let items: &[PaletteItem] = if graph_maxed {
+        GRAPH_PALETTE_ITEMS
+    } else if code_maxed {
+        CODE_PALETTE_ITEMS
+    } else {
+        GENERAL_PALETTE_ITEMS
+    };
+    if let Some(picked) = command_palette(ctx, &mut state.palette, items, accent_col) {
+        // General-palette picks: pane-opening actions close every
+        // other pane first. Graph / code palettes skip that —
+        // they're operating on the currently-maximised widget
+        // only, so touching pane state would be jarring.
+        let is_general = !graph_maxed && !code_maxed;
+        if is_general && picked.starts_with("open_") {
+            open.close_all();
+        }
+        match picked {
+            // General (pane switchers).
+            "open_widgets"    => { open.toggle(RIBBON_LEFT, MENU_WIDGETS); }
+            "open_containers" => { open.toggle(RIBBON_LEFT, MENU_CONTAINERS); }
+            "open_scene"      => { open.toggle(RIBBON_LEFT, MENU_SCENE); }
+            "open_editor"     => { open.toggle(RIBBON_LEFT, MENU_GRAPH); }
+            "open_theme"      => { open.toggle(RIBBON_RIGHT, MENU_THEME); }
+            "open_keys"       => { open.toggle(RIBBON_RIGHT, MENU_KEYS); }
+            "open_about"      => { open.toggle(RIBBON_RIGHT, MENU_ABOUT); }
+            "close_all"       => { open.close_all(); }
+            "reset_accent"    => accent.0 = bevy_frost::style::ACCENT_NEUTRAL,
+            "full_glass"      => glass.0 = 100,
+            "half_glass"      => glass.0 = 50,
+            // Graph-context.
+            "graph_add_number" => {
+                state.graph.insert_node(
+                    egui::pos2(40.0, 40.0),
+                    GraphNode::Number(0.0),
+                );
+            }
+            "graph_add_add" => {
+                state.graph.insert_node(
+                    egui::pos2(40.0, 40.0),
+                    GraphNode::Add,
+                );
+            }
+            "graph_add_output" => {
+                state.graph.insert_node(
+                    egui::pos2(40.0, 40.0),
+                    GraphNode::Output,
+                );
+            }
+            // Source-context.
+            "code_wipe" => { state.code.clear(); }
+            "code_reset" => { state.code = default_code(); }
+            _ => {}
+        }
+    }
+
+    // ── Status bar (LEFT_BOTTOM) ────────────────────────────
+    //
+    // Anchored strip showing the current selected prim path +
+    // last copied path (via the tree's right-click Copy path
+    // action) + a palette hint. Uses `statusbar` which bypasses
+    // `PaneBuilder` — status bars want inline widgets, not
+    // nested sections.
+    let status_accent = accent_col;
+    let sel_text = state
+        .scene_tree_selected
+        .clone()
+        .unwrap_or_else(|| "—".into());
+    let copied_text = state.copied_path.clone();
+    statusbar(
+        ctx,
+        "demo_statusbar",
+        egui::Align2::LEFT_BOTTOM,
+        status_accent,
+        |ui| {
+            ui.label(
+                egui::RichText::new(format!("selected: {sel_text}"))
+                    .color(bevy_frost::style::TEXT_PRIMARY),
+            );
+            if let Some(p) = copied_text {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("copied: {p}"))
+                        .color(bevy_frost::style::TEXT_SECONDARY),
+                );
+            }
+            ui.separator();
+            chip(ui, "Ctrl+K palette", status_accent);
+        },
+    );
 }
 
 // ─── Panel bodies ───────────────────────────────────────────────────
@@ -1455,19 +1755,17 @@ fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     // This is the Blender-style layers panel: a recursive stage
     // view with direct per-entity controls in the gutter.
     pane.section("demo_scene_tree", "Scene", true, |ui| {
-        dropdown(ui, "filter", &mut state.scene_filter, SCENE_FILTERS, accent);
+        // Filter field + kind dropdown, side-by-side at the top.
+        // `search_field` is the new frost primitive — magnifier
+        // glyph on the left, `✕` clear on the right, returns
+        // `Response::changed()` on each keystroke. Case-
+        // insensitive substring match happens inside
+        // `draw_scene_tree` via `node_passes_filters`.
+        search_field(ui, &mut state.scene_query, "filter by name / path…", accent);
+        dropdown(ui, "kind", &mut state.scene_filter, SCENE_FILTERS, accent);
 
-        // `id_salt` required on BOTH ScrollAreas in this panel —
-        // without it, two structurally identical `ScrollArea::
-        // vertical().show` calls hash to the same auto-id and egui
-        // warns "first/second use of scroll area id" as soon as the
-        // lower section is unfolded.
-        // Force a fixed rect for the scroll via an outer
-        // `allocate_ui_with_layout` so the scroll actually honours
-        // the requested height. `ScrollArea::max_height` alone is
-        // clamped to the *parent's* available height, and the
-        // foldable section body nominally has 0 height.
         let scroll_w = ui.available_width();
+        let query_lc = state.scene_query.to_lowercase();
         let scroll_out = ui.allocate_ui_with_layout(
             egui::vec2(scroll_w, state.scene_scroll_h),
             egui::Layout::top_down(egui::Align::Min),
@@ -1482,16 +1780,13 @@ fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
                             0,
                             &mut state.scene_tree_selected,
                             state.scene_filter,
+                            &query_lc,
                             accent,
+                            &mut state.copied_path,
                         );
                     })
             },
         );
-        // `content_size.y` is the tree's natural height. Passing it
-        // as the grip's `max` means the user can't drag down past
-        // the point where the scroll would start padding with empty
-        // space — once every row is visible, further drag is
-        // clamped.
         let content_h = scroll_out.inner.content_size.y;
         let min_h = TREE_ROW_H * 3.0;
         let max_h = content_h.max(min_h);
@@ -1508,6 +1803,18 @@ fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
             "selected",
             state.scene_tree_selected.as_deref().unwrap_or("—"),
         );
+        // Flags for the selected prim, shown as a `badge_row` —
+        // the label sits in the left cell, each chip runs across
+        // the right gutter. Proves `chip` + `badge_row` wiring.
+        let sel_flags = state
+            .scene_tree_selected
+            .as_deref()
+            .and_then(|p| find_node(&state.scene_tree, p))
+            .map(|n| n.flags)
+            .unwrap_or(&[]);
+        if !sel_flags.is_empty() {
+            badge_row(ui, "flags", sel_flags, accent);
+        }
     });
 
     // Flat hybrid-select list — kept so the two row styles can be

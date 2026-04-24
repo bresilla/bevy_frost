@@ -76,6 +76,36 @@ pub fn readout_row(ui: &mut egui::Ui, label: &str, value: &str) {
     widget_separator(ui);
 }
 
+/// Label on the left, a horizontal stack of chips on the right.
+/// Use when a row needs multiple short categorical tags rather
+/// than a single control — "animated: 12 (rotX, rotY, translate)"
+/// reads far better rendered as `animated  |  [rotX] [rotY]
+/// [translate]`.
+///
+/// Each entry of `badges` becomes a [`chip`](super::chip::chip),
+/// rendered right-to-left so they hug the right gutter in the
+/// same order as the slice.
+pub fn badge_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    badges: &[&str],
+    accent: egui::Color32,
+) {
+    labelled_row(ui, label, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            // Right-to-left layout (provided by the outer cell)
+            // paints elements from the right edge inward. Iterate
+            // in reverse so the caller-facing order matches
+            // left-to-right reading.
+            for b in badges.iter().rev() {
+                super::chip::chip(ui, b, accent);
+            }
+        });
+    });
+    widget_separator(ui);
+}
+
 /// Coloured-glyph + value module (e.g. `X  +1.234 m` in `AXIS_X`).
 /// 70 / 30 split + trailing separator — same language as every other
 /// widget module.

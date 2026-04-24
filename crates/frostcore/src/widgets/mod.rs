@@ -31,7 +31,9 @@
 
 pub mod button;
 pub mod caption;
+pub mod chip;
 pub mod color;
+pub mod context_menu;
 pub mod drag;
 pub mod dropdown;
 pub mod foldable;
@@ -41,6 +43,7 @@ pub mod hybrid_select;
 pub mod layout;
 pub mod progressbar;
 pub mod row;
+pub mod search;
 mod shared;
 pub mod slider;
 pub mod splitter;
@@ -50,7 +53,9 @@ pub mod tree;
 
 pub use button::{card_button, wide_button};
 pub use caption::{keybinding_row, sub_caption};
+pub use chip::{chip, chip_colored};
 pub use color::{color_rgb, color_rgba};
+pub use context_menu::context_menu_frost;
 pub use drag::{axis_drag, drag_value};
 pub use dropdown::{dropdown, dropdown_control};
 
@@ -74,8 +79,10 @@ pub use progressbar::{
     pretty_progressbar, pretty_progressbar_text, progressbar_control,
 };
 pub use row::{
-    axis_readout_row, labelled_row, labelled_row_custom_left, readout_row, LABEL_COL_WIDTH,
+    axis_readout_row, badge_row, labelled_row, labelled_row_custom_left, readout_row,
+    LABEL_COL_WIDTH,
 };
+pub use search::search_field;
 pub use slider::{pretty_slider, slider_control};
 pub use splitter::row_separator_resize;
 pub use subsection::{subsection, SUBSECTION_BODY_INDENT};

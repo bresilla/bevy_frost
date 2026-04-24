@@ -38,9 +38,38 @@ use std::hash::Hash;
 use egui;
 
 use crate::style::{
-    glass_alpha_window, glass_fill, radius, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE,
-    TEXT_PRIMARY,
+    glass_alpha_window, glass_fill, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE, TEXT_PRIMARY,
 };
+
+/// The egui data key that [`maximizable`] uses to store the
+/// maximise-flag for a given `id_salt`. Exposed so callers can do
+/// context-sensitive routing without poking inside the widget.
+pub fn maximize_state_key(id_salt: impl std::hash::Hash) -> egui::Id {
+    egui::Id::new(("frost_maximize", id_salt))
+}
+
+/// Returns `true` if the maximizable widget identified by
+/// `id_salt` is currently in full-window mode. Use this from a
+/// host's key handler to route Ctrl+K to a widget-specific
+/// command palette when the widget is maximised, or to the
+/// general palette otherwise.
+pub fn is_maximized(ctx: &egui::Context, id_salt: impl std::hash::Hash) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(maximize_state_key(id_salt)))
+        .unwrap_or(false)
+}
+
+/// Returns `true` if ANY maximizable widget is currently in
+/// full-window mode. Useful when you only care about "should the
+/// general palette behave differently" and don't need to know
+/// which specific widget owns the screen.
+pub fn is_any_maximized(ctx: &egui::Context) -> bool {
+    let global_key = egui::Id::new("frost_maximize_global");
+    let pass_nr = ctx.cumulative_pass_nr();
+    match ctx.data(|d| d.get_temp::<(u64, egui::Id)>(global_key)) {
+        Some((f, _)) => f == pass_nr || f + 1 == pass_nr,
+        None => false,
+    }
+}
 
 /// Wrap a widget so it gains a maximise / restore toggle.
 ///
@@ -54,12 +83,38 @@ pub fn maximizable(
     min_size: egui::Vec2,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let max_id = ui.id().with(("frost_maximize", id_salt));
+    // Maximise state keyed purely on the caller's `id_salt` — no
+    // `ui.id()` mixed in — so the host can reconstruct the same
+    // key from the outside via [`is_maximized`] and route Ctrl+K
+    // / context-sensitive logic based on "is THIS widget
+    // currently full-window?".
+    let max_id = maximize_state_key(id_salt);
     let maximized: bool = ui
         .ctx()
         .data(|d| d.get_temp::<bool>(max_id))
         .unwrap_or(false);
     let mut toggle = false;
+
+    // Global "is any maximizable widget currently full-window?"
+    // tracker. Stored as `(pass_nr, owner_id)` so stale values
+    // (widget toggled off and never re-rendered) are automatically
+    // ignored on the next pass. Every other `maximizable` call
+    // checks this to suppress its own button when SOMEONE ELSE is
+    // full-window — otherwise `Order::Tooltip` button areas from
+    // inline-in-a-pane widgets would still paint on top of the
+    // overlay.
+    let global_key = egui::Id::new("frost_maximize_global");
+    let pass_nr = ui.ctx().cumulative_pass_nr();
+    let stored_global: Option<(u64, egui::Id)> =
+        ui.ctx().data(|d| d.get_temp(global_key));
+    let some_other_maximized = match stored_global {
+        Some((f, id)) => (f == pass_nr || f + 1 == pass_nr) && id != max_id,
+        None => false,
+    };
+    if maximized {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(global_key, (pass_nr, max_id)));
+    }
 
     if maximized {
         // Placeholder in the caller's layout so the surrounding
@@ -76,9 +131,11 @@ pub fn maximizable(
             );
         }
 
-        // Full-window overlay. `Order::Foreground` is already
-        // above the floating pane / ribbon, and its frame uses the
-        // same glass recipe so it reads as the same family.
+        // Full-window overlay at `Order::Foreground`. Frame has
+        // NO corner radius / stroke / inner margin — the whole
+        // point is to cover the screen edge-to-edge, so any
+        // rounding or inset reads as "not actually full" at the
+        // corners.
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
         egui::Area::new(ui.id().with(("frost_maximize_overlay", id_salt)))
@@ -89,9 +146,8 @@ pub fn maximizable(
                 ui.set_max_size(screen.size());
                 let frame = egui::Frame::new()
                     .fill(glass_fill(BG_1_PANEL, accent, glass_alpha_window()))
-                    .stroke(egui::Stroke::new(1.0, BORDER_SUBTLE))
-                    .corner_radius(egui::CornerRadius::same(radius::LG))
-                    .inner_margin(egui::Margin::same(4));
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .inner_margin(egui::Margin::ZERO);
                 frame.show(ui, |ui| {
                     body(ui);
                 });
@@ -119,14 +175,20 @@ pub fn maximizable(
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         body(&mut child);
-        if max_button_overlay(
-            ui.ctx(),
-            rect.min + egui::vec2(6.0, 6.0),
-            false,
-            accent,
-            id_salt,
-        )
-        .clicked()
+        // Skip the maximise chip when a DIFFERENT widget is
+        // currently full-window — its overlay covers the whole
+        // screen, and the button area (`Order::Tooltip`) would
+        // otherwise paint on top of that overlay in the middle of
+        // nowhere.
+        if !some_other_maximized
+            && max_button_overlay(
+                ui.ctx(),
+                rect.min + egui::vec2(6.0, 6.0),
+                false,
+                accent,
+                id_salt,
+            )
+            .clicked()
         {
             toggle = true;
         }

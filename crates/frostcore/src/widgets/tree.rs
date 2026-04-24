@@ -81,6 +81,14 @@ pub enum TreeIconKind {
     /// Custom pair of font glyphs. Painted in the current text font
     /// at `12 px`. Use for icons you don't want to hand-paint.
     Glyph { on: &'static str, off: &'static str },
+    /// Read-only colour swatch — a filled rounded square in the
+    /// given colour, with the standard frost border stroke. The
+    /// slot's `state: &mut bool` is ignored for this variant
+    /// (still required by the slice shape — pass any `&mut bool`);
+    /// the icon response is returned in
+    /// [`TreeRowResponse::icons`] so callers can act on clicks
+    /// (e.g. "select the material that this swatch represents").
+    Color(egui::Color32),
 }
 
 /// One slot in the right-gutter of a [`tree_row`]. The widget paints
@@ -132,6 +140,12 @@ pub struct TreeRowResponse {
     /// response is for additional hooks (e.g. "on visibility change,
     /// also hide children").
     pub icons: Vec<egui::Response>,
+    /// `true` when the chevron was clicked with the shift modifier
+    /// held. Callers interpret as "recursively expand (or collapse)
+    /// the whole subtree under this row" — the standard editor
+    /// affordance for jumping straight to a deep prim on a scene
+    /// with many levels. Always `false` for leaf rows (no chevron).
+    pub chevron_shift_clicked: bool,
 }
 
 /// Paint one row of a tree. `depth` is the node's nesting level
@@ -243,7 +257,10 @@ pub fn tree_row(
 
     // Chevron glyph: small rotating triangle. Handled AFTER the
     // chevron interaction has been recorded so the click routing
-    // knows its own rect.
+    // knows its own rect. Shift-click is captured separately so
+    // callers can implement "expand / collapse whole subtree"
+    // without having to plumb modifier state themselves.
+    let mut chevron_shift_clicked = false;
     if let (Some(exp), Some(cr)) = (expanded, chevron_rect_opt) {
         let how_open = ui.ctx().animate_bool_responsive(
             ui.id().with(("frost_tree_chev_anim", id_salt)),
@@ -252,7 +269,14 @@ pub fn tree_row(
         paint_chevron(ui, cr, how_open, accent);
         if let Some(ref cresp) = chevron {
             if cresp.clicked() {
-                *exp = !*exp;
+                let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+                if shift_held {
+                    chevron_shift_clicked = true;
+                    // Don't toggle the local expanded flag — the
+                    // caller handles "apply to whole subtree".
+                } else {
+                    *exp = !*exp;
+                }
             }
         }
     }
@@ -318,14 +342,21 @@ pub fn tree_row(
     }
 
     // Flip the slot states after painting. Using `resp.clicked()` so
-    // hover alone doesn't flip.
+    // hover alone doesn't flip. `Color` slots are read-only — the
+    // response is still returned (caller can hook click handlers),
+    // but the backing `bool` stays put.
     for (i, slot) in slots.iter_mut().enumerate() {
-        if icon_responses[i].clicked() {
+        if icon_responses[i].clicked() && !matches!(slot.kind, TreeIconKind::Color(_)) {
             *slot.state = !*slot.state;
         }
     }
 
-    TreeRowResponse { body, chevron, icons: icon_responses }
+    TreeRowResponse {
+        body,
+        chevron,
+        icons: icon_responses,
+        chevron_shift_clicked,
+    }
 }
 
 /// Allocate the row rect and slice it into the fixed left sub-rects
@@ -454,7 +485,34 @@ fn paint_slot_icon(
                 color,
             );
         }
+        TreeIconKind::Color(fill) => paint_color_chip(ui, rect, fill, accent, hovered),
     }
+}
+
+/// Filled rounded swatch in `fill`, with the shared accent-tinted
+/// border stroke so it belongs to the same chip family as the
+/// rest of the frost surfaces. Inset a touch from the slot rect
+/// so it reads as a chip, not a toggle button.
+fn paint_color_chip(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    fill: egui::Color32,
+    accent: egui::Color32,
+    hovered: bool,
+) {
+    let inner = rect.shrink(3.0);
+    let border = if hovered {
+        accent
+    } else {
+        crate::style::widget_border(accent)
+    };
+    ui.painter().rect(
+        inner,
+        egui::CornerRadius::same(2),
+        fill,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
 }
 
 fn slot_color(active: bool, hovered: bool, accent: egui::Color32) -> egui::Color32 {
