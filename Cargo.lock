@@ -1921,18 +1921,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui-snarl"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6358986338c35fe268c0647b410725babd5de772010e8e739e88cb11f5665da"
-dependencies = [
- "egui",
- "egui-scale",
- "slab",
- "smallvec",
-]
-
-[[package]]
 name = "egui-wgpu"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1971,15 +1959,6 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
-]
-
-[[package]]
-name = "egui_code_editor"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70addd812d64b30d2adabdc4598c648f4fb38cac5df641260b1996efdf22851f"
-dependencies = [
- "egui",
 ]
 
 [[package]]
@@ -2294,8 +2273,9 @@ version = "0.0.1"
 dependencies = [
  "bevy",
  "egui",
- "egui-snarl",
- "egui_code_editor",
+ "egui-scale",
+ "slab",
+ "smallvec",
 ]
 
 [[package]]

@@ -8,16 +8,46 @@ repository.workspace = true
 
 [dependencies]
 egui = { workspace = true, default-features = false, features = ["default_fonts"] }
-egui-snarl = { workspace = true }
-egui_code_editor = { workspace = true }
+# Transitive deps of the vendored sub-crates — see
+# `src/features/{snarl,code_editor}`. Kept here (not in a sub-
+# Cargo.toml) because the vendored code compiles as part of the
+# frostcore crate directly.
+egui-scale = "0.3"
+slab = "0.4"
+smallvec = { version = "1.15", features = ["const_new"] }
 # Optional Bevy integration — enabled by `bevy_frost`. When OFF,
 # frostcore compiles as a pure-egui crate with no Bevy types
 # anywhere in the public API.
 bevy = { workspace = true, optional = true }
 
 [features]
-# OFF by default — plain egui.
-default = []
+# Turn on the vendored sub-crates (`features/snarl`, `features/code_editor`).
+# Both default-on — most callers want them. Disabling cuts compile
+# time if you only need the widgets / ribbon / style primitives.
+default = ["snarl", "code-editor"]
+
+# Vendored egui-snarl — node-graph widget. See
+# `src/features/snarl` + `ACKNOWLEDGEMENTS.md`. The two legacy
+# egui-snarl features live on as no-op markers so the vendored
+# code's `cfg` gates resolve unchanged.
+snarl = []
+
+# Vendored egui_code_editor — syntax-highlighting text editor.
+# `editor` + `egui` are the two upstream features the vendored
+# crate's `cfg` gates reference; both default-on here.
+code-editor = ["editor", "egui"]
+editor = []
+egui = []
+
+# Markers for the optional feature gates the vendored crates
+# still carry. Both default OFF — turning them ON would need the
+# matching `serde` / `egui-probe` crates added as deps (we
+# stripped those to keep the vendored sub-crates lean). Declared
+# here so `#[cfg(feature = "serde")]` etc. don't emit
+# unexpected-cfg warnings.
+serde = []
+egui-probe = []
+
 # Enables `bevy::prelude::Resource` + `bevy::ecs::schedule::SystemSet`
 # derives on frostcore state types (ribbon placement, accent colour,
 # glass opacity, …) so they can be used as Bevy resources without

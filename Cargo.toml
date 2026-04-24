@@ -18,8 +18,9 @@ repository = "https://github.com/bresilla/bevy_frost"
 # crate pulls egui through `workspace = true` so the three crates
 # compile against a single resolved egui.
 egui = { version = "0.33", default-features = false }
-egui-snarl = "0.9"
-egui_code_editor = "=0.2.21"
+# egui-snarl and egui_code_editor are now vendored inside
+# `frostcore/src/features/` — see `ACKNOWLEDGEMENTS.md`. No
+# external dep on them any more.
 # bevy + bevy_egui are only used by `bevy_frost`; listed here so
 # the version is managed in one place.
 bevy = { version = "0.18", default-features = false }

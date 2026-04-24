@@ -33,7 +33,7 @@ use std::hash::Hash;
 
 use egui;
 
-pub use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
+pub use crate::features::code_editor::{CodeEditor, ColorTheme, Syntax};
 
 use crate::maximize::maximizable;
 
@@ -69,51 +69,46 @@ pub fn frost_code_editor(
     });
 }
 
-/// Build an `egui_code_editor::ColorTheme` whose background / text
-/// / selection colours come from the frost palette (same BG
-/// tones the rest of the UI uses), while the syntactic colours
-/// reuse the crate's existing accent / status hues — so the
+/// Build a [`ColorTheme`] whose background / text / selection
+/// colours come from the frost palette, while the syntactic
+/// colours reuse the existing accent / status hues — so the
 /// editor belongs to the same visual family as sections and
 /// widgets around it.
 ///
-/// The `accent` parameter is used as the colour of keywords
-/// (most prominent token family); literals / types / punctuation
-/// use subtler tints so they read as a hierarchy.
+/// Now that [`ColorTheme`] stores [`Color32`] directly (the
+/// vendored struct was rewritten from `&'static str` hex), the
+/// background uses the same `glass_fill` recipe as the node-graph
+/// canvas and the floating-pane frame — so the global
+/// `GlassOpacity` slider dims the code editor in lockstep with
+/// every other frost surface.
+///
+/// `accent` drives keyword highlighting + the cursor; status
+/// colours (`SUCCESS`, `AXIS_X/Y/Z`) tint literals / types /
+/// punctuation for a readable hierarchy.
 fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
     use crate::style::{
-        ACCENT_PRESSED, AXIS_X, AXIS_Y, AXIS_Z, BG_1_PANEL, SUCCESS, TEXT_SECONDARY,
-    };
-    let hex6 = |c: egui::Color32| -> &'static str {
-        // `ColorTheme` stores colours as `&'static str` HTML
-        // hex literals. Leaking the String is a one-shot cost per
-        // accent-change — acceptable for a theme constructor
-        // invoked only when `AccentColor` actually changes.
-        let s = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
-        Box::leak(s.into_boxed_str())
+        glass_alpha_window, glass_fill, ACCENT_PRESSED, AXIS_X, AXIS_Y, AXIS_Z, BG_1_PANEL,
+        SUCCESS, TEXT_SECONDARY,
     };
     ColorTheme {
         name: "Frost",
         dark: true,
-        // Same base colour as the node-editor's glass canvas at
-        // full opacity (`BG_1_PANEL`). `egui_code_editor`'s
-        // `ColorTheme.bg` is `&'static str` and `color_from_hex`
-        // only parses the RGB bytes — there's no alpha channel
-        // support, so the editor stays opaque while the rest of
-        // the pane dims with the `GlassOpacity` slider. (The
-        // `"none"` sentinel that egui_code_editor exposes renders
-        // as magenta in this setup — premultiplied `(255, 0, 255,
-        // 0)` leaks through some render paths.)
-        bg: hex6(BG_1_PANEL),
-        cursor: hex6(accent),
-        selection: hex6(ACCENT_PRESSED),
-        comments: hex6(TEXT_SECONDARY),
-        functions: hex6(AXIS_Y),
-        keywords: hex6(accent),
-        literals: hex6(AXIS_X),
-        numerics: hex6(AXIS_X),
-        punctuation: hex6(TEXT_SECONDARY),
-        strs: hex6(SUCCESS),
-        types: hex6(AXIS_Z),
-        special: hex6(accent),
+        // `glass_fill` produces an accent-tinted semi-transparent
+        // fill of `BG_1_PANEL`; it picks up `GlassOpacity`
+        // automatically because `glass_alpha_window()` reads from
+        // the shared atomic. Same recipe the snarl canvas uses —
+        // so the two surfaces read as one glass family.
+        bg: glass_fill(BG_1_PANEL, accent, glass_alpha_window()),
+        cursor: accent,
+        selection: ACCENT_PRESSED,
+        comments: TEXT_SECONDARY,
+        functions: AXIS_Y,
+        keywords: accent,
+        literals: AXIS_X,
+        numerics: AXIS_X,
+        punctuation: TEXT_SECONDARY,
+        strs: SUCCESS,
+        types: AXIS_Z,
+        special: accent,
     }
 }

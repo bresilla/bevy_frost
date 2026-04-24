@@ -31,7 +31,7 @@ use std::hash::Hash;
 
 use egui;
 
-pub use egui_snarl::{
+pub use crate::features::snarl::{
     ui::{
         AnyPins, BackgroundPattern, Grid, NodeLayout, PinInfo, PinPlacement, PinShape,
         SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget,

@@ -29,6 +29,7 @@
 //! * [`prelude`] — glob-import module for ergonomic consumer code.
 
 pub mod code;
+pub mod features;
 pub mod floating;
 pub mod maximize;
 pub mod prelude;
