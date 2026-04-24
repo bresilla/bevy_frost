@@ -40,8 +40,10 @@
 //! * [`ribbon::RibbonPlugin`] — ribbon resources + ghost system.
 //!   Depends on a theme having been installed.
 
+pub mod code;
 pub mod floating;
 pub mod gizmo_material;
+pub mod maximize;
 pub mod prelude;
 pub mod ribbon;
 pub mod snarl;

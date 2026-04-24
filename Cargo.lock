@@ -637,6 +637,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "egui-snarl",
+ "egui_code_editor",
 ]
 
 [[package]]
@@ -1814,6 +1815,15 @@ dependencies = [
  "egui-scale",
  "slab",
  "smallvec",
+]
+
+[[package]]
+name = "egui_code_editor"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70addd812d64b30d2adabdc4598c648f4fb38cac5df641260b1996efdf22851f"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

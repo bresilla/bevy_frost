@@ -34,6 +34,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_frost::prelude::*;
+use bevy_frost::code::{frost_code_editor, Syntax};
 use bevy_frost::snarl::{
     frost_snarl, InPin, OutPin, PinInfo, Snarl, SnarlPin, SnarlViewer,
 };
@@ -109,15 +110,16 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         tooltip: "Scene outliner",
         child_ribbon: None,
     },
-    // Graph — LEFT rail, BOTTOM (`End`) cluster. Shows the
-    // egui-snarl integration with frost-styled nodes / wires.
+    // Editor — LEFT rail, BOTTOM (`End`) cluster. Combined pane
+    // hosting BOTH the node graph and the code editor sections,
+    // each maximisable on its own via `frost_snarl` / `frost_code_editor`.
     RibbonItem {
         id: MENU_GRAPH,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::End,
         slot: 0,
-        glyph: "N",
-        tooltip: "Node graph",
+        glyph: "E",
+        tooltip: "Editor (graph + source)",
         child_ribbon: None,
     },
     RibbonItem {
@@ -229,6 +231,10 @@ struct DemoState {
     // is the frost-styled viewer that drives rendering.
     graph: Snarl<GraphNode>,
     graph_viewer: GraphViewer,
+
+    // Code-editor buffer for the Code panel. Seed text shows off
+    // the Rust syntax highlighter.
+    code: String,
 }
 
 impl Default for DemoState {
@@ -269,6 +275,7 @@ impl Default for DemoState {
             tint_rgba: [0.30, 0.70, 0.95, 0.60],
             graph: default_graph(),
             graph_viewer: GraphViewer,
+            code: default_code(),
         }
     }
 }
@@ -1369,9 +1376,9 @@ fn draw_panels(
     if is_open(MENU_GRAPH) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_GRAPH, "Graph", egui::vec2(560.0, 420.0),
+            MENU_GRAPH, "Editor", egui::vec2(560.0, 720.0),
             &mut keep_open, accent_col,
-            |pane| graph_panel(pane, &mut state),
+            |pane| editor_panel(pane, &mut state),
         );
     }
     if is_open(MENU_THEME) {
@@ -1616,26 +1623,71 @@ fn containers_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     });
 }
 
-fn graph_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
+
+/// Seed text for the code-editor demo — a small Rust snippet that
+/// exercises every TokenType the highlighter knows (keyword,
+/// identifier, literal, string, number, comment, punctuation).
+fn default_code() -> String {
+    // Using a raw literal so backslashes / quotes inside the
+    // snippet don't need escaping.
+    r#"// Frost code editor demo — Rust syntax highlighting.
+fn fibonacci(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut a: u64 = 0;
+    let mut b: u64 = 1;
+    for _ in 2..=n {
+        let next = a + b;
+        a = b;
+        b = next;
+    }
+    b
+}
+
+fn main() {
+    let label = "fib(20)";
+    println!("{label} = {}", fibonacci(20));
+}
+"#
+    .to_string()
+}
+
+/// Combined Editor pane — two sections stacked vertically:
+///
+/// 1. **Node graph** — `egui-snarl` canvas with the `frost_snarl`
+///    maximise toggle.
+/// 2. **Source** — `egui_code_editor` buffer with its own
+///    maximise toggle.
+///
+/// Each section folds independently (click the section header
+/// chevron) and each widget's maximise chip lifts only that widget
+/// to full window, leaving the other section and the pane alone.
+fn editor_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     let accent = pane.accent();
     pane.section("demo_graph", "Node graph", true, |ui| {
-        sub_caption(ui, "right-click to add nodes · click ▢ to maximise the graph");
-        // `frost_snarl` is the plain `SnarlWidget` plus a maximise
-        // toggle bolted onto its top-left corner. Clicking the
-        // toggle lifts ONLY the graph into a full-window overlay —
-        // the surrounding pane and this section stay exactly where
-        // they are. Split-borrow through `&mut DemoState` so the
-        // widget can take `&mut graph` + `&mut graph_viewer` at the
-        // same time.
+        sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
         let s: &mut DemoState = state;
         let w = ui.available_width();
         frost_snarl(
             ui,
-            "demo_graph_snarl",
+            "demo_editor_snarl",
             &mut s.graph,
             &mut s.graph_viewer,
             accent,
-            egui::vec2(w, 300.0),
+            egui::vec2(w, 260.0),
+        );
+    });
+    pane.section("demo_code", "Source", true, |ui| {
+        sub_caption(ui, "rust syntax · click ▢ to maximise");
+        let w = ui.available_width();
+        frost_code_editor(
+            ui,
+            "demo_editor_code",
+            &mut state.code,
+            Syntax::rust(),
+            accent,
+            egui::vec2(w, 260.0),
         );
     });
 }
