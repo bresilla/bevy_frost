@@ -72,9 +72,12 @@ pub fn toggle_control(
 
         // OFF base = `track_fill(accent)`: PRO gets the dark sunken
         // `bg_input` track; GAME gets a dim-accent shade matching
-        // every other input on the panel. The lerp toward `accent`
-        // on ON keeps the same on-state hint we always had.
-        let track_bg = lerp_color(crate::style::track_fill(accent), accent, how_on * TRACK_ACCENT_HINT);
+        // every other input on the panel. The lerp toward
+        // `body_accent(accent)` on ON keeps the same on-state hint
+        // we always had, but uses the slightly darker body accent in
+        // GAME so the lit toggle doesn't match the title banner.
+        let body_acc = crate::style::body_accent(accent);
+        let track_bg = lerp_color(crate::style::track_fill(accent), body_acc, how_on * TRACK_ACCENT_HINT);
         painter.rect(
             rect,
             track_corner,
@@ -96,7 +99,7 @@ pub fn toggle_control(
         // the track. Lerps to `accent` as the toggle turns ON, so
         // ON-state knob is bright accent regardless of panel.
         let knob_off = crate::style::on_track();
-        let knob_color = lerp_color(knob_off, accent, how_on);
+        let knob_color = lerp_color(knob_off, body_acc, how_on);
         painter.rect(
             knob_rect,
             egui::CornerRadius::same(crate::style::theme().radius_compact),

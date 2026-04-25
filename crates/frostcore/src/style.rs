@@ -405,15 +405,31 @@ pub fn srgb_to_egui(rgb: [f32; 3]) -> egui::Color32 {
 /// Size: 12 pt body baseline + 15 % bump so section titles read
 /// clearly larger than body copy inside the same card.
 pub fn section_caps(label: &str, accent: egui::Color32) -> egui::RichText {
+    let th = theme();
     let mut t = egui::RichText::new(label.to_uppercase())
         .strong()
-        .size(12.0 * 1.15)
+        .size(th.section_title_size)
         .color(accent);
-    let spacing = theme().section_title_letter_spacing;
+    let spacing = th.section_title_letter_spacing;
     if spacing > 0.0 {
         t = t.extra_letter_spacing(spacing);
     }
     t
+}
+
+/// Accent colour applied to *body widget* fills — slider /
+/// progress-bar fills, button hover-and-press tints, toggle
+/// on-state, etc. The title banner / corner ticks keep the pure
+/// accent so they remain the brightest surface in each card; body
+/// widgets get a darkened variant (lerp toward black by
+/// [`Theme.body_accent_darken`]) so they don't match the banner.
+pub fn body_accent(accent: egui::Color32) -> egui::Color32 {
+    let t = theme().body_accent_darken;
+    if t <= 0.0 {
+        accent
+    } else {
+        lerp_rgb(accent, egui::Color32::BLACK, t.clamp(0.0, 1.0))
+    }
 }
 
 pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
@@ -628,6 +644,39 @@ pub struct Theme {
     /// `true`, GAME `false` — pure bracketed-title look without a
     /// fold indicator.
     pub show_section_chevron: bool,
+    /// `true` → the section header strip paints a solid accent
+    /// banner behind the title (bracketed title text in dark contrast
+    /// colour on top). `false` → header strip is transparent over
+    /// the section card. When this is enabled, the section's TOP
+    /// corner ticks flip to the contrast colour so they don't
+    /// disappear into the accent banner; bottom corners stay accent.
+    /// PRO `false`, GAME `true`.
+    pub title_strip_filled: bool,
+    /// Section title font size in points. PRO `13.8` (12 × 1.15 — the
+    /// kit's original size). GAME `11.5` — the title sits on a dense
+    /// banner with brackets, so a smaller weight reads cleaner and
+    /// keeps the strip from dominating the body.
+    pub section_title_size: f32,
+    /// Lerp fraction toward black applied to the accent before it's
+    /// used by *body* widgets (sliders, progress bars, button hover
+    /// / press tints, toggles). Title banner / corner ticks keep the
+    /// pure accent so they stay the brightest "spotlight" surface in
+    /// each card. PRO `0.0` (body widgets share the title accent —
+    /// the original look). GAME `0.18` (body fills are darker, so
+    /// they read as inside the title banner's brightness rather than
+    /// matching it).
+    pub body_accent_darken: f32,
+    /// `true` → render the section's optional icon as a *large*
+    /// floating glyph anchored at the RIGHT edge of the title strip
+    /// (instead of inline next to the title text). Title galley
+    /// drops the icon section in this mode. PRO `false` (icon stays
+    /// next to title), GAME `true`.
+    pub section_icon_at_end: bool,
+    /// Pixel size of the section's right-edge floating icon when
+    /// `section_icon_at_end` is set. PRO unused (`0.0`), GAME `24.0`
+    /// — noticeably bigger than the title text so it reads as a
+    /// floating accent ornament, not body text.
+    pub section_icon_size: f32,
     /// `Some((on, off))` → row separators paint dashed instead of
     /// solid, with `on` pixels of line and `off` pixels of gap. `None`
     /// keeps the original solid hairline. PRO `None`, GAME
@@ -779,6 +828,11 @@ pub const fn theme_pro() -> Theme {
         section_bottom_rule: false,
         pane_fill_visible: true,
         show_section_chevron: true,
+        title_strip_filled: false,
+        section_title_size: 12.0 * 1.15,
+        body_accent_darken: 0.0,
+        section_icon_at_end: false,
+        section_icon_size: 0.0,
         row_separator_dash: None,
         section_title_trailing_rule: false,
         section_corner_ticks: 0.0,
@@ -885,6 +939,15 @@ pub const fn theme_game() -> Theme {
         pane_fill_visible: false,
         // No chevron — bracketed title is the only header chrome.
         show_section_chevron: false,
+        // Title sits on a solid accent banner; text colour flips to
+        // dark contrast inside `section_tracked`, top corner ticks
+        // flip to the same contrast colour so they read as cut-outs
+        // of the banner, not stripes hiding inside it.
+        title_strip_filled: true,
+        section_title_size: 11.5,
+        body_accent_darken: 0.18,
+        section_icon_at_end: true,
+        section_icon_size: 24.0,
         row_separator_dash: Some((4.0, 3.0)),
         section_title_trailing_rule: true,
         // Longer ticks (10 px arms) read as deliberate "frame

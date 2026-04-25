@@ -314,13 +314,16 @@ pub(super) fn paint_value_bar(
         crate::style::track_fill(accent),
     );
 
-    // Accent fill pinned to the left.
+    // Accent fill pinned to the left. Uses `body_accent(accent)` so
+    // GAME's progress-bar / slider fills come out a touch darker
+    // than the title banner accent, keeping the banner the brightest
+    // tier in each card.
     if fill_w > 0.5 {
         let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
         painter.rect_filled(
             fill_rect,
             egui::CornerRadius::same(corner_radius),
-            accent,
+            crate::style::body_accent(accent),
         );
     }
 

@@ -170,11 +170,12 @@ pub fn maximizable(
                 }
             });
     } else {
-        // Inline — allocate a rect of `min_size` and render the
-        // body into a child `Ui` pinned to it. NO floating chip —
-        // the section header's actions strip is the right home for
-        // the maximise button, wired via [`header_action_maximize`].
-        let _ = some_other_maximized;
+        // Inline — allocate a rect of `min_size` and render the body
+        // into a child `Ui` pinned to it. The maximise chip floats
+        // in the body's TOP-RIGHT corner (same place as when
+        // maximised), so the affordance is consistent regardless of
+        // mode and lives *inside* the widget's canvas — section
+        // headers no longer reserve any actions slot.
         let desired = egui::vec2(ui.available_width().max(min_size.x), min_size.y);
         let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
         let mut child = ui.new_child(
@@ -183,15 +184,22 @@ pub fn maximizable(
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         body(&mut child);
+
+        // Suppress the chip while another widget is full-window —
+        // its overlay covers the screen and our `Order::Tooltip` chip
+        // would otherwise paint on top of nothing.
+        if !some_other_maximized {
+            let chip_pos = egui::pos2(rect.max.x - CHIP - CHIP_PAD, rect.min.y + CHIP_PAD);
+            if max_button_overlay(ui.ctx(), chip_pos, false, accent, id_salt).clicked() {
+                toggle = true;
+            }
+        }
     }
 
     if toggle {
         ui.ctx()
             .data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
     }
-    // Silence the unused-bindings lint for the chip dims; only the
-    // maximised-overlay branch consumes them.
-    let _ = (CHIP, CHIP_PAD);
 }
 
 /// Drop-in chip for a section's `actions` slot. Toggles the same

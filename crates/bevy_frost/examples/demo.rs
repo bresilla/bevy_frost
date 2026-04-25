@@ -1714,16 +1714,16 @@ fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     let order = pane.section_order(["demo_flags", "demo_numbers", "demo_bars", "demo_buttons"]);
     for id in &order {
         match id.as_str() {
-            "demo_flags" => pane.section_with("demo_flags", "Flags", true, Some("flag"), 0, |_| {}, |ui| {
+            "demo_flags" => pane.section_with("demo_flags", "Flags", true, Some("flag"), |ui| {
                 toggle(ui, "power", &mut state.power, accent);
                 toggle(ui, "headlights", &mut state.headlights, accent);
             }),
-            "demo_numbers" => pane.section_with("demo_numbers", "Numbers", true, Some("calculator"), 0, |_| {}, |ui| {
+            "demo_numbers" => pane.section_with("demo_numbers", "Numbers", true, Some("calculator"), |ui| {
                 drag_value(ui, "gravity (m/s²)", &mut state.gravity, 0.05, 0.0..=30.0, 2, "");
                 drag_value(ui, "speed limit (m/s)", &mut state.speed_limit, 0.1, 0.0..=100.0, 1, "");
                 drag_value(ui, "engine power (kW)", &mut state.engine_power, 1.0, 0.0..=2_000.0, 0, "");
             }),
-            "demo_bars" => pane.section_with("demo_bars", "Bars", true, Some("gauge"), 0, |_| {}, |ui| {
+            "demo_bars" => pane.section_with("demo_bars", "Bars", true, Some("gauge"), |ui| {
                 pretty_slider(ui, "throttle", &mut state.throttle, 0.0..=1.0, 2, "", accent);
                 pretty_slider(ui, "brake", &mut state.brake, 0.0..=1.0, 2, "", accent);
                 pretty_progressbar_text(
@@ -1734,7 +1734,7 @@ fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
                     accent,
                 );
             }),
-            "demo_buttons" => pane.section_with("demo_buttons", "Buttons", false, Some("button"), 0, |_| {}, |ui| {
+            "demo_buttons" => pane.section_with("demo_buttons", "Buttons", false, Some("button"), |ui| {
                 if wide_button(ui, "Refuel", accent).clicked() {
                     state.fuel_fraction = 1.0;
                 }
@@ -1760,7 +1760,7 @@ fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
             // gutter (visibility + lock) and a filter dropdown at the top.
             // This is the Blender-style layers panel: a recursive stage
             // view with direct per-entity controls in the gutter.
-            "demo_scene_tree" => pane.section_with("demo_scene_tree", "Scene", true, Some("folder"), 0, |_| {}, |ui| {
+            "demo_scene_tree" => pane.section_with("demo_scene_tree", "Scene", true, Some("folder"), |ui| {
         // Filter field + kind dropdown, side-by-side at the top.
         // `search_field` is the new frost primitive — magnifier
         // glyph on the left, `✕` clear on the right, returns
@@ -1827,7 +1827,7 @@ fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
             // double-click = arbitrary action (here we bump a counter),
             // right-edge radio = durable "pin". The two click targets do
             // NOT leak into each other.
-            "demo_elements" => pane.section_with("demo_elements", "Flat list", true, Some("list"), 0, |_| {}, |ui| {
+            "demo_elements" => pane.section_with("demo_elements", "Flat list", true, Some("list"), |ui| {
         let scroll_w = ui.available_width();
         let scroll_out = ui.allocate_ui_with_layout(
             egui::vec2(scroll_w, state.flat_scroll_h),
@@ -1904,7 +1904,7 @@ fn containers_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     let order = pane.section_order(["demo_transform"]);
     for id in &order {
         match id.as_str() {
-            "demo_transform" => pane.section_with("demo_transform", "Transform", true, Some("resize"), 0, |_| {}, |ui| {
+            "demo_transform" => pane.section_with("demo_transform", "Transform", true, Some("resize"), |ui| {
         subsection(
             ui,
             "demo_tr_pos",
@@ -1994,8 +1994,6 @@ fn editor_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
                 "Node graph",
                 true,
                 Some("flowchart"),
-                1,
-                |ui| header_action_maximize(ui, "demo_editor_snarl", accent),
                 |ui| {
                     sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
                     let s: &mut DemoState = state;
@@ -2015,8 +2013,6 @@ fn editor_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
                 "Source",
                 true,
                 Some("code"),
-                1,
-                |ui| header_action_maximize(ui, "demo_editor_code", accent),
                 |ui| {
                     sub_caption(ui, "rust syntax · click ▢ to maximise");
                     let w = ui.available_width();
@@ -2045,7 +2041,7 @@ fn theme_panel(
     let order = pane.section_order(["demo_theme_profile", "demo_theme_colour", "demo_theme_glass"]);
     for id in &order {
         match id.as_str() {
-            "demo_theme_profile" => pane.section_with("demo_theme_profile", "Profile", true, Some("person"), 0, |_| {}, |ui| {
+            "demo_theme_profile" => pane.section_with("demo_theme_profile", "Profile", true, Some("person"), |ui| {
                 // PRO and GAME are built-in; users can drop in a third
                 // by writing their own `Theme { ..theme_game() }` and
                 // calling `set_theme`. Stored selection is just an
@@ -2070,7 +2066,7 @@ fn theme_panel(
             // system, which re-paints *every* widget — buttons, frames,
             // borders, slider fills, the lot — from this single source of
             // truth.
-            "demo_theme_colour" => pane.section_with("demo_theme_colour", "Accent", true, Some("color"), 0, |_| {}, |ui| {
+            "demo_theme_colour" => pane.section_with("demo_theme_colour", "Accent", true, Some("color"), |ui| {
                 let c = accent_res.0;
                 let mut rgb = [
                     c.r() as f32 / 255.0,
@@ -2090,7 +2086,7 @@ fn theme_panel(
                 );
             }),
             // Glass opacity — ditto. `GlassOpacity(u8)` in `0..=100`.
-            "demo_theme_glass" => pane.section_with("demo_theme_glass", "Glass", true, Some("glasses"), 0, |_| {}, |ui| {
+            "demo_theme_glass" => pane.section_with("demo_theme_glass", "Glass", true, Some("glasses"), |ui| {
                 let mut v = glass.0 as f64;
                 if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
                     glass.0 = v.round().clamp(1.0, 100.0) as u8;
@@ -2109,14 +2105,14 @@ fn keys_panel(pane: &mut PaneBuilder) {
     let order = pane.section_order(["demo_keys_mouse", "demo_keys_layout"]);
     for id in &order {
         match id.as_str() {
-            "demo_keys_mouse" => pane.section_with("demo_keys_mouse", "Mouse", true, Some("cursor"), 0, |_| {}, |ui| {
+            "demo_keys_mouse" => pane.section_with("demo_keys_mouse", "Mouse", true, Some("cursor"), |ui| {
                 keybinding_row(ui, "MMB drag", "pan the camera focus");
                 keybinding_row(ui, "LMB+RMB drag", "orbit the camera");
                 keybinding_row(ui, "Scroll", "log-smooth zoom");
                 keybinding_row(ui, "MMB × 2", "snap focus to cursor's ground point");
                 keybinding_row(ui, "LMB on cube", "re-tint the whole UI accent");
             }),
-            "demo_keys_layout" => pane.section_with("demo_keys_layout", "Layout", false, Some("grid"), 0, |_| {}, |ui| {
+            "demo_keys_layout" => pane.section_with("demo_keys_layout", "Layout", false, Some("grid"), |ui| {
                 keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
                 keybinding_row(ui, "Toggle ribbon btn", "open / close the panel");
             }),
@@ -2129,7 +2125,7 @@ fn about_panel(pane: &mut PaneBuilder) {
     let order = pane.section_order(["demo_about_intro"]);
     for id in &order {
         match id.as_str() {
-            "demo_about_intro" => pane.section_with("demo_about_intro", "bevy_frost", true, Some("info"), 0, |_| {}, |ui| {
+            "demo_about_intro" => pane.section_with("demo_about_intro", "bevy_frost", true, Some("info"), |ui| {
                 sub_caption(
                     ui,
                     "Reusable glass-themed editor UI kit for Bevy + egui.",

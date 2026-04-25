@@ -167,25 +167,19 @@ impl<'a> PaneBuilder<'a> {
         default_open: bool,
         body: impl FnOnce(&mut egui::Ui),
     ) {
-        self.section_with(id_salt, title, default_open, None, 0, |_| {}, body);
+        self.section_with(id_salt, title, default_open, None, body);
     }
 
-    /// Full-fat section with an optional icon between the chevron
-    /// and the title plus a strip of header-action chips on the
-    /// right edge. `action_count` reserves space for the chips
-    /// (caller owns the painting; see
-    /// [`crate::widgets::foldable::HEADER_ACTION_SIZE`] for the
-    /// per-chip cell size). The actions strip lives in its own
-    /// right-to-left child Ui so action-button clicks don't bubble
-    /// up as section-toggle clicks.
+    /// Section with an optional icon. Header-action buttons were
+    /// removed — widgets that need a "lift to full-window" affordance
+    /// should host their own floating chip via
+    /// [`crate::maximize::maximizable`].
     pub fn section_with(
         &mut self,
         id_salt: &str,
         title: &str,
         default_open: bool,
         icon: Option<&str>,
-        action_count: u8,
-        actions: impl FnOnce(&mut egui::Ui),
         body: impl FnOnce(&mut egui::Ui),
     ) {
         // If THIS section is the one being dragged, lift it out of
@@ -228,8 +222,6 @@ impl<'a> PaneBuilder<'a> {
             self.accent,
             default_open,
             icon,
-            action_count,
-            actions,
             body,
         );
 

@@ -140,9 +140,12 @@ fn paint_accent_bg(
 ) -> egui::Color32 {
     let th = crate::style::theme();
     let pressed = resp.is_pointer_button_down_on();
+    // Body widgets get the slightly-darkened accent in GAME so the
+    // button stays one step below the title banner's brightness.
+    let body_acc = crate::style::body_accent(accent);
 
     let bg = if pressed && th.button_full_accent_on_press {
-        accent
+        body_acc
     } else {
         let tint = if pressed {
             th.button_tint_press
@@ -159,7 +162,7 @@ fn paint_accent_bg(
         } else {
             crate::style::pane_fill(accent)
         };
-        let solid = lerp_color(base, accent, tint);
+        let solid = lerp_color(base, body_acc, tint);
         egui::Color32::from_rgba_unmultiplied(
             solid.r(),
             solid.g(),

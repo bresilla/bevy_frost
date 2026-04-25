@@ -38,37 +38,21 @@ pub fn section(
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let _ = section_tracked(
-        ui,
-        id_salt,
-        title,
-        accent,
-        default_open,
-        None,
-        0,
-        |_| {},
-        body,
-    );
+    let _ = section_tracked(ui, id_salt, title, accent, default_open, None, body);
 }
 
-/// Width allocated for one header-action chip plus the spacing
-/// between chips. Chips are `HEADER_ACTION_SIZE` wide, separated by
-/// `HEADER_ACTION_GAP`. `header_actions_width` resolves a chip count
-/// to a tail width; `header_action_size` is exported for callers
-/// that paint custom action chips so they match the reserved cell.
+/// Kept (deprecated) so any downstream code that referenced these
+/// constants still compiles. Action-button slots in section
+/// headers were removed — the floating overlay (`maximizable`'s
+/// own chip) is the canonical home for "lift this widget" controls
+/// now.
+#[deprecated(note = "section header actions slot was removed")]
 pub const HEADER_ACTION_SIZE: f32 = 18.0;
+#[deprecated(note = "section header actions slot was removed")]
 pub const HEADER_ACTION_GAP: f32 = 2.0;
-
-/// Tail width reserved for `count` action chips, including a small
-/// trailing gutter so the rightmost chip doesn't kiss the section's
-/// inner border.
-pub fn header_actions_width(count: u8) -> f32 {
-    if count == 0 {
-        0.0
-    } else {
-        let n = count as f32;
-        n * HEADER_ACTION_SIZE + (n - 1.0).max(0.0) * HEADER_ACTION_GAP + 6.0
-    }
+#[deprecated(note = "section header actions slot was removed")]
+pub fn header_actions_width(_count: u8) -> f32 {
+    0.0
 }
 
 /// What [`section_tracked`] reports back to the pane: the egui id
@@ -101,8 +85,6 @@ pub(crate) fn section_tracked(
     accent: egui::Color32,
     default_open: bool,
     icon: Option<&str>,
-    action_count: u8,
-    actions: impl FnOnce(&mut egui::Ui),
     body: impl FnOnce(&mut egui::Ui),
 ) -> SectionTrack {
     flush_pending_separator(ui);
@@ -125,6 +107,15 @@ pub(crate) fn section_tracked(
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, default_open);
 
     let mut captured_header_response: Option<egui::Response> = None;
+    // Banner placeholder: reserved as a `Shape::Noop` inside the
+    // frame body (so it lands at the right shape index — above the
+    // frame fill, below all header / body widgets) and SET after
+    // `frame.show` returns, once `outer_rect` and the fold openness
+    // are known. This is what lets the banner stretch all the way
+    // down to cover the *whole* section when it's folded — at
+    // shape-allocation time, the height isn't known yet.
+    let mut banner_idx: Option<egui::layers::ShapeIdx> = None;
+    let mut captured_openness: f32 = 1.0;
 
     // Theme-driven section frame: PRO paints the glass card (fill +
     // border + corners + padding); GAME bypasses the frame entirely
@@ -143,6 +134,12 @@ pub(crate) fn section_tracked(
         egui::Frame::new().inner_margin(crate::style::section_padding())
     };
     let frame_inner = frame.show(ui, |ui| {
+            // Reserve a placeholder for the title banner. Set after
+            // `frame.show` returns so we can compute the height
+            // based on the section's final outer rect + openness.
+            if crate::style::theme().title_strip_filled {
+                banner_idx = Some(ui.painter().add(egui::Shape::Noop));
+            }
             ui.allocate_ui_with_layout(
                 egui::vec2(inner_w, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
@@ -169,20 +166,14 @@ pub(crate) fn section_tracked(
                     const CHEVRON_W: f32 = 16.0;
                     const ICON_W: f32 = 18.0;
                     let header_w = ui.available_width();
-                    let actions_w = header_actions_width(action_count);
                     let (full_rect, _) = ui.allocate_exact_size(
                         egui::vec2(header_w, HEADER_H),
                         egui::Sense::hover(),
                     );
 
-                    let title_strip_rect = egui::Rect::from_min_max(
-                        full_rect.min,
-                        egui::pos2(full_rect.max.x - actions_w, full_rect.max.y),
-                    );
-                    let actions_rect = egui::Rect::from_min_max(
-                        egui::pos2(full_rect.max.x - actions_w, full_rect.min.y),
-                        full_rect.max,
-                    );
+                    // No actions tail any more — the title strip
+                    // claims the full header width.
+                    let title_strip_rect = full_rect;
 
                     let resp = ui.interact(
                         title_strip_rect,
@@ -190,19 +181,32 @@ pub(crate) fn section_tracked(
                         egui::Sense::click_and_drag(),
                     );
 
-                    // Theme-resolved title colour: PRO → accent;
-                    // GAME → contrast-against-panel (so titles read
-                    // dark against a bright accent panel).
-                    let title_col = crate::style::section_title_color(accent);
+                    // Theme-resolved title colour. When the title
+                    // strip is filled with accent, override to the
+                    // contrast colour against the accent so the
+                    // bracketed title reads as dark text on a bright
+                    // banner (the user explicitly asked for "accent
+                    // background, dark colour, bold").
+                    let title_col = if crate::style::theme().title_strip_filled {
+                        crate::style::contrast_text_for(accent)
+                    } else {
+                        crate::style::section_title_color(accent)
+                    };
 
                     let theme_now = crate::style::theme();
+
+                    // Capture fold state for the deferred banner +
+                    // bottom-corner-flip logic. `state.show_body_*`
+                    // consumes `state` later so we can't read it
+                    // afterwards.
+                    let openness = state.openness(ui.ctx());
+                    captured_openness = openness;
 
                     // Chevron — themes that opt out (GAME) skip both
                     // the paint AND its reserved horizontal slot, so
                     // the title shifts left and reclaims the space.
                     let mut text_x = title_strip_rect.min.x;
                     if theme_now.show_section_chevron {
-                        let openness = state.openness(ui.ctx());
                         let chevron_rect = egui::Rect::from_min_size(
                             title_strip_rect.min,
                             egui::vec2(CHEVRON_W, HEADER_H),
@@ -224,7 +228,7 @@ pub(crate) fn section_tracked(
                     // a separate paint before the title text — same
                     // visual as before, just routed through the same
                     // composition path.
-                    let title_size_pt = 12.0 * 1.15;
+                    let title_size_pt = theme_now.section_title_size;
                     let default_font =
                         egui::FontId::new(title_size_pt, egui::FontFamily::Proportional);
                     let default_format = egui::TextFormat {
@@ -255,18 +259,22 @@ pub(crate) fn section_tracked(
                         job.append("[ ", 0.0, default_format.clone());
                     }
 
-                    // Icon — embedded in the same galley using the
-                    // Fluent font family so it sits inline with the
-                    // bracketed title text, no separator dot.
-                    if let Some(name) = icon {
-                        if let Some((glyph, family)) = crate::icons::icon(name) {
-                            let icon_format = egui::TextFormat {
-                                font_id: egui::FontId::new(title_size_pt, family),
-                                color: title_col,
-                                ..Default::default()
-                            };
-                            job.append(&glyph.to_string(), 0.0, icon_format);
-                            job.append(" ", 0.0, default_format.clone());
+                    // Icon — embedded inline with the title text
+                    // UNLESS the active theme requested it floats at
+                    // the right edge instead. In that mode we skip
+                    // the inline glyph entirely and paint it as a
+                    // bigger separate icon after the galley renders.
+                    if !theme_now.section_icon_at_end {
+                        if let Some(name) = icon {
+                            if let Some((glyph, family)) = crate::icons::icon(name) {
+                                let icon_format = egui::TextFormat {
+                                    font_id: egui::FontId::new(title_size_pt, family),
+                                    color: title_col,
+                                    ..Default::default()
+                                };
+                                job.append(&glyph.to_string(), 0.0, icon_format);
+                                job.append(" ", 0.0, default_format.clone());
+                            }
                         }
                     }
 
@@ -284,6 +292,36 @@ pub(crate) fn section_tracked(
                     let title_size = title_galley.size();
                     ui.painter().galley(title_pos, title_galley, title_col);
 
+                    // Floating right-edge icon. When the active theme
+                    // sets `section_icon_at_end`, the inline icon
+                    // section was skipped above; we now paint the
+                    // icon as a bigger glyph at the right of the
+                    // title strip. Reads as a "floating accent
+                    // ornament" because the size (theme-controlled
+                    // `section_icon_size`) is well above the title
+                    // text size, and it's positioned with right-edge
+                    // anchoring so it always hugs the strip's right
+                    // side regardless of title length.
+                    if theme_now.section_icon_at_end {
+                        if let Some(name) = icon {
+                            let size = theme_now.section_icon_size.max(0.0);
+                            if size > 0.0 {
+                                let icon_pos = egui::pos2(
+                                    title_strip_rect.max.x - 6.0,
+                                    title_strip_rect.center().y,
+                                );
+                                crate::icons::paint_icon(
+                                    &ui.painter(),
+                                    icon_pos,
+                                    egui::Align2::RIGHT_CENTER,
+                                    name,
+                                    size,
+                                    title_col,
+                                );
+                            }
+                        }
+                    }
+
                     // Trailing horizontal rule (DOOM Eternal /
                     // Helldivers / EVE pattern): from just past the
                     // title text to the actions tail's left edge. Uses
@@ -294,7 +332,17 @@ pub(crate) fn section_tracked(
                     if crate::style::theme().section_title_trailing_rule {
                         let rule_y = title_strip_rect.center().y;
                         let rule_x_start = title_pos.x + title_size.x + 8.0;
-                        let rule_x_end = title_strip_rect.max.x - 4.0;
+                        // Stop the dashed rule before the right-edge
+                        // floating icon so they don't visually
+                        // collide. With no floating icon, the rule
+                        // runs all the way to the strip edge as
+                        // before.
+                        let icon_reserve = if theme_now.section_icon_at_end && icon.is_some() {
+                            theme_now.section_icon_size + 10.0
+                        } else {
+                            0.0
+                        };
+                        let rule_x_end = title_strip_rect.max.x - 4.0 - icon_reserve;
                         if rule_x_end > rule_x_start + 4.0 {
                             let alpha = crate::style::theme().row_separator_alpha.max(50);
                             let base = crate::style::theme().border_subtle;
@@ -329,22 +377,6 @@ pub(crate) fn section_tracked(
                     }
 
                     captured_header_response = Some(resp);
-
-                    // Header actions tail. Right-to-left layout so the
-                    // closure can call `actions_button(...)` repeatedly
-                    // and have each chip stack from the right edge
-                    // inward. A no-op closure with action_count = 0
-                    // collapses the tail to zero width.
-                    if action_count > 0 {
-                        let mut action_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(actions_rect)
-                                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                        );
-                        action_ui.spacing_mut().item_spacing =
-                            egui::vec2(HEADER_ACTION_GAP, 0.0);
-                        actions(&mut action_ui);
-                    }
 
                     state.show_body_unindented(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
@@ -402,6 +434,30 @@ pub(crate) fn section_tracked(
     let outer_rect = frame_inner.response.rect;
     let _ = (theme_outer_inset, inner_w); // referenced only inside body now
 
+    // Now that we know `outer_rect`, set the banner placeholder. The
+    // height interpolates between *full section* (folded) and
+    // *title strip only* (open), driven by `captured_openness` —
+    // when the section is folded the banner extends all the way to
+    // the bottom of the card so the whole collapsed section is
+    // accent-coloured; when fully open it covers only the top
+    // strip + top-padding. Mid-animation, the banner shrinks
+    // smoothly with the body's growth.
+    let title_strip_h = (crate::style::theme().section_pad_y as f32) + 22.0;
+    let mut banner_max_y = outer_rect.min.y + title_strip_h;
+    if let Some(idx) = banner_idx {
+        let target_h = egui::lerp(outer_rect.height()..=title_strip_h, captured_openness);
+        let banner_rect = egui::Rect::from_min_size(
+            outer_rect.min,
+            egui::vec2(outer_rect.width(), target_h),
+        );
+        banner_max_y = banner_rect.max.y;
+        let p = ui.painter().clone().with_clip_rect(banner_rect.expand(2.0));
+        p.set(
+            idx,
+            egui::Shape::rect_filled(banner_rect, egui::CornerRadius::ZERO, accent),
+        );
+    }
+
     // Section bottom rule — dashed accent line along the bottom
     // edge after body finishes. Gives every section a "closes here"
     // boundary even though the theme paints no border. Y is snapped
@@ -453,44 +509,66 @@ pub(crate) fn section_tracked(
         let rx = snap_high(r.max.x);
         let by = snap_high(r.max.y);
         let len = tick_len;
-        let col = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220);
-        let stroke = egui::Stroke::new(1.0, col);
+        // Bottom corners flip to the contrast colour when the banner
+        // has grown down to cover them (folded / mid-animation).
+        // When the section is fully open the banner only covers the
+        // top, so the bottom corners sit on the dark card and stay
+        // accent-coloured — exactly what the user described.
+        let accent_col =
+            egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220);
+        let contrast_col = crate::style::contrast_text_for(accent);
+        let top_col = if crate::style::theme().title_strip_filled {
+            contrast_col
+        } else {
+            accent_col
+        };
+        // The bottom corners' Y is `by`; if the banner extends past
+        // that Y, the corners are sitting on the banner.
+        let bot_col = if crate::style::theme().title_strip_filled
+            && banner_max_y >= by - 0.5
+        {
+            contrast_col
+        } else {
+            accent_col
+        };
+        let top_stroke = egui::Stroke::new(1.0, top_col);
+        let bot_stroke = egui::Stroke::new(1.0, bot_col);
         let painter = ui.painter();
         // Top-left  ┌
         painter.line_segment(
             [egui::pos2(lx, ty), egui::pos2(lx + len, ty)],
-            stroke,
+            top_stroke,
         );
         painter.line_segment(
             [egui::pos2(lx, ty), egui::pos2(lx, ty + len)],
-            stroke,
+            top_stroke,
         );
         // Top-right ┐
         painter.line_segment(
             [egui::pos2(rx - len, ty), egui::pos2(rx, ty)],
-            stroke,
+            top_stroke,
         );
         painter.line_segment(
             [egui::pos2(rx, ty), egui::pos2(rx, ty + len)],
-            stroke,
+            top_stroke,
         );
         // Bottom-left └
         painter.line_segment(
             [egui::pos2(lx, by - len), egui::pos2(lx, by)],
-            stroke,
+            bot_stroke,
         );
         painter.line_segment(
             [egui::pos2(lx, by), egui::pos2(lx + len, by)],
-            stroke,
+            bot_stroke,
         );
         // Bottom-right ┘
         painter.line_segment(
             [egui::pos2(rx - len, by), egui::pos2(rx, by)],
-            stroke,
+            bot_stroke,
         );
         painter.line_segment(
             [egui::pos2(rx, by - len), egui::pos2(rx, by)],
-            stroke,
+            bot_stroke,
         );
     }
 
