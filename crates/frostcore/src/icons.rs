@@ -19,10 +19,27 @@
 //! once at theme-apply time and register each `(family, bytes)` pair
 //! as `egui::FontFamily::Name(family)`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use egui;
 use iconflow::{fonts, try_icon, IconRef, Pack, Size, Style};
+
+/// `true` once `ctx.set_fonts(...)` has installed the iconflow font
+/// families in egui — set from [`crate::style::install_fonts`]
+/// after the `set_fonts` call. Read by [`paint_icon`] /
+/// [`paint_section_icon`] so they SKIP rendering when fonts aren't
+/// ready (rather than panicking inside epaint when a `FontFamily`
+/// hasn't been bound). Without this, ribbon buttons painted on the
+/// FIRST frame — before bevy_frost's `apply_theme_system` runs —
+/// would crash with "FontFamily::Name(...) is not bound to any
+/// fonts".
+pub(crate) static ICONFLOW_FONTS_READY: AtomicBool = AtomicBool::new(false);
+
+#[inline]
+fn fonts_ready() -> bool {
+    ICONFLOW_FONTS_READY.load(Ordering::Relaxed)
+}
 
 /// Pull every iconflow font into `FontDefinitions` and register
 /// each as a named family so `FontFamily::Name(family)` resolves to
@@ -82,6 +99,9 @@ pub fn paint_section_icon(
 ) {
     match icon {
         Icon::Name(name) => {
+            if !fonts_ready() {
+                return;
+            }
             paint_icon(&ui.painter(), pos, align, name, size, color);
         }
         Icon::Svg(svg) => {
@@ -144,6 +164,13 @@ pub fn paint_icon(
     size: f32,
     color: egui::Color32,
 ) {
+    // Fonts not yet installed → skip silently. The next frame
+    // `apply_theme` has run, [`ICONFLOW_FONTS_READY`] is `true`, and
+    // the icon will paint. This guard turns the crash into a
+    // one-frame visual blip on initial startup.
+    if !fonts_ready() {
+        return;
+    }
     if let Some((glyph, family)) = icon(name) {
         painter.text(pos, align, glyph.to_string(), egui::FontId::new(size, family), color);
     }

@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 use egui;
 
-use super::paint::{paint_ribbon_button, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
+use super::paint::{paint_ribbon_button, paint_ribbon_glyph, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
 
 // ─── Enums: edge / cluster / mode / role ────────────────────────────
 
@@ -127,8 +127,37 @@ pub struct RibbonDef {
     pub accepts: &'static [&'static str],
 }
 
+/// What gets painted inside a ribbon button. Three forms:
+///
+/// * `Text` — short text label (1–3 chars typically), the kit's
+///   original behaviour.
+/// * `Icon` — Fluent UI System Icon name, looked up via
+///   [`crate::icons::icon`] and rendered as a glyph in the bundled
+///   icon font.
+/// * `Svg` — raw SVG markup, painted via egui's image loader. The
+///   host must install an SVG image loader (e.g.
+///   `egui_extras::install_image_loaders` with the `svg` feature)
+///   for this to render.
+#[derive(Clone, Copy, Debug)]
+pub enum RibbonGlyph {
+    Text(&'static str),
+    Icon(&'static str),
+    Svg(&'static str),
+}
+
+impl From<&'static str> for RibbonGlyph {
+    fn from(s: &'static str) -> Self {
+        let trimmed = s.trim_start();
+        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+            RibbonGlyph::Svg(s)
+        } else {
+            RibbonGlyph::Text(s)
+        }
+    }
+}
+
 /// Declaration of one button that lives inside a ribbon.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct RibbonItem {
     /// Stable id for this button — also the `RibbonOpen` key when
     /// this button's panel is the active one on its ribbon.
@@ -141,8 +170,9 @@ pub struct RibbonItem {
     pub cluster: RibbonCluster,
     /// Slot index within the cluster — 0 is nearest the anchor end.
     pub slot: u32,
-    /// Single-glyph label.
-    pub glyph: &'static str,
+    /// What to paint inside the button — text, Fluent icon, or SVG.
+    /// See [`RibbonGlyph`].
+    pub glyph: RibbonGlyph,
     /// Hover tooltip.
     pub tooltip: &'static str,
     /// If set, this icon-ribbon button pops a nested ribbon on press.
@@ -836,14 +866,9 @@ pub fn draw_assembly(
                     accent,
                     is_active || is_dragging_this,
                     r.hovered() || is_dragging_this,
-                );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
                     item.glyph,
-                    egui::FontId::new(14.0, egui::FontFamily::Monospace),
-                    fg,
                 );
+                paint_ribbon_glyph(ui, rect, item.glyph, fg);
                 r.on_hover_text(item.tooltip)
             })
             .inner;

@@ -24,10 +24,54 @@ pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Colo
 /// contrasts with the EXACT fill the button paints, rather than
 /// each call site re-deriving it (and drifting out of sync the
 /// next time the bg recipe changes).
+/// Shared paint dispatch for the three ribbon-button glyph kinds.
+/// Centred on `rect`'s middle; size = 14 px (text/icon) or rect
+/// shrunk by 6 px (svg). Tinted in `fg`.
+pub(crate) fn paint_ribbon_glyph(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    glyph: super::assembly::RibbonGlyph,
+    fg: egui::Color32,
+) {
+    use super::assembly::RibbonGlyph;
+    match glyph {
+        RibbonGlyph::Text(s) => {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                s,
+                egui::FontId::new(14.0, egui::FontFamily::Monospace),
+                fg,
+            );
+        }
+        RibbonGlyph::Icon(name) => {
+            crate::icons::paint_icon(
+                &ui.painter(),
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                name,
+                18.0,
+                fg,
+            );
+        }
+        RibbonGlyph::Svg(svg) => {
+            crate::icons::paint_section_icon(
+                ui,
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                crate::icons::Icon::Svg(svg),
+                rect.shrink(6.0).width(),
+                fg,
+            );
+        }
+    }
+}
+
 pub(crate) fn ribbon_button_fg(
     accent: egui::Color32,
     is_active: bool,
     hovered: bool,
+    glyph: super::assembly::RibbonGlyph,
 ) -> egui::Color32 {
     if crate::style::theme().ribbon_button_accent_fill {
         // GAME ladder — pick contrast text against the EXACT fill the
@@ -42,11 +86,20 @@ pub(crate) fn ribbon_button_fg(
         };
         return crate::style::contrast_text_for(fill);
     }
-    // PRO recipe — restored. Active button paints over an accent
-    // tint, so contrast-against-accent. Idle / hover sit on the rail
-    // panel, dim panel text reads cleanest there.
+    // PRO recipe. Active button paints over an accent-tinted bg.
+    // For Text / Icon glyphs render the active fg as a *brightened*
+    // accent (`lerp(accent, WHITE, 0.20)`) so the glyph reads as the
+    // selected tier — vivid accent letter / icon on the
+    // accent-tinted button. SVG glyphs keep the contrast colour
+    // because their author chose their own colours via the SVG
+    // markup; tinting them accent would corrupt their look.
+    use super::assembly::RibbonGlyph;
     if is_active {
-        crate::style::contrast_text_for(accent)
+        if matches!(glyph, RibbonGlyph::Svg(_)) {
+            crate::style::contrast_text_for(accent)
+        } else {
+            lerp_rgb(accent, egui::Color32::WHITE, 0.20)
+        }
     } else {
         crate::style::on_panel_dim()
     }
@@ -139,7 +192,7 @@ pub(crate) fn ribbon_button_area(
     ctx: &egui::Context,
     anchor: egui::Align2,
     offset: egui::Vec2,
-    glyph: &str,
+    glyph: super::assembly::RibbonGlyph,
     tooltip: &str,
     is_active: bool,
     accent: egui::Color32,
@@ -155,14 +208,8 @@ pub(crate) fn ribbon_button_area(
             );
 
             paint_ribbon_button(ui.painter(), rect, accent, is_active, resp.hovered());
-            let fg = ribbon_button_fg(accent, is_active, resp.hovered());
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                glyph,
-                egui::FontId::new(14.0, egui::FontFamily::Monospace),
-                fg,
-            );
+            let fg = ribbon_button_fg(accent, is_active, resp.hovered(), glyph);
+            paint_ribbon_glyph(ui, rect, glyph, fg);
 
             if resp.on_hover_text(tooltip).clicked() {
                 on_click();

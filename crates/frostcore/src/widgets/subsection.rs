@@ -73,7 +73,7 @@ pub fn subsection(
     let frame = if crate::style::section_show_frame() {
         egui::Frame::new()
             .fill(glass_fill(
-                crate::style::theme().bg_hover,
+                crate::style::subsection_fill(accent),
                 egui::Color32::TRANSPARENT,
                 glass_alpha_group(),
             ))

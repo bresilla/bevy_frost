@@ -80,15 +80,23 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(6, 3));
 
-    let bg_fill = glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window());
+    // Background mirrors the code-editor recipe — `pane_fill(accent)`
+    // routes through the theme so GAME's accent-tinted dark and
+    // PRO's neutral `bg_panel` both flow in here automatically. The
+    // node graph and the code editor now visually share the same
+    // canvas surface.
+    let canvas_base = crate::style::pane_fill(accent);
+    let bg_fill = glass_fill(canvas_base, accent, glass_alpha_window());
 
-    // Grid stroke — accent-tinted and semi-transparent so the
-    // canvas pattern stays clearly below the graph content without
-    // competing. Alpha 60 is similar to the hairline divider under
-    // container titles; the grid reads as "there but quiet".
+    // Grid stroke — `contrast_text_for(canvas_base)` at low alpha so
+    // the pattern is automatically lighter than the bg on a dark
+    // canvas, darker on a light one. Alpha 28 keeps it firmly in
+    // the "there but quiet" tier: visible enough to read as a grid,
+    // not loud enough to compete with the nodes.
+    let grid_base = crate::style::contrast_text_for(canvas_base);
     let grid_stroke = egui::Stroke::new(
         1.0,
-        egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 60),
+        egui::Color32::from_rgba_unmultiplied(grid_base.r(), grid_base.g(), grid_base.b(), 28),
     );
 
     SnarlStyle {

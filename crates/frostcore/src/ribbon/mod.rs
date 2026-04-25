@@ -28,7 +28,7 @@ pub use active::SideActive;
 pub use assembly::{
     draw_assembly, find_item, find_ribbon, floating_window_for_item, panel_anchor,
     panel_anchor_for_item, RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
-    RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth,
+    RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth,
 };
 pub use declare::{draw_ribbon_buttons, RibbonButton};
 pub use ghost::paint_drop_ghost;

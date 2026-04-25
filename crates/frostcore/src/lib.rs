@@ -42,7 +42,6 @@ pub use iconflow;
 pub mod prelude;
 pub mod ribbon;
 pub mod snarl;
-pub mod statusbar;
 pub mod style;
 pub mod widgets;
 
@@ -53,12 +52,11 @@ pub use floating::{floating_window, floating_window_scoped, PaneBuilder};
 pub use maximize::{
     header_action_maximize, is_any_maximized, is_maximized, maximizable, maximize_state_key,
 };
-pub use statusbar::statusbar;
 pub use ribbon::{
     draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,
     paint_drop_ghost, panel_anchor, panel_anchor_for_item, Bar, BarRibbon, RibbonButton,
     RibbonClick, RibbonCluster, RibbonConstraint, RibbonDef, RibbonDrag, RibbonEdge,
-    RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen, RibbonPlacement,
-    RibbonRole, RibbonWidth, Side, SideActive, SideRibbon,
+    RibbonGlyph, RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen,
+    RibbonPlacement, RibbonRole, RibbonWidth, Side, SideActive, SideRibbon,
 };
 pub use style::{apply_theme, set_glass_opacity, AccentColor, GlassOpacity};

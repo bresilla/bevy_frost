@@ -25,8 +25,9 @@ pub struct RibbonButton {
     pub side: RibbonKind,
     /// Default slot on that rail (0 = top / leftmost).
     pub slot: u32,
-    /// Single-glyph label painted in the button.
-    pub glyph: &'static str,
+    /// Glyph painted in the button — text label, Fluent icon, or
+    /// raw SVG. See [`super::RibbonGlyph`].
+    pub glyph: super::assembly::RibbonGlyph,
     /// Hover tooltip.
     pub tooltip: &'static str,
 }

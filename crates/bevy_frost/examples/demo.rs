@@ -127,7 +127,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
-        glyph: "W",
+        glyph: RibbonGlyph::Icon("apps"),
         tooltip: "Widgets gallery",
         child_ribbon: None,
     },
@@ -136,7 +136,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
-        glyph: "C",
+        glyph: RibbonGlyph::Icon("box"),
         tooltip: "Containers showcase",
         child_ribbon: None,
     },
@@ -145,7 +145,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
-        glyph: "S",
+        glyph: RibbonGlyph::Icon("folder"),
         tooltip: "Scene outliner",
         child_ribbon: None,
     },
@@ -157,7 +157,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::End,
         slot: 0,
-        glyph: "E",
+        glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Editor (graph + source)",
         child_ribbon: None,
     },
@@ -166,7 +166,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 0,
-        glyph: "T",
+        glyph: RibbonGlyph::Icon("color"),
         tooltip: "Theme & colour",
         child_ribbon: None,
     },
@@ -175,7 +175,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 1,
-        glyph: "K",
+        glyph: RibbonGlyph::Icon("keyboard"),
         tooltip: "Keys & gestures",
         child_ribbon: None,
     },
@@ -184,7 +184,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 2,
-        glyph: "?",
+        glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
     },
@@ -1672,39 +1672,9 @@ fn draw_panels(
     }
 
     // ── Status bar (LEFT_BOTTOM) ────────────────────────────
-    //
-    // Anchored strip showing the current selected prim path +
-    // last copied path (via the tree's right-click Copy path
-    // action) + a palette hint. Uses `statusbar` which bypasses
-    // `PaneBuilder` — status bars want inline widgets, not
-    // nested sections.
-    let status_accent = accent_col;
-    let sel_text = state
-        .scene_tree_selected
-        .clone()
-        .unwrap_or_else(|| "—".into());
-    let copied_text = state.copied_path.clone();
-    statusbar(
-        ctx,
-        "demo_statusbar",
-        egui::Align2::LEFT_BOTTOM,
-        status_accent,
-        |ui| {
-            ui.label(
-                egui::RichText::new(format!("selected: {sel_text}"))
-                    .color(bevy_frost::style::TEXT_PRIMARY),
-            );
-            if let Some(p) = copied_text {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("copied: {p}"))
-                        .color(bevy_frost::style::TEXT_SECONDARY),
-                );
-            }
-            ui.separator();
-            chip(ui, "Ctrl+K palette", status_accent);
-        },
-    );
+    // Status bar removed — top-level chrome is ribbons +
+    // command palette only.
+    let _ = accent_col;
 }
 
 // ─── Panel bodies ───────────────────────────────────────────────────

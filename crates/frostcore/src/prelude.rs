@@ -13,7 +13,7 @@ pub use crate::{
         draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,
         paint_drop_ghost, panel_anchor, panel_anchor_for_item, Bar, BarRibbon, RibbonButton,
         RibbonClick, RibbonCluster, RibbonConstraint, RibbonDef, RibbonDrag, RibbonEdge,
-        RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen, RibbonPlacement,
+        RibbonGlyph, RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen, RibbonPlacement,
         RibbonRole, RibbonWidth, Side, SideActive, SideRibbon,
     },
     style::{
@@ -38,5 +38,4 @@ pub use crate::{
     command_palette::{command_palette, CommandPaletteState, PaletteItem},
     icons::{icon_text, paint_icon},
     maximize::{header_action_maximize, is_any_maximized, is_maximized, maximizable},
-    statusbar::statusbar,
 };

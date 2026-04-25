@@ -116,7 +116,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
-        glyph: "W",
+        glyph: RibbonGlyph::Icon("apps"),
         tooltip: "Widgets gallery",
         child_ribbon: None,
     },
@@ -125,7 +125,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
-        glyph: "C",
+        glyph: RibbonGlyph::Icon("box"),
         tooltip: "Containers showcase",
         child_ribbon: None,
     },
@@ -134,7 +134,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
-        glyph: "S",
+        glyph: RibbonGlyph::Icon("folder"),
         tooltip: "Scene outliner",
         child_ribbon: None,
     },
@@ -143,7 +143,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::End,
         slot: 0,
-        glyph: "E",
+        glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Editor (graph + source)",
         child_ribbon: None,
     },
@@ -152,7 +152,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::End,
         slot: 1,
-        glyph: "I",
+        glyph: RibbonGlyph::Icon("icons"),
         tooltip: "Fluent UI icon grid",
         child_ribbon: None,
     },
@@ -161,7 +161,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 0,
-        glyph: "T",
+        glyph: RibbonGlyph::Icon("color"),
         tooltip: "Theme & colour",
         child_ribbon: None,
     },
@@ -170,7 +170,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 1,
-        glyph: "K",
+        glyph: RibbonGlyph::Icon("keyboard"),
         tooltip: "Keys & gestures",
         child_ribbon: None,
     },
@@ -179,7 +179,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 2,
-        glyph: "?",
+        glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
     },
@@ -502,40 +502,9 @@ impl eframe::App for FrostApp {
             }
         }
 
-        // ── Status bar ──────────────────────────────────────
-        let sel = scene_tree_selected
-            .clone()
-            .unwrap_or_else(|| "—".into());
-        let copied = copied_path.clone();
-        let picked = *last_picked;
-        statusbar(
-            ctx,
-            "demo_statusbar",
-            egui::Align2::LEFT_BOTTOM,
-            accent_col,
-            |ui| {
-                ui.label(
-                    egui::RichText::new(format!("selected: {sel}"))
-                        .color(egui_frost::style::TEXT_PRIMARY),
-                );
-                if let Some(p) = copied {
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!("copied: {p}"))
-                            .color(egui_frost::style::TEXT_SECONDARY),
-                    );
-                }
-                if let Some(id) = picked {
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!("last: {id}"))
-                            .color(egui_frost::style::TEXT_SECONDARY),
-                    );
-                }
-                ui.separator();
-                chip(ui, "Ctrl+K palette", accent_col);
-            },
-        );
+        // Status bar removed — top-level chrome is now ribbons +
+        // command palette only. Suppress unused-binding warnings.
+        let _ = (scene_tree_selected, copied_path, last_picked);
     }
 }
 

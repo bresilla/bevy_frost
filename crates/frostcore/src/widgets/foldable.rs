@@ -262,7 +262,36 @@ pub(crate) fn section_tracked<'i>(
                         ..Default::default()
                     };
 
-                    let title_max_w = (title_strip_rect.max.x - text_x).max(0.0);
+                    // Pane-side mirror: GAME headers (chevron-less)
+                    // render right-anchored panes as a horizontal
+                    // mirror of left-anchored ones — title hugs the
+                    // RIGHT edge, the floating icon goes to the LEFT.
+                    // PRO with chevron always reads left-to-right
+                    // because flipping the chevron + title row
+                    // breaks the "fold here" reading affordance.
+                    let on_right_pane = !theme_now.show_section_chevron
+                        && crate::floating::current_pane_on_right_side(ui.ctx())
+                            .unwrap_or(false);
+
+                    // Reserve width for the floating icon on whichever
+                    // side it ends up on so the title galley wraps /
+                    // truncates with the icon's footprint accounted for.
+                    let icon_reserve = if theme_now.section_icon_at_end
+                        && icon.is_some()
+                    {
+                        theme_now.section_icon_size + 12.0
+                    } else {
+                        0.0
+                    };
+                    let title_max_w = if on_right_pane {
+                        (title_strip_rect.max.x
+                            - title_strip_rect.min.x
+                            - TITLE_LEFT_INSET
+                            - icon_reserve)
+                            .max(0.0)
+                    } else {
+                        (title_strip_rect.max.x - text_x - icon_reserve).max(0.0)
+                    };
                     let mut job = egui::text::LayoutJob::default();
                     job.wrap.max_width = title_max_w;
                     job.wrap.max_rows = 1;
@@ -325,11 +354,18 @@ pub(crate) fn section_tracked<'i>(
                     }
 
                     let title_galley = ui.painter().layout_job(job);
-                    let title_pos = egui::pos2(
-                        text_x,
-                        title_strip_rect.center().y - title_galley.size().y * 0.5,
-                    );
                     let title_size = title_galley.size();
+                    let title_pos_x = if on_right_pane {
+                        // Right-align: galley's RIGHT edge sits at
+                        // `strip.max.x - TITLE_LEFT_INSET`.
+                        title_strip_rect.max.x - TITLE_LEFT_INSET - title_size.x
+                    } else {
+                        text_x
+                    };
+                    let title_pos = egui::pos2(
+                        title_pos_x,
+                        title_strip_rect.center().y - title_size.y * 0.5,
+                    );
                     // Double-paint with a half-pixel horizontal offset
                     // when unfolded to fake a heavier / bolder weight.
                     // egui's `TextFormat` has no `bold` field, so this
@@ -381,20 +417,42 @@ pub(crate) fn section_tracked<'i>(
                                 // state still centres the small icon
                                 // on the strip.
                                 let folded_size = base_size * 0.85;
-                                let unfolded_size = base_size * 2.6;
+                                // Shrunk ~8 % from the previous 2.6×.
+                                // Top is pinned (UNFOLDED_TOP) so the
+                                // size reduction only retracts the
+                                // BOTTOM edge upward, leaving the
+                                // upward overflow intact.
+                                let unfolded_size = base_size * 2.4;
                                 let t = smoothstep(captured_openness);
                                 let size = egui::lerp(folded_size..=unfolded_size, t);
                                 const UNFOLDED_TOP: f32 = 25.0;
                                 let folded_top = folded_size * 0.5;
                                 let top_offset = egui::lerp(folded_top..=UNFOLDED_TOP, t);
-                                let icon_pos = egui::pos2(
-                                    title_strip_rect.max.x - 6.0,
-                                    title_strip_rect.center().y - top_offset,
-                                );
-                                let icon_rect = egui::Rect::from_min_size(
-                                    egui::pos2(icon_pos.x - size, icon_pos.y),
-                                    egui::vec2(size, size),
-                                );
+                                // Mirror the icon side: right-anchored
+                                // panes put the icon on the LEFT,
+                                // left-anchored panes (default) keep
+                                // it on the RIGHT.
+                                let (icon_pos, icon_align, icon_rect) = if on_right_pane {
+                                    let pos = egui::pos2(
+                                        title_strip_rect.min.x + 6.0,
+                                        title_strip_rect.center().y - top_offset,
+                                    );
+                                    let rect = egui::Rect::from_min_size(
+                                        pos,
+                                        egui::vec2(size, size),
+                                    );
+                                    (pos, egui::Align2::LEFT_TOP, rect)
+                                } else {
+                                    let pos = egui::pos2(
+                                        title_strip_rect.max.x - 6.0,
+                                        title_strip_rect.center().y - top_offset,
+                                    );
+                                    let rect = egui::Rect::from_min_size(
+                                        egui::pos2(pos.x - size, pos.y),
+                                        egui::vec2(size, size),
+                                    );
+                                    (pos, egui::Align2::RIGHT_TOP, rect)
+                                };
                                 let clip_rect = icon_rect.expand(8.0);
                                 match icon_src {
                                     crate::icons::Icon::Name(name) => {
@@ -410,7 +468,7 @@ pub(crate) fn section_tracked<'i>(
                                         crate::icons::paint_icon(
                                             &p,
                                             icon_pos,
-                                            egui::Align2::RIGHT_TOP,
+                                            icon_align,
                                             name,
                                             size,
                                             title_col,
@@ -426,7 +484,7 @@ pub(crate) fn section_tracked<'i>(
                                         crate::icons::paint_section_icon(
                                             &mut child,
                                             icon_pos,
-                                            egui::Align2::RIGHT_TOP,
+                                            icon_align,
                                             icon_src,
                                             size,
                                             title_col,

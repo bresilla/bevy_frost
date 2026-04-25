@@ -213,6 +213,12 @@ fn install_fonts(ctx: &egui::Context) {
     }
     crate::icons::install_iconflow_fonts(&mut fonts);
     ctx.set_fonts(fonts);
+    // Mark Fluent fonts ready so `paint_icon` / `paint_section_icon`
+    // can stop bailing out — set AFTER `ctx.set_fonts` so any
+    // concurrent paint sees the flag only when egui actually has the
+    // family bound.
+    crate::icons::ICONFLOW_FONTS_READY
+        .store(true, std::sync::atomic::Ordering::Release);
 }
 
 /// Apply the frost theme to the given egui context. Pure egui —
@@ -1202,6 +1208,26 @@ pub fn paint_dashed_line(
         let end = p1 + dir * end_t;
         painter.line_segment([start, end], stroke);
         t += step;
+    }
+}
+
+/// Fill for a *nested* card (subsection / group frame) — picks a
+/// surface that reads as one tier brighter than its parent section.
+///
+/// PRO returns `bg_hover` (the pre-existing recipe — a brighter
+/// neutral that the original kit shipped with). GAME / any
+/// accent-fill theme returns `pane_fill` lerped 6 % toward white,
+/// so a subsection sits on a slightly raised dark-accent variant
+/// instead of a hard-coded grey that doesn't match the parent
+/// section's accent-tinted bg.
+pub fn subsection_fill(accent: egui::Color32) -> egui::Color32 {
+    let th = theme();
+    match th.panel_fill_mode {
+        ColorMode::FromAccent { lerp_factor } => {
+            let base = lerp_rgb(egui::Color32::BLACK, accent, lerp_factor);
+            lerp_rgb(base, egui::Color32::WHITE, 0.06)
+        }
+        ColorMode::FromBg => th.bg_hover,
     }
 }
 

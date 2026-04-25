@@ -17,7 +17,7 @@ use egui;
 
 
 use super::kinds::{RibbonConstraint, RibbonKind};
-use super::paint::{paint_ribbon_button, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
+use super::paint::{paint_ribbon_button, paint_ribbon_glyph, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
 
 // ─── Internal state ─────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ impl RibbonLayout {
         constraint: RibbonConstraint,
         default_kind: RibbonKind,
         default_slot: u32,
-        glyph: &str,
+        glyph: super::assembly::RibbonGlyph,
         tooltip: &str,
         is_active: bool,
         accent: egui::Color32,
@@ -168,14 +168,9 @@ impl RibbonLayout {
                     accent,
                     is_active || is_dragging_this,
                     r.hovered() || is_dragging_this,
-                );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
                     glyph,
-                    egui::FontId::new(14.0, egui::FontFamily::Monospace),
-                    fg,
                 );
+                paint_ribbon_glyph(ui, rect, glyph, fg);
                 r.on_hover_text(tooltip)
             })
             .inner;
