@@ -535,38 +535,44 @@ fn widgets_panel(
     fuel: &mut f32,
 ) {
     let accent = pane.accent();
-    pane.section("demo_flags", "Flags", true, |ui| {
-        toggle(ui, "power", power, accent);
-        toggle(ui, "headlights", headlights, accent);
-    });
-    pane.section("demo_numbers", "Numbers", true, |ui| {
-        drag_value(ui, "gravity (m/s²)", gravity, 0.05, 0.0..=30.0, 2, "");
-        drag_value(ui, "speed limit (m/s)", speed_limit, 0.1, 0.0..=100.0, 1, "");
-        drag_value(ui, "engine power (kW)", engine_power, 1.0, 0.0..=2_000.0, 0, "");
-    });
-    pane.section("demo_bars", "Bars", true, |ui| {
-        pretty_slider(ui, "throttle", throttle, 0.0..=1.0, 2, "", accent);
-        pretty_slider(ui, "brake", brake, 0.0..=1.0, 2, "", accent);
-        pretty_progressbar_text(
-            ui,
-            "fuel",
-            *fuel,
-            &format!("{:.0}%", *fuel * 100.0),
-            accent,
-        );
-    });
-    pane.section("demo_buttons", "Buttons", false, |ui| {
-        if wide_button(ui, "Refuel", accent).clicked() {
-            *fuel = 1.0;
+    let order = pane.section_order(["demo_flags", "demo_numbers", "demo_bars", "demo_buttons"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_flags" => pane.section("demo_flags", "Flags", true, |ui| {
+                toggle(ui, "power", power, accent);
+                toggle(ui, "headlights", headlights, accent);
+            }),
+            "demo_numbers" => pane.section("demo_numbers", "Numbers", true, |ui| {
+                drag_value(ui, "gravity (m/s²)", gravity, 0.05, 0.0..=30.0, 2, "");
+                drag_value(ui, "speed limit (m/s)", speed_limit, 0.1, 0.0..=100.0, 1, "");
+                drag_value(ui, "engine power (kW)", engine_power, 1.0, 0.0..=2_000.0, 0, "");
+            }),
+            "demo_bars" => pane.section("demo_bars", "Bars", true, |ui| {
+                pretty_slider(ui, "throttle", throttle, 0.0..=1.0, 2, "", accent);
+                pretty_slider(ui, "brake", brake, 0.0..=1.0, 2, "", accent);
+                pretty_progressbar_text(
+                    ui,
+                    "fuel",
+                    *fuel,
+                    &format!("{:.0}%", *fuel * 100.0),
+                    accent,
+                );
+            }),
+            "demo_buttons" => pane.section("demo_buttons", "Buttons", false, |ui| {
+                if wide_button(ui, "Refuel", accent).clicked() {
+                    *fuel = 1.0;
+                }
+                card_button(
+                    ui,
+                    "★",
+                    "Primary action",
+                    "Two-line card button with glyph + subtitle",
+                    accent,
+                );
+            }),
+            _ => {}
         }
-        card_button(
-            ui,
-            "★",
-            "Primary action",
-            "Two-line card button with glyph + subtitle",
-            accent,
-        );
-    });
+    }
 }
 
 fn containers_panel(
@@ -575,40 +581,46 @@ fn containers_panel(
     rotation_deg: &mut [f64; 3],
 ) {
     let accent = pane.accent();
-    pane.section("demo_transform", "Transform", true, |ui| {
-        subsection(
-            ui,
-            "demo_tr_pos",
-            "Position",
-            Some("drag, double-click to type"),
-            accent,
-            true,
-            |ui| {
-                axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
-                    &mut position[0], 0.05, " m", 3);
-                axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
-                    &mut position[1], 0.05, " m", 3);
-                axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
-                    &mut position[2], 0.05, " m", 3);
-            },
-        );
-        subsection(
-            ui,
-            "demo_tr_rot",
-            "Rotation",
-            Some("Euler XYZ, degrees"),
-            accent,
-            true,
-            |ui| {
-                axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
-                    &mut rotation_deg[0], 1.0, "°", 2);
-                axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
-                    &mut rotation_deg[1], 1.0, "°", 2);
-                axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
-                    &mut rotation_deg[2], 1.0, "°", 2);
-            },
-        );
-    });
+    let order = pane.section_order(["demo_transform"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_transform" => pane.section("demo_transform", "Transform", true, |ui| {
+                subsection(
+                    ui,
+                    "demo_tr_pos",
+                    "Position",
+                    Some("drag, double-click to type"),
+                    accent,
+                    true,
+                    |ui| {
+                        axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
+                            &mut position[0], 0.05, " m", 3);
+                        axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
+                            &mut position[1], 0.05, " m", 3);
+                        axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
+                            &mut position[2], 0.05, " m", 3);
+                    },
+                );
+                subsection(
+                    ui,
+                    "demo_tr_rot",
+                    "Rotation",
+                    Some("Euler XYZ, degrees"),
+                    accent,
+                    true,
+                    |ui| {
+                        axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
+                            &mut rotation_deg[0], 1.0, "°", 2);
+                        axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
+                            &mut rotation_deg[1], 1.0, "°", 2);
+                        axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
+                            &mut rotation_deg[2], 1.0, "°", 2);
+                    },
+                );
+            }),
+            _ => {}
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -627,90 +639,95 @@ fn elements_panel(
     scene_double_click_count: &mut u32,
 ) {
     let accent = pane.accent();
-    pane.section("demo_scene_tree", "Scene", true, |ui| {
-        search_field(ui, scene_query, "filter by name / path…", accent);
-        dropdown(ui, "kind", scene_filter, SCENE_FILTERS, accent);
+    let order = pane.section_order(["demo_scene_tree", "demo_elements"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_scene_tree" => pane.section("demo_scene_tree", "Scene", true, |ui| {
+                search_field(ui, scene_query, "filter by name / path…", accent);
+                dropdown(ui, "kind", scene_filter, SCENE_FILTERS, accent);
 
-        let scroll_w = ui.available_width();
-        let query_lc = scene_query.to_lowercase();
-        let scroll_out = ui.allocate_ui_with_layout(
-            egui::vec2(scroll_w, *scene_scroll_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("demo_scene_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        draw_scene_tree(
-                            ui, scene_tree, 0, scene_tree_selected,
-                            *scene_filter, &query_lc, accent, copied_path,
-                        );
-                    })
-            },
-        );
-        let content_h = scroll_out.inner.content_size.y;
-        let min_h = TREE_ROW_H * 3.0;
-        let max_h = content_h.max(min_h);
-        row_separator_resize(ui, "scene_scroll_grip", scene_scroll_h, min_h, max_h, accent);
+                let scroll_w = ui.available_width();
+                let query_lc = scene_query.to_lowercase();
+                let scroll_out = ui.allocate_ui_with_layout(
+                    egui::vec2(scroll_w, *scene_scroll_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("demo_scene_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                draw_scene_tree(
+                                    ui, scene_tree, 0, scene_tree_selected,
+                                    *scene_filter, &query_lc, accent, copied_path,
+                                );
+                            })
+                    },
+                );
+                let content_h = scroll_out.inner.content_size.y;
+                let min_h = TREE_ROW_H * 3.0;
+                let max_h = content_h.max(min_h);
+                row_separator_resize(ui, "scene_scroll_grip", scene_scroll_h, min_h, max_h, accent);
 
-        readout_row(ui, "selected", scene_tree_selected.as_deref().unwrap_or("—"));
-        let sel_flags = scene_tree_selected
-            .as_deref()
-            .and_then(|p| find_node(scene_tree, p))
-            .map(|n| n.flags)
-            .unwrap_or(&[]);
-        if !sel_flags.is_empty() {
-            badge_row(ui, "flags", sel_flags, accent);
+                readout_row(ui, "selected", scene_tree_selected.as_deref().unwrap_or("—"));
+                let sel_flags = scene_tree_selected
+                    .as_deref()
+                    .and_then(|p| find_node(scene_tree, p))
+                    .map(|n| n.flags)
+                    .unwrap_or(&[]);
+                if !sel_flags.is_empty() {
+                    badge_row(ui, "flags", sel_flags, accent);
+                }
+            }),
+            "demo_elements" => pane.section("demo_elements", "Flat list", true, |ui| {
+                let scroll_w = ui.available_width();
+                let scroll_out = ui.allocate_ui_with_layout(
+                    egui::vec2(scroll_w, *flat_scroll_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("demo_flat_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for (idx, name) in scene_entities.iter().enumerate() {
+                                    let selected = *scene_selected == Some(idx);
+                                    let pinned = *scene_following == Some(idx);
+                                    let trailing = format!("#{idx}");
+                                    let resp = hybrid_select_row(
+                                        ui, idx, name, Some(&trailing), selected, pinned, accent,
+                                    );
+                                    if resp.body.clicked() {
+                                        *scene_selected = Some(idx);
+                                    }
+                                    if resp.body.double_clicked() {
+                                        *scene_double_click_count =
+                                            scene_double_click_count.wrapping_add(1);
+                                    }
+                                    if resp.radio.clicked() {
+                                        *scene_following = if pinned { None } else { Some(idx) };
+                                    }
+                                }
+                            })
+                    },
+                );
+                let content_h = scroll_out.inner.content_size.y;
+                let min_h = HYBRID_SELECT_ROW_H * 3.0;
+                let max_h = content_h.max(min_h);
+                row_separator_resize(ui, "flat_scroll_grip", flat_scroll_h, min_h, max_h, accent);
+                let sel_name = scene_selected
+                    .and_then(|i| scene_entities.get(i))
+                    .cloned()
+                    .unwrap_or_else(|| "—".into());
+                let pinned_name = scene_following
+                    .and_then(|i| scene_entities.get(i))
+                    .cloned()
+                    .unwrap_or_else(|| "—".into());
+                readout_row(ui, "selected (transient)", &sel_name);
+                readout_row(ui, "pinned (durable)", &pinned_name);
+                readout_row(ui, "double-clicks", &scene_double_click_count.to_string());
+            }),
+            _ => {}
         }
-    });
-
-    pane.section("demo_elements", "Flat list", true, |ui| {
-        let scroll_w = ui.available_width();
-        let scroll_out = ui.allocate_ui_with_layout(
-            egui::vec2(scroll_w, *flat_scroll_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("demo_flat_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for (idx, name) in scene_entities.iter().enumerate() {
-                            let selected = *scene_selected == Some(idx);
-                            let pinned = *scene_following == Some(idx);
-                            let trailing = format!("#{idx}");
-                            let resp = hybrid_select_row(
-                                ui, idx, name, Some(&trailing), selected, pinned, accent,
-                            );
-                            if resp.body.clicked() {
-                                *scene_selected = Some(idx);
-                            }
-                            if resp.body.double_clicked() {
-                                *scene_double_click_count =
-                                    scene_double_click_count.wrapping_add(1);
-                            }
-                            if resp.radio.clicked() {
-                                *scene_following = if pinned { None } else { Some(idx) };
-                            }
-                        }
-                    })
-            },
-        );
-        let content_h = scroll_out.inner.content_size.y;
-        let min_h = HYBRID_SELECT_ROW_H * 3.0;
-        let max_h = content_h.max(min_h);
-        row_separator_resize(ui, "flat_scroll_grip", flat_scroll_h, min_h, max_h, accent);
-        let sel_name = scene_selected
-            .and_then(|i| scene_entities.get(i))
-            .cloned()
-            .unwrap_or_else(|| "—".into());
-        let pinned_name = scene_following
-            .and_then(|i| scene_entities.get(i))
-            .cloned()
-            .unwrap_or_else(|| "—".into());
-        readout_row(ui, "selected (transient)", &sel_name);
-        readout_row(ui, "pinned (durable)", &pinned_name);
-        readout_row(ui, "double-clicks", &scene_double_click_count.to_string());
-    });
+    }
 }
 
 fn editor_panel(
@@ -720,18 +737,24 @@ fn editor_panel(
     code: &mut String,
 ) {
     let accent = pane.accent();
-    pane.section("demo_graph", "Node graph", true, |ui| {
-        sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
-        let w = ui.available_width();
-        frost_snarl(ui, "demo_editor_snarl", graph, viewer, accent, egui::vec2(w, 260.0));
-    });
-    pane.section("demo_code", "Source", true, |ui| {
-        sub_caption(ui, "rust syntax · click ▢ to maximise");
-        let w = ui.available_width();
-        frost_code_editor(
-            ui, "demo_editor_code", code, Syntax::rust(), accent, egui::vec2(w, 260.0),
-        );
-    });
+    let order = pane.section_order(["demo_graph", "demo_code"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_graph" => pane.section("demo_graph", "Node graph", true, |ui| {
+                sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
+                let w = ui.available_width();
+                frost_snarl(ui, "demo_editor_snarl", graph, viewer, accent, egui::vec2(w, 260.0));
+            }),
+            "demo_code" => pane.section("demo_code", "Source", true, |ui| {
+                sub_caption(ui, "rust syntax · click ▢ to maximise");
+                let w = ui.available_width();
+                frost_code_editor(
+                    ui, "demo_editor_code", code, Syntax::rust(), accent, egui::vec2(w, 260.0),
+                );
+            }),
+            _ => {}
+        }
+    }
 }
 
 fn theme_panel(
@@ -741,50 +764,68 @@ fn theme_panel(
     tint_rgba: &mut [f32; 4],
 ) {
     let accent = pane.accent();
-    pane.section("demo_theme_colour", "Accent", true, |ui| {
-        let c = accent_res.0;
-        let mut rgb = [
-            c.r() as f32 / 255.0,
-            c.g() as f32 / 255.0,
-            c.b() as f32 / 255.0,
-        ];
-        if color_rgb(ui, "accent", &mut rgb, accent).changed() {
-            accent_res.0 = srgb_to_egui(rgb);
+    let order = pane.section_order(["demo_theme_colour", "demo_theme_glass"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_theme_colour" => pane.section("demo_theme_colour", "Accent", true, |ui| {
+                let c = accent_res.0;
+                let mut rgb = [
+                    c.r() as f32 / 255.0,
+                    c.g() as f32 / 255.0,
+                    c.b() as f32 / 255.0,
+                ];
+                if color_rgb(ui, "accent", &mut rgb, accent).changed() {
+                    accent_res.0 = srgb_to_egui(rgb);
+                }
+                color_rgba(ui, "tint (rgba)", tint_rgba, accent);
+                sub_caption(
+                    ui,
+                    "Changing accent recolours every widget — one resource, one brush.",
+                );
+            }),
+            "demo_theme_glass" => pane.section("demo_theme_glass", "Glass", true, |ui| {
+                let mut v = glass.0 as f64;
+                if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
+                    glass.0 = v.round().clamp(1.0, 100.0) as u8;
+                }
+                sub_caption(ui, "Lower values let the backdrop peek through every pane.");
+            }),
+            _ => {}
         }
-        color_rgba(ui, "tint (rgba)", tint_rgba, accent);
-        sub_caption(
-            ui,
-            "Changing accent recolours every widget — one resource, one brush.",
-        );
-    });
-    pane.section("demo_theme_glass", "Glass", true, |ui| {
-        let mut v = glass.0 as f64;
-        if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
-            glass.0 = v.round().clamp(1.0, 100.0) as u8;
-        }
-        sub_caption(ui, "Lower values let the backdrop peek through every pane.");
-    });
+    }
 }
 
 fn keys_panel(pane: &mut PaneBuilder) {
-    pane.section("demo_keys_app", "App", true, |ui| {
-        keybinding_row(ui, "Ctrl+K", "toggle the command palette");
-        keybinding_row(ui, "Shift + chevron", "expand / collapse subtree");
-        keybinding_row(ui, "Right-click row", "frost-styled context menu");
-    });
-    pane.section("demo_keys_layout", "Layout", false, |ui| {
-        keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
-        keybinding_row(ui, "Toggle ribbon btn", "open / close the pane");
-    });
+    let order = pane.section_order(["demo_keys_app", "demo_keys_layout"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_keys_app" => pane.section("demo_keys_app", "App", true, |ui| {
+                keybinding_row(ui, "Ctrl+K", "toggle the command palette");
+                keybinding_row(ui, "Shift + chevron", "expand / collapse subtree");
+                keybinding_row(ui, "Right-click row", "frost-styled context menu");
+            }),
+            "demo_keys_layout" => pane.section("demo_keys_layout", "Layout", false, |ui| {
+                keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
+                keybinding_row(ui, "Toggle ribbon btn", "open / close the pane");
+            }),
+            _ => {}
+        }
+    }
 }
 
 fn about_panel(pane: &mut PaneBuilder) {
-    pane.section("demo_about_intro", "egui_frost", true, |ui| {
-        sub_caption(ui, "Reusable glass-themed editor UI kit for plain egui / eframe.");
-        readout_row(ui, "version", env!("CARGO_PKG_VERSION"));
-        readout_row(ui, "egui", "0.33");
-        readout_row(ui, "eframe", "0.33");
-    });
+    let order = pane.section_order(["demo_about_intro"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_about_intro" => pane.section("demo_about_intro", "egui_frost", true, |ui| {
+                sub_caption(ui, "Reusable glass-themed editor UI kit for plain egui / eframe.");
+                readout_row(ui, "version", env!("CARGO_PKG_VERSION"));
+                readout_row(ui, "egui", "0.33");
+                readout_row(ui, "eframe", "0.33");
+            }),
+            _ => {}
+        }
+    }
 }
 
 // ─── Scene tree types / helpers ────────────────────────────────────
