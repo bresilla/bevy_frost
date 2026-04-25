@@ -167,19 +167,28 @@ impl<'a> PaneBuilder<'a> {
         default_open: bool,
         body: impl FnOnce(&mut egui::Ui),
     ) {
-        self.section_with(id_salt, title, default_open, None, body);
+        self.section_with(
+            id_salt,
+            title,
+            default_open,
+            None::<crate::icons::Icon<'_>>,
+            body,
+        );
     }
 
-    /// Section with an optional icon. Header-action buttons were
-    /// removed — widgets that need a "lift to full-window" affordance
-    /// should host their own floating chip via
+    /// Section with an optional icon. The icon argument is anything
+    /// convertible into [`crate::icons::Icon`] — pass a Fluent icon
+    /// name (`Some("flag")`), an `Icon::Svg(svg_str)` for inline SVG,
+    /// or build one via [`crate::icons::Icon::from`]. Header-action
+    /// buttons were removed; widgets that need a "lift to
+    /// full-window" affordance host their own floating chip via
     /// [`crate::maximize::maximizable`].
-    pub fn section_with(
+    pub fn section_with<'i, I: Into<crate::icons::Icon<'i>>>(
         &mut self,
         id_salt: &str,
         title: &str,
         default_open: bool,
-        icon: Option<&str>,
+        icon: Option<I>,
         body: impl FnOnce(&mut egui::Ui),
     ) {
         // If THIS section is the one being dragged, lift it out of

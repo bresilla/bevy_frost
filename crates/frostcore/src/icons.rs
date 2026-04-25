@@ -39,6 +39,72 @@ pub(crate) fn install_iconflow_fonts(fonts_def: &mut egui::FontDefinitions) {
     }
 }
 
+/// Source for a section / widget icon — either a bundled Fluent
+/// glyph (looked up by name) or raw SVG content (rendered via
+/// egui's image loader pipeline; the host must install a loader
+/// that handles the `image/svg+xml` mime type, e.g.
+/// [`egui_extras::install_image_loaders`] with the `svg` feature).
+#[derive(Clone, Copy, Debug)]
+pub enum Icon<'a> {
+    /// Look up `&str` in the bundled Fluent UI System Icons set.
+    Name(&'a str),
+    /// Raw SVG markup. Painted by `paint_section_icon` via
+    /// `egui::Image::from_bytes` + `paint_at`. No-ops silently if
+    /// the host hasn't installed an SVG loader.
+    Svg(&'a str),
+}
+
+impl<'a> From<&'a str> for Icon<'a> {
+    fn from(s: &'a str) -> Icon<'a> {
+        // Cheap heuristic: any string that looks like SVG markup
+        // resolves to `Svg`; everything else is a Fluent icon name.
+        // Saves callers from typing `Icon::Svg(...)` explicitly when
+        // they want SVG via the `&str` shorthand.
+        let trimmed = s.trim_start();
+        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+            Icon::Svg(s)
+        } else {
+            Icon::Name(s)
+        }
+    }
+}
+
+/// Paint a [`Icon`] at `pos`, aligned via `align`, sized to `size`
+/// pixels, tinted by `color`. Dispatches to the Fluent painter for
+/// `Icon::Name`, and to egui's image loader for `Icon::Svg`.
+pub fn paint_section_icon(
+    ui: &mut egui::Ui,
+    pos: egui::Pos2,
+    align: egui::Align2,
+    icon: Icon<'_>,
+    size: f32,
+    color: egui::Color32,
+) {
+    match icon {
+        Icon::Name(name) => {
+            paint_icon(&ui.painter(), pos, align, name, size, color);
+        }
+        Icon::Svg(svg) => {
+            let rect = align.anchor_rect(egui::Rect::from_min_size(
+                pos,
+                egui::vec2(size, size),
+            ));
+            // Stable URI per SVG content so egui's loader can cache;
+            // a tiny djb2 hash keeps the URI short without pulling
+            // in `std::collections::hash_map::DefaultHasher`.
+            let mut h: u64 = 5381;
+            for b in svg.as_bytes() {
+                h = h.wrapping_mul(33).wrapping_add(*b as u64);
+            }
+            let uri = format!("bytes://frost_svg_icon_{:016x}.svg", h);
+            let img = egui::Image::from_bytes(uri, svg.as_bytes().to_vec())
+                .tint(color)
+                .fit_to_exact_size(rect.size());
+            img.paint_at(ui, rect);
+        }
+    }
+}
+
 /// Look up a filled Fluent UI System Icon by name. Returns the
 /// glyph character + the font family to render it in. Returns
 /// `None` when the icon isn't in the bundled set — caller should

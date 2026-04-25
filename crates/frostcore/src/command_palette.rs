@@ -161,19 +161,39 @@ pub fn command_palette(
                     spread: 0,
                     color: egui::Color32::from_black_alpha(150),
                 });
-            frame.show(ui, |ui| {
+            let frame_inner = frame.show(ui, |ui| {
                 ui.set_width(WIDTH - 16.0);
-                // Search input — plain TextEdit since we want
-                // keyboard focus to land here automatically.
+                // Search input — themes that filled the section
+                // title strip with accent (GAME) get the same
+                // treatment here: full accent background, contrast
+                // text on top, accent-darkened hint text. PRO falls
+                // back to the original raised glass fill.
+                let theme_now = crate::style::theme();
+                let (input_bg, input_text_col, hint_col) = if theme_now.title_strip_filled {
+                    let bg = accent;
+                    let text = crate::style::contrast_text_for(bg);
+                    let hint = egui::Color32::from_rgba_unmultiplied(
+                        text.r(), text.g(), text.b(), 160,
+                    );
+                    (bg, text, hint)
+                } else {
+                    (
+                        glass_fill(BG_2_RAISED, accent, glass_alpha_card()),
+                        crate::style::on_section(),
+                        crate::style::on_section_dim(),
+                    )
+                };
+                let hint_text = egui::WidgetText::from(
+                    egui::RichText::new("Type a command…")
+                        .color(hint_col)
+                        .size(13.0),
+                );
                 let edit = egui::TextEdit::singleline(&mut state.query)
                     .desired_width(f32::INFINITY)
                     .frame(true)
-                    .hint_text("Type a command…")
-                    .background_color(glass_fill(
-                        BG_2_RAISED,
-                        accent,
-                        glass_alpha_card(),
-                    ))
+                    .hint_text(hint_text)
+                    .text_color(input_text_col)
+                    .background_color(input_bg)
                     .font(egui::FontId::proportional(13.0));
                 let edit_resp = ui.add(edit);
                 if edit_resp.changed() {
@@ -189,6 +209,33 @@ pub fn command_palette(
                 }
 
                 ui.add_space(4.0);
+
+                // Dashed separator between the input and the result
+                // list — matches the row-separator language used
+                // inside section bodies in the GAME theme. PRO falls
+                // back to the existing 4 px gap (the dash recipe is
+                // None there).
+                if let Some((on, off)) = crate::style::theme().row_separator_dash {
+                    let w = ui.available_width();
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(w, 1.0),
+                        egui::Sense::hover(),
+                    );
+                    let alpha = crate::style::theme().row_separator_alpha.max(60);
+                    let base = crate::style::theme().border_subtle;
+                    let col = egui::Color32::from_rgba_unmultiplied(
+                        base.r(), base.g(), base.b(), alpha,
+                    );
+                    crate::style::paint_dashed_line(
+                        ui.painter(),
+                        rect.left_center(),
+                        rect.right_center(),
+                        on,
+                        off,
+                        egui::Stroke::new(1.0, col),
+                    );
+                    ui.add_space(4.0);
+                }
 
                 // Results list.
                 egui::ScrollArea::vertical()
@@ -207,13 +254,74 @@ pub fn command_palette(
                                 );
                             });
                         }
+                        let dash = crate::style::theme().row_separator_dash;
+                        let row_alpha = crate::style::theme().row_separator_alpha;
+                        let row_base = crate::style::theme().border_subtle;
                         for (i, it) in filtered.iter().enumerate() {
                             if paint_row(ui, it, i == state.selected, accent).clicked() {
                                 picked = Some(it.id);
                             }
+                            // Dashed inter-item rule — only in themes
+                            // that opted into dashed row separators
+                            // (GAME). PRO continues with the implicit
+                            // `item_spacing.y` gap.
+                            if let Some((on, off)) = dash {
+                                if i + 1 < filtered.len() && row_alpha > 0 {
+                                    let w = ui.available_width();
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(w, 1.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let col = egui::Color32::from_rgba_unmultiplied(
+                                        row_base.r(),
+                                        row_base.g(),
+                                        row_base.b(),
+                                        row_alpha,
+                                    );
+                                    crate::style::paint_dashed_line(
+                                        ui.painter(),
+                                        rect.left_center(),
+                                        rect.right_center(),
+                                        on,
+                                        off,
+                                        egui::Stroke::new(1.0, col),
+                                    );
+                                }
+                            }
                         }
                     });
             });
+
+            // L-bracket corner ticks at the palette's four corners,
+            // matching the section-header language. Theme-gated via
+            // `section_corner_ticks`; PRO sets it to `0.0` so this
+            // is a no-op there.
+            let tick_len = crate::style::theme().section_corner_ticks;
+            if tick_len > 0.0 {
+                let r = frame_inner.response.rect;
+                let inset = crate::style::theme().section_corner_ticks_inset;
+                let r = if inset > 0.0 { r.shrink(inset) } else { r };
+                let snap_low = |v: f32| v.round() + 0.5;
+                let snap_high = |v: f32| v.round() - 0.5;
+                let lx = snap_low(r.min.x);
+                let ty = snap_low(r.min.y);
+                let rx = snap_high(r.max.x);
+                let by = snap_high(r.max.y);
+                let len = tick_len;
+                let col = egui::Color32::from_rgba_unmultiplied(
+                    accent.r(), accent.g(), accent.b(), 220,
+                );
+                let s = egui::Stroke::new(1.0, col);
+                let p = ui.painter();
+                p.line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], s);
+                p.line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], s);
+                p.line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], s);
+                p.line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], s);
+                p.line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], s);
+                p.line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], s);
+                p.line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], s);
+                p.line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], s);
+            }
         });
 
     if picked.is_some() {

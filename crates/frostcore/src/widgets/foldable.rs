@@ -38,7 +38,7 @@ pub fn section(
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let _ = section_tracked(ui, id_salt, title, accent, default_open, None, body);
+    let _ = section_tracked(ui, id_salt, title, accent, default_open, None::<crate::icons::Icon<'_>>, body);
 }
 
 /// Kept (deprecated) so any downstream code that referenced these
@@ -78,15 +78,16 @@ pub(crate) struct SectionTrack {
 /// `CollapsingState` id (so the pane's auto-fold pass can force the
 /// section closed from outside), and the header's response. Body
 /// rendering and frame styling are unchanged from `section`.
-pub(crate) fn section_tracked(
+pub(crate) fn section_tracked<'i>(
     ui: &mut egui::Ui,
     id_salt: &str,
     title: &str,
     accent: egui::Color32,
     default_open: bool,
-    icon: Option<&str>,
+    icon: Option<impl Into<crate::icons::Icon<'i>>>,
     body: impl FnOnce(&mut egui::Ui),
 ) -> SectionTrack {
+    let icon: Option<crate::icons::Icon<'i>> = icon.map(Into::into);
     flush_pending_separator(ui);
     let full_w = ui.available_width();
     // Theme-driven outer inset — must match the frame's actual
@@ -205,7 +206,11 @@ pub(crate) fn section_tracked(
                     // Chevron — themes that opt out (GAME) skip both
                     // the paint AND its reserved horizontal slot, so
                     // the title shifts left and reclaims the space.
-                    let mut text_x = title_strip_rect.min.x;
+                    // For chevron-less themes a small inset still
+                    // pushes the title off the strip's left edge so
+                    // it doesn't kiss the border / corner tick.
+                    const TITLE_LEFT_INSET: f32 = 8.0;
+                    let mut text_x = title_strip_rect.min.x + TITLE_LEFT_INSET;
                     if theme_now.show_section_chevron {
                         let chevron_rect = egui::Rect::from_min_size(
                             title_strip_rect.min,
@@ -228,7 +233,26 @@ pub(crate) fn section_tracked(
                     // a separate paint before the title text — same
                     // visual as before, just routed through the same
                     // composition path.
-                    let title_size_pt = theme_now.section_title_size;
+                    // Title size + boldness animate with fold state:
+                    //   folded   → base size, bracketed `[ TITLE ]`
+                    //   unfolded → bigger + heavier bold, no brackets
+                    // Smoothstep eases the size lerp so it matches the
+                    // banner / icon transitions.
+                    let base_title_size = theme_now.section_title_size;
+                    let unfolded_title_size = base_title_size + 1.5;
+                    let title_size_pt = egui::lerp(
+                        base_title_size..=unfolded_title_size,
+                        smoothstep(captured_openness),
+                    );
+                    // Brackets are kept in the layout *always* (so the
+                    // title text doesn't shift horizontally between
+                    // folded and unfolded states), but tinted to
+                    // transparent once the section is no longer
+                    // essentially folded — they hide visually without
+                    // collapsing the layout's whitespace.
+                    let bracket_visible = theme_now.section_title_brackets
+                        && captured_openness < 0.05;
+                    let any_brackets = theme_now.section_title_brackets;
                     let default_font =
                         egui::FontId::new(title_size_pt, egui::FontFamily::Proportional);
                     let default_format = egui::TextFormat {
@@ -245,27 +269,35 @@ pub(crate) fn section_tracked(
                     job.wrap.break_anywhere = true;
 
                     // Optional prefix glyph (only when brackets are
-                    // OFF — when brackets are ON the prefix is dropped
-                    // because the bracket pair is the visual anchor
-                    // and chaining `▸ [ … ]` reads as cluttered).
+                    // OFF *and visible* this frame — when bracketing
+                    // wraps the title the prefix is dropped to avoid
+                    // `▸ [ … ]` looking cluttered).
                     if let (Some(prefix), false) =
-                        (theme_now.section_title_prefix, theme_now.section_title_brackets)
+                        (theme_now.section_title_prefix, any_brackets)
                     {
                         job.append(prefix, 0.0, default_format.clone());
                         job.append(" ", 0.0, default_format.clone());
                     }
 
-                    if theme_now.section_title_brackets {
-                        job.append("[ ", 0.0, default_format.clone());
+                    if any_brackets {
+                        let bracket_format = egui::TextFormat {
+                            color: if bracket_visible {
+                                title_col
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            },
+                            ..default_format.clone()
+                        };
+                        job.append("[ ", 0.0, bracket_format);
                     }
 
-                    // Icon — embedded inline with the title text
-                    // UNLESS the active theme requested it floats at
-                    // the right edge instead. In that mode we skip
-                    // the inline glyph entirely and paint it as a
-                    // bigger separate icon after the galley renders.
+                    // Icon embedded inline with the title text
+                    // (PRO mode) — only Fluent name icons can be
+                    // inlined into the LayoutJob this way; SVG icons
+                    // are deferred to the floating-icon paint path
+                    // since they need an `Image::paint_at` call.
                     if !theme_now.section_icon_at_end {
-                        if let Some(name) = icon {
+                        if let Some(crate::icons::Icon::Name(name)) = icon {
                             if let Some((glyph, family)) = crate::icons::icon(name) {
                                 let icon_format = egui::TextFormat {
                                     font_id: egui::FontId::new(title_size_pt, family),
@@ -280,8 +312,16 @@ pub(crate) fn section_tracked(
 
                     job.append(&title.to_uppercase(), 0.0, default_format.clone());
 
-                    if theme_now.section_title_brackets {
-                        job.append(" ]", 0.0, default_format.clone());
+                    if any_brackets {
+                        let bracket_format = egui::TextFormat {
+                            color: if bracket_visible {
+                                title_col
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            },
+                            ..default_format.clone()
+                        };
+                        job.append(" ]", 0.0, bracket_format);
                     }
 
                     let title_galley = ui.painter().layout_job(job);
@@ -290,34 +330,109 @@ pub(crate) fn section_tracked(
                         title_strip_rect.center().y - title_galley.size().y * 0.5,
                     );
                     let title_size = title_galley.size();
+                    // Double-paint with a half-pixel horizontal offset
+                    // when unfolded to fake a heavier / bolder weight.
+                    // egui's `TextFormat` has no `bold` field, so this
+                    // is the standard trick: render the same galley
+                    // twice slightly offset, which thickens every
+                    // stroke without needing a separate bold font in
+                    // the FontDefinitions.
+                    if captured_openness >= 0.5 {
+                        let bold_strength = ((captured_openness - 0.5) * 2.0).clamp(0.0, 1.0);
+                        ui.painter().galley(
+                            title_pos + egui::vec2(0.6 * bold_strength, 0.0),
+                            title_galley.clone(),
+                            title_col,
+                        );
+                    }
                     ui.painter().galley(title_pos, title_galley, title_col);
 
-                    // Floating right-edge icon. When the active theme
-                    // sets `section_icon_at_end`, the inline icon
-                    // section was skipped above; we now paint the
-                    // icon as a bigger glyph at the right of the
-                    // title strip. Reads as a "floating accent
-                    // ornament" because the size (theme-controlled
-                    // `section_icon_size`) is well above the title
-                    // text size, and it's positioned with right-edge
-                    // anchoring so it always hugs the strip's right
-                    // side regardless of title length.
+                    // Floating right-edge icon. Sizes inverted from
+                    // intuition: BIG when folded, small when open.
+                    // Reasoning — when the section is folded, the
+                    // *whole card* is just the banner so the icon
+                    // can dominate it; when open, body content sits
+                    // below and the icon shrinks back to the title
+                    // strip so it doesn't fight with the rows. The
+                    // big folded size deliberately overflows the
+                    // collapsed card up and down, which is visually
+                    // safe because the gap above/below the card is
+                    // pane-transparent. Smoothstep eases the size
+                    // transition through a cubic-bezier shape.
                     if theme_now.section_icon_at_end {
-                        if let Some(name) = icon {
-                            let size = theme_now.section_icon_size.max(0.0);
-                            if size > 0.0 {
+                        if let Some(icon_src) = icon {
+                            let base_size = theme_now.section_icon_size.max(0.0);
+                            if base_size > 0.0 {
+                                //   folded   → small (icon tucks
+                                //              cleanly inside the
+                                //              collapsed banner)
+                                //   unfolded → big, overflowing the
+                                //              section's borders so
+                                //              the icon reads as a
+                                //              floating ornament.
+                                //
+                                // Growth direction: the unfolded
+                                // *top* stays where the previous
+                                // tuning had it (`UNFOLDED_TOP`)
+                                // while the *bottom* grows further
+                                // down — the user explicitly wanted
+                                // to keep the upward overflow as-is
+                                // and add more downward. Folded
+                                // state still centres the small icon
+                                // on the strip.
+                                let folded_size = base_size * 0.85;
+                                let unfolded_size = base_size * 2.6;
+                                let t = smoothstep(captured_openness);
+                                let size = egui::lerp(folded_size..=unfolded_size, t);
+                                const UNFOLDED_TOP: f32 = 25.0;
+                                let folded_top = folded_size * 0.5;
+                                let top_offset = egui::lerp(folded_top..=UNFOLDED_TOP, t);
                                 let icon_pos = egui::pos2(
                                     title_strip_rect.max.x - 6.0,
-                                    title_strip_rect.center().y,
+                                    title_strip_rect.center().y - top_offset,
                                 );
-                                crate::icons::paint_icon(
-                                    &ui.painter(),
-                                    icon_pos,
-                                    egui::Align2::RIGHT_CENTER,
-                                    name,
-                                    size,
-                                    title_col,
+                                let icon_rect = egui::Rect::from_min_size(
+                                    egui::pos2(icon_pos.x - size, icon_pos.y),
+                                    egui::vec2(size, size),
                                 );
+                                let clip_rect = icon_rect.expand(8.0);
+                                match icon_src {
+                                    crate::icons::Icon::Name(name) => {
+                                        // `with_clip_rect` intersects
+                                        // with the painter's existing
+                                        // clip — that's what clipped
+                                        // the icon above before. Use
+                                        // `set_clip_rect` to OVERRIDE
+                                        // and let the glyph overflow
+                                        // the inner ui's narrow rect.
+                                        let mut p = ui.painter().clone();
+                                        p.set_clip_rect(clip_rect);
+                                        crate::icons::paint_icon(
+                                            &p,
+                                            icon_pos,
+                                            egui::Align2::RIGHT_TOP,
+                                            name,
+                                            size,
+                                            title_col,
+                                        );
+                                    }
+                                    crate::icons::Icon::Svg(_) => {
+                                        let mut child = ui.new_child(
+                                            egui::UiBuilder::new()
+                                                .max_rect(clip_rect)
+                                                .layout(egui::Layout::default()),
+                                        );
+                                        child.set_clip_rect(clip_rect);
+                                        crate::icons::paint_section_icon(
+                                            &mut child,
+                                            icon_pos,
+                                            egui::Align2::RIGHT_TOP,
+                                            icon_src,
+                                            size,
+                                            title_col,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -384,6 +499,15 @@ pub(crate) fn section_tracked(
                             thin_divider(ui);
                             ui.add_space(6.0);
                         }
+                        // Theme-driven gap between the title strip
+                        // and the first body row — GAME uses this to
+                        // clear the unfolded floating icon's
+                        // downward overflow so it doesn't slam into
+                        // the first widget.
+                        let top_pad = crate::style::theme().section_body_top_pad;
+                        if top_pad > 0.0 {
+                            ui.add_space(top_pad);
+                        }
                         // Body indent — creates the "title at edge,
                         // body nested" hierarchy. The horizontal +
                         // vertical wrap forces a fixed-width
@@ -442,10 +566,15 @@ pub(crate) fn section_tracked(
     // accent-coloured; when fully open it covers only the top
     // strip + top-padding. Mid-animation, the banner shrinks
     // smoothly with the body's growth.
-    let title_strip_h = (crate::style::theme().section_pad_y as f32) + 22.0;
+    // Banner extends a *small* amount below the title strip — the
+    // user's "a bit more lower" — but not all the way through the
+    // body's top padding (that was too much). 6 px is enough to
+    // feel deliberate without eating the whole padding band.
+    let title_strip_h = (crate::style::theme().section_pad_y as f32) + 22.0 + 6.0;
     let mut banner_max_y = outer_rect.min.y + title_strip_h;
     if let Some(idx) = banner_idx {
-        let target_h = egui::lerp(outer_rect.height()..=title_strip_h, captured_openness);
+        let t = smoothstep(captured_openness);
+        let target_h = egui::lerp(outer_rect.height()..=title_strip_h, t);
         let banner_rect = egui::Rect::from_min_size(
             outer_rect.min,
             egui::vec2(outer_rect.width(), target_h),
@@ -577,6 +706,16 @@ pub(crate) fn section_tracked(
         outer_rect,
         header_response: captured_header_response.expect("header always allocated"),
     }
+}
+
+/// Cubic smoothstep — the canonical "soft-S" easing curve used for
+/// every fold-state animation in the kit. Shape matches a
+/// `cubic-bezier(0.42, 0, 0.58, 1)` reasonably well so transitions
+/// read as gentle ease-in-ease-out rather than linear pops.
+#[inline]
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Thin stroked chevron (`›` rotating to `⌄`) at `rect`, picking up

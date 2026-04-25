@@ -130,11 +130,20 @@ pub fn search_field(
             .max_rect(text_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    // Dim the typed text to 50 % alpha so the field reads as a
+    // soft input rather than punching out at full contrast — the
+    // user's "they are very on the face" complaint about the
+    // search-field text feeling too aggressive.
+    let dim_text = {
+        let base = crate::style::on_track();
+        egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 128)
+    };
     let mut resp = child.add(
         egui::TextEdit::singleline(text)
             .desired_width(text_rect.width())
             .frame(false)
             .background_color(egui::Color32::TRANSPARENT)
+            .text_color(dim_text)
             .hint_text(placeholder),
     );
     if cleared {

@@ -369,6 +369,15 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     ]
     .into();
 
+    // Slow the global animation curve from egui's default ~83 ms up
+    // to 220 ms so fold / unfold (and every other `animate_bool`
+    // user — chevron rotation, accordion height, the new banner
+    // height + floating-icon size lerps in `widgets/foldable.rs`)
+    // reads as a deliberate ease-in-ease-out rather than an instant
+    // pop. Applied to *both* themes — every animation gets the same
+    // smoothstep treatment.
+    style.animation_time = 0.22;
+
     ctx.set_style(style);
 }
 
@@ -677,6 +686,12 @@ pub struct Theme {
     /// — noticeably bigger than the title text so it reads as a
     /// floating accent ornament, not body text.
     pub section_icon_size: f32,
+    /// Extra vertical space inserted between the section's title
+    /// strip and the FIRST body row. PRO `0.0` — title and body sit
+    /// flush. GAME `16.0` — clears the unfolded floating icon's
+    /// downward overflow so the icon doesn't crash into the first
+    /// row of the body.
+    pub section_body_top_pad: f32,
     /// `Some((on, off))` → row separators paint dashed instead of
     /// solid, with `on` pixels of line and `off` pixels of gap. `None`
     /// keeps the original solid hairline. PRO `None`, GAME
@@ -833,6 +848,7 @@ pub const fn theme_pro() -> Theme {
         body_accent_darken: 0.0,
         section_icon_at_end: false,
         section_icon_size: 0.0,
+        section_body_top_pad: 0.0,
         row_separator_dash: None,
         section_title_trailing_rule: false,
         section_corner_ticks: 0.0,
@@ -928,7 +944,11 @@ pub const fn theme_game() -> Theme {
         // rounding.
         section_corner_ticks_inset: 2.0,
         section_title_brackets: true,
-        section_title_prefix: Some("▸"),
+        // No prefix glyph — the brackets are the only header
+        // ornament. Originally `▸ ` showed when brackets were off
+        // (unfolded), but the user didn't want it appearing in
+        // either state.
+        section_title_prefix: None,
         section_title_letter_spacing: 1.5,
         subcaption_prefix: Some("// "),
         section_bottom_rule: true,
@@ -948,8 +968,12 @@ pub const fn theme_game() -> Theme {
         body_accent_darken: 0.18,
         section_icon_at_end: true,
         section_icon_size: 24.0,
+        section_body_top_pad: 16.0,
         row_separator_dash: Some((4.0, 3.0)),
-        section_title_trailing_rule: true,
+        // Trailing dashed rule after the title is OFF — user
+        // explicitly disliked the `[ TITLE ] ────` extension. The
+        // title can stand on its own banner without it.
+        section_title_trailing_rule: false,
         // Longer ticks (10 px arms) read as deliberate "frame
         // brackets" rather than incidental ticks.
         section_corner_ticks: 10.0,
