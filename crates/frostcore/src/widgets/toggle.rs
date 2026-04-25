@@ -13,7 +13,7 @@ use egui;
 
 use super::layout::dual_pane_labelled;
 use super::shared::{flush_pending_separator, lerp_color, widget_separator};
-use crate::style::{radius, widget_border, BG_3_HOVER};
+use crate::style::{widget_border};
 
 /// Overall track width.
 const W: f32 = 38.0;
@@ -68,14 +68,18 @@ pub fn toggle_control(
         let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
 
         let painter = ui.painter_at(rect);
-        let track_corner = egui::CornerRadius::same(radius::COMPACT);
+        let track_corner = egui::CornerRadius::same(crate::style::theme().radius_compact);
 
-        let track_bg = lerp_color(BG_3_HOVER, accent, how_on * TRACK_ACCENT_HINT);
+        // OFF base = `track_fill(accent)`: PRO gets the dark sunken
+        // `bg_input` track; GAME gets a dim-accent shade matching
+        // every other input on the panel. The lerp toward `accent`
+        // on ON keeps the same on-state hint we always had.
+        let track_bg = lerp_color(crate::style::track_fill(accent), accent, how_on * TRACK_ACCENT_HINT);
         painter.rect(
             rect,
             track_corner,
             track_bg,
-            egui::Stroke::new(1.0, widget_border(accent)),
+            egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)),
             egui::StrokeKind::Inside,
         );
 
@@ -87,12 +91,17 @@ pub fn toggle_control(
             egui::pos2(knob_x, rect.top() + KNOB_PAD),
             egui::vec2(knob_size, knob_size),
         );
-        let knob_color = lerp_color(KNOB_OFF, accent, how_on);
+        // Knob OFF colour = the contrast text against the track —
+        // a readable shade against whatever the active theme made
+        // the track. Lerps to `accent` as the toggle turns ON, so
+        // ON-state knob is bright accent regardless of panel.
+        let knob_off = crate::style::on_track();
+        let knob_color = lerp_color(knob_off, accent, how_on);
         painter.rect(
             knob_rect,
-            egui::CornerRadius::same(radius::COMPACT),
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
             knob_color,
-            egui::Stroke::new(1.0, widget_border(accent)),
+            egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)),
             egui::StrokeKind::Inside,
         );
     }

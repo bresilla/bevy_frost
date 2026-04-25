@@ -36,7 +36,7 @@
 
 use egui;
 
-use crate::style::{glass_alpha_window, glass_fill, BG_1_PANEL, BORDER_SUBTLE};
+use crate::style::{glass_alpha_window, glass_fill, BORDER_SUBTLE};
 
 // Ribbon layout constants we need here. Kept as locals rather than
 // pulling `ribbon::paint` into the public prelude — the numbers
@@ -44,6 +44,18 @@ use crate::style::{glass_alpha_window, glass_fill, BG_1_PANEL, BORDER_SUBTLE};
 const EDGE_GAP: f32 = 8.0;
 const SIDE_BTN_SIZE: f32 = 34.0;
 const RAIL_PANEL_GAP: f32 = 6.0;
+
+/// Read back the anchor-side of the floating pane currently
+/// rendering. `Some(true)` means the active pane is anchored to a
+/// `RIGHT_*` edge; `Some(false)` means a `LEFT_*` / `CENTER_*`
+/// anchor; `None` means we're not inside a `floating_window` body
+/// at all. Widgets call this to mirror their internal layout
+/// (e.g. the maximise chip flips left/right) so the pane reads
+/// symmetrically on either rail.
+pub fn current_pane_on_right_side(ctx: &egui::Context) -> Option<bool> {
+    let key = egui::Id::new("frost_current_pane_right_anchored");
+    ctx.data(|d| d.get_temp::<bool>(key))
+}
 
 /// Width of the horizontal (scene-facing) resize-handle hit zone.
 const RESIZE_HANDLE_W: f32 = 6.0;
@@ -122,6 +134,11 @@ pub struct PaneBuilder<'a> {
     /// slot from its Y plus the dragged section's natural size for
     /// the ghost gap and floating preview.
     cached_rects: RectCache,
+    /// Latched whenever a section's header was `clicked()` this
+    /// frame. The auto-fold pass excludes it so the section the
+    /// user just expanded doesn't immediately get force-closed when
+    /// the new content overshoots the body.
+    just_toggled_id: Option<String>,
 }
 
 struct RenderedSection {
@@ -148,6 +165,27 @@ impl<'a> PaneBuilder<'a> {
         id_salt: &str,
         title: &str,
         default_open: bool,
+        body: impl FnOnce(&mut egui::Ui),
+    ) {
+        self.section_with(id_salt, title, default_open, None, 0, |_| {}, body);
+    }
+
+    /// Full-fat section with an optional icon between the chevron
+    /// and the title plus a strip of header-action chips on the
+    /// right edge. `action_count` reserves space for the chips
+    /// (caller owns the painting; see
+    /// [`crate::widgets::foldable::HEADER_ACTION_SIZE`] for the
+    /// per-chip cell size). The actions strip lives in its own
+    /// right-to-left child Ui so action-button clicks don't bubble
+    /// up as section-toggle clicks.
+    pub fn section_with(
+        &mut self,
+        id_salt: &str,
+        title: &str,
+        default_open: bool,
+        icon: Option<&str>,
+        action_count: u8,
+        actions: impl FnOnce(&mut egui::Ui),
         body: impl FnOnce(&mut egui::Ui),
     ) {
         // If THIS section is the one being dragged, lift it out of
@@ -179,6 +217,9 @@ impl<'a> PaneBuilder<'a> {
             title,
             self.accent,
             default_open,
+            icon,
+            action_count,
+            actions,
             body,
         );
 
@@ -188,6 +229,9 @@ impl<'a> PaneBuilder<'a> {
         // doesn't get rendered after the first frame).
         if track.header_response.drag_started() {
             self.drag_started_id = Some(id_salt.to_string());
+        }
+        if track.header_response.clicked() {
+            self.just_toggled_id = Some(id_salt.to_string());
         }
 
         self.rendered.push(RenderedSection {
@@ -289,6 +333,7 @@ impl<'a> PaneBuilder<'a> {
             drag_started_id,
             base_order_this_frame: _,
             cached_rects,
+            just_toggled_id,
         } = self;
 
         // Promote the drag-started latch into persistent state.
@@ -379,32 +424,20 @@ impl<'a> PaneBuilder<'a> {
         ui.ctx()
             .data_mut(|d| d.insert_temp::<RectCache>(rects_key(pane_id), cache));
 
-        // Auto-fold: if the rendered stack overshoots the pane body,
-        // close the topmost open section that the user isn't
-        // actively dragging. One per frame, converges naturally.
-        let stack_bottom = rendered
-            .iter()
-            .map(|r| r.outer_rect.bottom())
-            .fold(body_rect.top(), f32::max);
-        if stack_bottom <= body_rect.bottom() + 0.5 {
-            return;
-        }
-        for r in &rendered {
-            if drag.item.as_deref() == Some(r.id_salt.as_str()) {
-                continue;
-            }
-            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                r.state_id,
-                false,
-            );
-            if state.is_open() {
-                state.set_open(false);
-                state.store(ui.ctx());
-                ui.ctx().request_repaint();
-                break;
-            }
-        }
+        // Auto-fold removed: clicking one section was force-closing
+        // others as a side-effect, even when the new section's
+        // animation produced only transient overshoot. User
+        // section-state is now sticky — open what you open, close
+        // what you close, layout clips at the body bottom if
+        // everything's open at once. The dragged-section skip,
+        // ghost-gap, and rect-cache work above is unaffected.
+        let _ = (
+            &rendered,
+            body_rect,
+            &drag,
+            just_toggled_id,
+            pane_id,
+        );
     }
 }
 
@@ -467,11 +500,17 @@ fn paint_ghost_gap(
         .unwrap_or(48.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+    let th = crate::style::theme();
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(crate::style::radius::MD),
-        egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 28),
-        egui::Stroke::new(1.5, accent),
+        egui::CornerRadius::same(th.radius_md),
+        egui::Color32::from_rgba_unmultiplied(
+            accent.r(),
+            accent.g(),
+            accent.b(),
+            th.ghost_fill_alpha,
+        ),
+        egui::Stroke::new(th.ghost_stroke_width, accent),
         egui::StrokeKind::Inside,
     );
 }
@@ -509,8 +548,8 @@ fn paint_drag_preview(
                     accent,
                     crate::style::glass_alpha_card(),
                 ))
-                .corner_radius(egui::CornerRadius::same(crate::style::radius::MD))
-                .stroke(egui::Stroke::new(1.0, crate::style::widget_border(accent)))
+                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
+                .stroke(egui::Stroke::new(crate::style::theme().border_width, crate::style::widget_border(accent)))
                 .show(ui, |ui| {
                     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                     let title_widget = egui::WidgetText::from(crate::style::section_caps(
@@ -637,15 +676,19 @@ pub fn floating_window_scoped(
         _ => egui::vec2(side_inset, EDGE_GAP),
     };
 
+    // `pane_fill(accent)` resolves the theme's panel-fill mode —
+    // PRO returns the dark `bg_panel`; GAME returns an
+    // accent-derived dark colour so the pane visually carries the
+    // user's accent across its whole surface.
     let frame = egui::Frame {
         inner_margin: egui::Margin { left: 2, right: 2, top: 2, bottom: 2 },
         outer_margin: egui::Margin::ZERO,
-        fill: glass_fill(BG_1_PANEL, accent, glass_alpha_window()),
-        stroke: egui::Stroke::new(1.0, BORDER_SUBTLE),
-        corner_radius: egui::CornerRadius::same(8),
+        fill: glass_fill(crate::style::pane_fill(accent), accent, glass_alpha_window()),
+        stroke: egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE),
+        corner_radius: egui::CornerRadius::same(crate::style::theme().radius_lg),
         shadow: egui::epaint::Shadow {
-            offset: [0, 8],
-            blur: 24,
+            offset: [0, crate::style::theme().pane_shadow_y],
+            blur: crate::style::theme().pane_shadow_blur,
             spread: 0,
             color: egui::Color32::from_black_alpha(115),
         },
@@ -679,6 +722,10 @@ pub fn floating_window_scoped(
             } else {
                 (egui::Align2::LEFT_CENTER, rect.min.x + TITLE_INSET)
             };
+            // Pane title colour follows the section title rule —
+            // PRO: accent tint; GAME: contrast with the panel fill
+            // (luma-based, so a bright accent panel gets dark text).
+            let title_col = crate::style::section_title_color(accent);
             let pos = egui::pos2(tx, rect.center().y);
             let font = egui::FontId::new(title_size, egui::FontFamily::Proportional);
             for dx in [-0.5, 0.5] {
@@ -687,14 +734,19 @@ pub fn floating_window_scoped(
                     align,
                     title.to_uppercase(),
                     font.clone(),
-                    accent,
+                    title_col,
                 );
             }
-            ui.painter().hline(
-                rect.min.x..=rect.max.x,
-                rect.max.y + 3.0,
-                egui::Stroke::new(1.0, BORDER_SUBTLE),
-            );
+            // Skip the title hairline entirely under themes that
+            // don't want it (GAME: no horizontal rule under the
+            // pane title; PRO keeps the subtle divider).
+            if crate::style::theme().pane_show_title_divider {
+                ui.painter().hline(
+                    rect.min.x..=rect.max.x,
+                    rect.max.y + 3.0,
+                    egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE),
+                );
+            }
             ui.add_space(6.0);
 
             // Wrap the caller's closure with `PaneBuilder` so widgets
@@ -728,8 +780,26 @@ pub fn floating_window_scoped(
                 drag_started_id: None,
                 base_order_this_frame: Vec::new(),
                 cached_rects,
+                just_toggled_id: None,
             };
+            // Stash the pane's anchor-side so widgets rendered inside
+            // (e.g. the maximise chip) can mirror their layout when the
+            // pane lives on the right ribbon. Cleared after the body
+            // runs so a left-anchored pane rendered next doesn't see
+            // stale data.
+            let side_key = egui::Id::new("frost_current_pane_right_anchored");
+            let prev_side: Option<bool> =
+                pane.ui.ctx().data(|d| d.get_temp(side_key));
+            pane.ui
+                .ctx()
+                .data_mut(|d| d.insert_temp::<bool>(side_key, on_right_side));
             add_contents(&mut pane);
+            pane.ui.ctx().data_mut(|d| match prev_side {
+                Some(v) => d.insert_temp::<bool>(side_key, v),
+                None => {
+                    d.remove::<bool>(side_key);
+                }
+            });
             pane.finalize();
         });
 
@@ -759,7 +829,7 @@ pub fn floating_window_scoped(
                 ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 ui.painter().rect_filled(
                     rect,
-                    egui::CornerRadius::same(2),
+                    egui::CornerRadius::same(crate::style::theme().radius_compact),
                     egui::Color32::from_rgba_unmultiplied(
                         accent.r(),
                         accent.g(),
@@ -809,7 +879,7 @@ pub fn floating_window_scoped(
                 ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 ui.painter().rect_filled(
                     rect,
-                    egui::CornerRadius::same(2),
+                    egui::CornerRadius::same(crate::style::theme().radius_compact),
                     egui::Color32::from_rgba_unmultiplied(
                         accent.r(),
                         accent.g(),

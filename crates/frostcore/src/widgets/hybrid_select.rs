@@ -35,7 +35,7 @@
 
 use egui;
 
-use crate::style::{BG_2_RAISED, BG_3_HOVER, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::style::{BG_2_RAISED, BG_3_HOVER};
 
 use super::shared::{flush_pending_separator, widget_separator};
 
@@ -119,15 +119,17 @@ pub fn hybrid_select_row(
     // the internal boundary.
     let any_hover = body.hovered() || radio.hovered();
     if selected {
-        let blend = |a: u8, b: u8| ((a as f32) * 0.65 + (b as f32) * 0.35).round() as u8;
-        let tint = egui::Color32::from_rgb(
-            blend(BG_2_RAISED.r(), accent.r()),
-            blend(BG_2_RAISED.g(), accent.g()),
-            blend(BG_2_RAISED.b(), accent.b()),
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
+            crate::style::row_selected_fill(accent),
         );
-        painter.rect_filled(rect, egui::CornerRadius::same(3), tint);
     } else if any_hover {
-        painter.rect_filled(rect, egui::CornerRadius::same(3), BG_3_HOVER);
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
+            crate::style::row_hover_fill(accent),
+        );
     }
 
     painter.text(
@@ -135,7 +137,7 @@ pub fn hybrid_select_row(
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(12.0),
-        TEXT_PRIMARY,
+        crate::style::on_section(),
     );
     if let Some(t) = trailing {
         painter.text(
@@ -143,7 +145,7 @@ pub fn hybrid_select_row(
             egui::Align2::RIGHT_CENTER,
             t,
             egui::FontId::proportional(10.0),
-            TEXT_SECONDARY,
+            crate::style::on_section_dim(),
         );
     }
 
@@ -153,7 +155,7 @@ pub fn hybrid_select_row(
     let ring_color = if radio_on || radio.hovered() {
         accent
     } else {
-        TEXT_SECONDARY
+        crate::style::on_section_dim()
     };
     painter.circle_stroke(
         radio_center,
@@ -161,7 +163,19 @@ pub fn hybrid_select_row(
         egui::Stroke::new(1.2, ring_color),
     );
     if radio_on {
-        painter.circle_filled(radio_center, RADIO_OUTER_R - 1.8, accent);
+        // Inner dot fills with `accent` UNLESS the row is also
+        // accent-derived (GAME's accent panel + accent dot would
+        // collide); in that case use a contrasting solid against
+        // the panel so the dot stays visible.
+        let dot_col = if matches!(
+            crate::style::theme().panel_fill_mode,
+            crate::style::ColorMode::FromAccent { .. }
+        ) {
+            crate::style::on_section()
+        } else {
+            accent
+        };
+        painter.circle_filled(radio_center, RADIO_OUTER_R - 1.8, dot_col);
     }
 
     HybridSelectResponse { body, radio }

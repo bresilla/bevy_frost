@@ -37,7 +37,7 @@ use std::hash::Hash;
 
 use egui;
 
-use crate::style::{BG_2_RAISED, BG_3_HOVER, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::style::{BG_2_RAISED, BG_3_HOVER, BORDER_SUBTLE};
 
 use super::shared::flush_pending_separator;
 
@@ -218,16 +218,20 @@ pub fn tree_row(
     let hovered = body.hovered()
         || chevron.as_ref().map_or(false, |c| c.hovered())
         || any_slot_hovered;
+    // Selected and hover use the theme-aware row helpers so they
+    // remain visually distinct on every theme + accent combo.
     let bg_shape = if selected {
-        let blend = |a: u8, b: u8| ((a as f32) * 0.60 + (b as f32) * 0.40).round() as u8;
-        let tint = egui::Color32::from_rgb(
-            blend(BG_2_RAISED.r(), accent.r()),
-            blend(BG_2_RAISED.g(), accent.g()),
-            blend(BG_2_RAISED.b(), accent.b()),
-        );
-        egui::Shape::rect_filled(rect, egui::CornerRadius::same(2), tint)
+        egui::Shape::rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
+            crate::style::row_selected_fill(accent),
+        )
     } else if hovered {
-        egui::Shape::rect_filled(rect, egui::CornerRadius::same(2), BG_3_HOVER)
+        egui::Shape::rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
+            crate::style::row_hover_fill(accent),
+        )
     } else {
         egui::Shape::Noop
     };
@@ -246,7 +250,7 @@ pub fn tree_row(
         let x = rect.min.x + ROW_PAD_L + d as f32 * TREE_INDENT + CHEVRON_W * 0.5;
         guides.push(egui::Shape::line_segment(
             [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-            egui::Stroke::new(1.0, guide_color),
+            egui::Stroke::new(crate::style::theme().tree_guide_width, guide_color),
         ));
     }
     ui.painter().set(
@@ -263,13 +267,21 @@ pub fn tree_row(
     // knows its own rect. Shift-click is captured separately so
     // callers can implement "expand / collapse whole subtree"
     // without having to plumb modifier state themselves.
+    //
+    // Colour flows through `section_title_color(accent)` — the same
+    // helper that picks the foldable header's title colour. In PRO
+    // that's the accent (chevron tints with the user's brush); in
+    // GAME, where the section surface itself paints in the accent,
+    // it falls back to a contrast colour so the chevron stays
+    // visible against a bright accent panel.
+    let glyph_col = crate::style::section_title_color(accent);
     let mut chevron_shift_clicked = false;
     if let (Some(exp), Some(cr)) = (expanded, chevron_rect_opt) {
         let how_open = ui.ctx().animate_bool_responsive(
             ui.id().with(("frost_tree_chev_anim", id_salt)),
             *exp,
         );
-        paint_chevron(ui, cr, how_open, accent);
+        paint_chevron(ui, cr, how_open, glyph_col);
         if let Some(ref cresp) = chevron {
             if cresp.clicked() {
                 let shift_held = ui.ctx().input(|i| i.modifiers.shift);
@@ -285,16 +297,34 @@ pub fn tree_row(
     }
 
     // Type-icon slot: centred in its reserved width, painted in the
-    // accent colour so group / mesh / light glyphs tint with the
-    // current accent.
-    if let (Some(glyph), Some(ir)) = (icon, icon_rect_opt) {
-        ui.painter().text(
-            ir.center(),
-            egui::Align2::CENTER_CENTER,
-            glyph,
-            egui::FontId::proportional(12.0),
-            accent,
-        );
+    // theme-aware glyph colour (accent in PRO, contrast colour in
+    // GAME) so group / mesh / light glyphs stay legible whether
+    // the section paints dark glass or a bright accent surface.
+    //
+    // The `icon` string is first looked up in the bundled Fluent UI
+    // System Icons set — that's how callers ask for things like
+    // `"folder"` or `"cube"`. If the name doesn't match a Fluent
+    // icon, we fall back to rendering the literal string as text so
+    // emoji / arbitrary-codepoint callers still work as before.
+    if let (Some(name), Some(ir)) = (icon, icon_rect_opt) {
+        if crate::icons::icon(name).is_some() {
+            crate::icons::paint_icon(
+                &ui.painter(),
+                ir.center(),
+                egui::Align2::CENTER_CENTER,
+                name,
+                12.0,
+                glyph_col,
+            );
+        } else {
+            ui.painter().text(
+                ir.center(),
+                egui::Align2::CENTER_CENTER,
+                name,
+                egui::FontId::proportional(12.0),
+                glyph_col,
+            );
+        }
     }
 
     // Label: truncated to the body rect minus its left padding. Only
@@ -313,7 +343,7 @@ pub fn tree_row(
             egui::pos2(label_left, rect.min.y),
             egui::pos2(body_rect.max.x, rect.max.y),
         );
-        let label_color = TEXT_PRIMARY;
+        let label_color = crate::style::on_section();
         let font = egui::FontId::proportional(12.0);
         let galley = {
             let mut job = egui::text::LayoutJob::single_section(
@@ -435,32 +465,34 @@ fn compute_row_rects(
     (rect, body_rect, chevron_rect, icon_rect, slot_rects)
 }
 
-/// Paint a small rotating triangle chevron inside `rect`. `how_open`
-/// is 0.0 (closed, ▸) → 1.0 (open, ▾); fractional values rotate.
-fn paint_chevron(ui: &egui::Ui, rect: egui::Rect, how_open: f32, accent: egui::Color32) {
-    let c = rect.center();
-    let r = 3.2_f32;
-    let angle = how_open * std::f32::consts::FRAC_PI_2;
-    let rot = |p: egui::Vec2| -> egui::Pos2 {
-        let (s, co) = (angle.sin(), angle.cos());
-        egui::pos2(
-            c.x + p.x * co - p.y * s,
-            c.y + p.x * s + p.y * co,
-        )
-    };
-    let a = rot(egui::vec2(r, 0.0));
-    let b = rot(egui::vec2(-r * 0.7, -r * 0.7));
-    let d = rot(egui::vec2(-r * 0.7, r * 0.7));
-    let fill = lerp_color(
-        egui::Color32::from_gray(170),
-        accent,
-        how_open.clamp(0.0, 1.0),
-    );
-    ui.painter().add(egui::Shape::convex_polygon(
-        vec![a, b, d],
-        fill,
-        egui::Stroke::NONE,
-    ));
+/// Thin stroked chevron (`›` rotating to `⌄`) inside `rect`. Same
+/// shape as the foldable section header's chevron — see
+/// `widgets::foldable::paint_chevron` — just sized down to fit the
+/// tree row's narrow [`CHEVRON_W`] cell. `how_open` is 0.0 (closed,
+/// `›`) → 1.0 (open, `⌄`); fractional values rotate.
+fn paint_chevron(ui: &egui::Ui, rect: egui::Rect, how_open: f32, color: egui::Color32) {
+    const GLYPH_W: f32 = 5.5;
+    const GLYPH_H: f32 = 3.5;
+    let cx = rect.center().x;
+    let cy = rect.center().y;
+    let hw = GLYPH_W * 0.5;
+    let hh = GLYPH_H * 0.5;
+    let raw = [
+        egui::vec2(-hw, -hh),
+        egui::vec2(0.0, hh),
+        egui::vec2(hw, -hh),
+    ];
+    use std::f32::consts::TAU;
+    let rot = egui::emath::Rot2::from_angle(egui::lerp(-TAU / 4.0..=0.0, how_open));
+    let pts: Vec<egui::Pos2> = raw
+        .iter()
+        .map(|v| {
+            let r = rot * *v;
+            egui::pos2(cx + r.x, cy + r.y)
+        })
+        .collect();
+    ui.painter()
+        .add(egui::Shape::line(pts, egui::Stroke::new(1.2, color)));
 }
 
 /// Paint the correct icon for a slot's current kind + state. Hovering
@@ -511,9 +543,9 @@ fn paint_color_chip(
     };
     ui.painter().rect(
         inner,
-        egui::CornerRadius::same(2),
+        egui::CornerRadius::same(crate::style::theme().radius_compact),
         fill,
-        egui::Stroke::new(1.0, border),
+        egui::Stroke::new(crate::style::theme().border_width, border),
         egui::StrokeKind::Inside,
     );
 }
@@ -521,9 +553,9 @@ fn paint_color_chip(
 fn slot_color(active: bool, hovered: bool, accent: egui::Color32) -> egui::Color32 {
     match (active, hovered) {
         (true, true) => accent,
-        (true, false) => TEXT_PRIMARY,
-        (false, true) => lerp_color(TEXT_SECONDARY, accent, 0.4),
-        (false, false) => TEXT_SECONDARY,
+        (true, false) => crate::style::on_section(),
+        (false, true) => lerp_color(crate::style::on_section_dim(), accent, 0.4),
+        (false, false) => crate::style::on_section_dim(),
     }
 }
 
@@ -587,7 +619,7 @@ fn paint_lock(ui: &egui::Ui, rect: egui::Rect, active: bool, color: egui::Color3
     // even at low sizes.
     ui.painter().rect_filled(
         body_rect,
-        egui::CornerRadius::same(1),
+        egui::CornerRadius::same(crate::style::theme().radius_compact),
         color,
     );
 

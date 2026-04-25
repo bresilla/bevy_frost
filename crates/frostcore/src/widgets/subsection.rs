@@ -22,12 +22,9 @@
 
 use egui;
 
-use crate::style::{
-    font, glass_alpha_group, glass_fill, radius, widget_border, BG_3_HOVER, TEXT_DISABLED,
-    TEXT_PRIMARY,
-};
+use crate::style::{font, glass_alpha_group, glass_fill, widget_border};
 
-use super::foldable::{OUTER_INSET, PAD_X, PAD_Y};
+use super::foldable::OUTER_INSET;
 use super::shared::{flush_pending_separator, widget_separator};
 
 /// Left indent applied to the body so it steps in from the chevron
@@ -63,16 +60,24 @@ pub fn subsection(
         BORDER_ALPHA,
     );
 
-    egui::Frame::new()
-        .fill(glass_fill(
-            BG_3_HOVER,
-            egui::Color32::TRANSPARENT,
-            glass_alpha_group(),
-        ))
-        .corner_radius(egui::CornerRadius::same(radius::WIDGET))
-        .stroke(egui::Stroke::new(1.0, border))
-        .inner_margin(egui::Margin::symmetric(PAD_X, PAD_Y))
-        .show(ui, |ui| {
+    // Honour the active theme: PRO paints the nested frame
+    // (slightly brighter glass over the parent card); GAME drops the
+    // frame entirely (no fill, no border, no corners) so subsections
+    // become invisible groupers like the parent section.
+    let frame = if crate::style::section_show_frame() {
+        egui::Frame::new()
+            .fill(glass_fill(
+                crate::style::theme().bg_hover,
+                egui::Color32::TRANSPARENT,
+                glass_alpha_group(),
+            ))
+            .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_widget))
+            .stroke(egui::Stroke::new(crate::style::theme().border_width, border))
+            .inner_margin(crate::style::section_padding())
+    } else {
+        egui::Frame::new().inner_margin(crate::style::section_padding())
+    };
+    frame.show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(inner_w, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
@@ -116,7 +121,7 @@ pub fn subsection(
                                     egui::RichText::new(title)
                                         .strong()
                                         .size(font::BODY)
-                                        .color(TEXT_PRIMARY),
+                                        .color(crate::style::on_section()),
                                 )
                                 .sense(egui::Sense::click()),
                             );
@@ -128,7 +133,7 @@ pub fn subsection(
                                     egui::RichText::new(sub)
                                         .size(font::CAPTION - 1.0)
                                         .italics()
-                                        .color(TEXT_DISABLED),
+                                        .color(crate::style::on_section_dim()),
                                 );
                             }
                         });

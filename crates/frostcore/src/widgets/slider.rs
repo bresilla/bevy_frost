@@ -7,7 +7,7 @@ use egui;
 
 use super::layout::stacked_pane_labelled;
 use super::shared::{flush_pending_separator, paint_value_bar, widget_separator};
-use crate::style::{contrast_text_for, radius, TEXT_PRIMARY};
+use crate::style::contrast_text_for;
 
 /// Bar height. Tall enough to drag comfortably and to fit the
 /// value text on one line.
@@ -76,9 +76,9 @@ pub fn slider_control(
             &text,
             egui::FontId::new(VALUE_FONT, egui::FontFamily::Monospace),
             accent,
-            TEXT_PRIMARY,
+            crate::style::on_track(),
             contrast_text_for(accent),
-            radius::WIDGET,
+            crate::style::theme().radius_widget,
         );
     }
 

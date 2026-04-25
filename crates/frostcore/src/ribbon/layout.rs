@@ -15,7 +15,6 @@ use std::collections::HashMap;
 #[cfg(feature = "bevy")] use bevy::prelude::*;
 use egui;
 
-use crate::style::{TEXT_PRIMARY, TEXT_SECONDARY};
 
 use super::kinds::{RibbonConstraint, RibbonKind};
 use super::paint::{paint_ribbon_button, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
@@ -166,9 +165,9 @@ impl RibbonLayout {
                     r.hovered() || is_dragging_this,
                 );
                 let fg = if is_active || is_dragging_this {
-                    TEXT_PRIMARY
+                    crate::style::contrast_text_for(accent)
                 } else {
-                    TEXT_SECONDARY
+                    crate::style::on_panel_dim()
                 };
                 ui.painter().text(
                     rect.center(),

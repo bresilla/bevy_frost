@@ -16,7 +16,7 @@ use egui;
 
 use super::layout::stacked_pane_labelled;
 use super::shared::{flush_pending_separator, paint_value_bar, widget_separator};
-use crate::style::{contrast_text_for, radius, TEXT_PRIMARY};
+use crate::style::contrast_text_for;
 
 const BAR_H: f32 = 18.0;
 const VALUE_FONT: f32 = 11.0;
@@ -83,9 +83,9 @@ pub fn progressbar_control(
             inner_text,
             egui::FontId::new(VALUE_FONT, egui::FontFamily::Monospace),
             accent,
-            TEXT_PRIMARY,
+            crate::style::on_track(),
             contrast_text_for(accent),
-            radius::WIDGET,
+            crate::style::theme().radius_widget,
         );
     }
 

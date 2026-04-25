@@ -87,26 +87,29 @@ pub fn frost_code_editor(
 /// punctuation for a readable hierarchy.
 fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
     use crate::style::{
-        glass_alpha_window, glass_fill, ACCENT_PRESSED, AXIS_X, AXIS_Y, AXIS_Z, BG_1_PANEL,
-        SUCCESS, TEXT_SECONDARY,
+        accent_pressed, glass_alpha_window, glass_fill, on_panel, on_panel_dim, pane_fill, AXIS_X,
+        AXIS_Y, AXIS_Z, SUCCESS,
     };
     ColorTheme {
         name: "Frost",
         dark: true,
-        // `glass_fill` produces an accent-tinted semi-transparent
-        // fill of `BG_1_PANEL`; it picks up `GlassOpacity`
-        // automatically because `glass_alpha_window()` reads from
-        // the shared atomic. Same recipe the snarl canvas uses —
-        // so the two surfaces read as one glass family.
-        bg: glass_fill(BG_1_PANEL, accent, glass_alpha_window()),
+        // `glass_fill(pane_fill(...), …)` flows through the active
+        // theme so GAME's accent panel becomes the editor bg too,
+        // not a hardcoded dark.
+        bg: glass_fill(pane_fill(accent), accent, glass_alpha_window()),
         cursor: accent,
-        selection: ACCENT_PRESSED,
-        comments: TEXT_SECONDARY,
+        // Selection = darker accent shade derived at runtime so it
+        // tracks whatever colour the user picked.
+        selection: accent_pressed(),
+        // `comments` / `punctuation` flip to whatever contrasts the
+        // pane fill, so they stay readable on PRO's dark and GAME's
+        // accent-coloured panels alike.
+        comments: on_panel_dim(),
         functions: AXIS_Y,
         keywords: accent,
         literals: AXIS_X,
         numerics: AXIS_X,
-        punctuation: TEXT_SECONDARY,
+        punctuation: on_panel_dim(),
         strs: SUCCESS,
         types: AXIS_Z,
         special: accent,

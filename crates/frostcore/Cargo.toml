@@ -15,6 +15,12 @@ egui = { workspace = true, default-features = false, features = ["default_fonts"
 egui-scale = "0.3"
 slab = "0.4"
 smallvec = { version = "1.15", features = ["const_new"] }
+# Filled Fluent UI System Icons via iconflow. We only ask for the
+# `pack-fluentui` feature so the binary doesn't ship every icon
+# family. `try_icon` returns the codepoint + family-name we then
+# render via `RichText` / `painter().text` after registering the
+# bundled fonts in `apply_theme`.
+iconflow = { version = "1.0", default-features = false, features = ["pack-fluentui"] }
 # Optional Bevy integration — enabled by `bevy_frost`. When OFF,
 # frostcore compiles as a pure-egui crate with no Bevy types
 # anywhere in the public API.

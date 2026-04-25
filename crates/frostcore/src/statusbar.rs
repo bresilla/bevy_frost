@@ -25,7 +25,7 @@
 
 use egui;
 
-use crate::style::{glass_alpha_window, glass_fill, radius, widget_border, BG_1_PANEL};
+use crate::style::{glass_alpha_window, glass_fill, widget_border, BG_1_PANEL};
 
 /// Distance from the screen edge to the strip — matches the
 /// floating window's own edge gap so the two sit in the same
@@ -73,8 +73,8 @@ pub fn statusbar(
 
     let frame = egui::Frame::new()
         .fill(glass_fill(BG_1_PANEL, accent, glass_alpha_window()))
-        .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-        .corner_radius(egui::CornerRadius::same(radius::MD))
+        .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(8, 3));
 
     egui::Area::new(egui::Id::new(id))

@@ -17,7 +17,7 @@ use egui;
 
 use super::layout::dual_pane_labelled;
 use super::shared::{flush_pending_separator, widget_separator};
-use crate::style::{radius, widget_border};
+use crate::style::{widget_border};
 
 /// Swatch button size — matches the DragValue input width
 /// ([`super::drag::INPUT_WIDTH`] = 72 px) and the shared interact
@@ -211,8 +211,8 @@ fn swatch_button(
         egui::color_picker::show_color_at(ui.painter(), color, rect.shrink(1.0));
         ui.painter().rect_stroke(
             rect,
-            egui::CornerRadius::same(radius::COMPACT),
-            egui::Stroke::new(1.0, border),
+            egui::CornerRadius::same(crate::style::theme().radius_compact),
+            egui::Stroke::new(crate::style::theme().border_width, border),
             egui::StrokeKind::Inside,
         );
     }

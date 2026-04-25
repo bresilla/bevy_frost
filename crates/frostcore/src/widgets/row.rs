@@ -9,7 +9,7 @@ use egui;
 
 use super::layout::{dual_pane, dual_pane_labelled};
 use super::shared::{flush_pending_separator, widget_separator};
-use crate::style::{body_label, TEXT_PRIMARY};
+use crate::style::body_label;
 
 /// Width of the label column. Picked to fit every typical label at
 /// 11 pt body size; anything longer truncates with an ellipsis.
@@ -72,7 +72,7 @@ pub fn readout_row(ui: &mut egui::Ui, label: &str, value: &str) {
             egui::RichText::new(value)
                 .monospace()
                 .small()
-                .color(TEXT_PRIMARY),
+                .color(crate::style::on_section()),
         );
     });
     widget_separator(ui);
@@ -135,7 +135,7 @@ pub fn axis_readout_row(
                 egui::RichText::new(value)
                     .monospace()
                     .small()
-                    .color(TEXT_PRIMARY),
+                    .color(crate::style::on_section()),
             );
         },
     );

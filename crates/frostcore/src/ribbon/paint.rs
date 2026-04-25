@@ -7,7 +7,6 @@ use egui;
 
 use crate::style::{
     glass_alpha_card, glass_alpha_window, glass_fill, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE,
-    TEXT_PRIMARY, TEXT_SECONDARY,
 };
 
 // ─── Layout constants ───────────────────────────────────────────────
@@ -51,9 +50,9 @@ pub(crate) fn paint_ribbon_button(
     // flush with the edge.
     painter.rect(
         rect,
-        egui::CornerRadius::same(6),
+        egui::CornerRadius::same(crate::style::theme().radius_md),
         bg,
-        egui::Stroke::new(1.0, stroke),
+        egui::Stroke::new(crate::style::theme().border_width, stroke),
         egui::StrokeKind::Inside,
     );
     let _ = glass_alpha_card();
@@ -84,7 +83,14 @@ pub(crate) fn ribbon_button_area(
             );
 
             paint_ribbon_button(ui.painter(), rect, accent, is_active, resp.hovered());
-            let fg = if is_active { TEXT_PRIMARY } else { TEXT_SECONDARY };
+            // Active button is accent-tinted → contrast against
+            // accent. Inactive button sits on the rail (panel) →
+            // dim text on panel.
+            let fg = if is_active {
+                crate::style::contrast_text_for(accent)
+            } else {
+                crate::style::on_panel_dim()
+            };
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,

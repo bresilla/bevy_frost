@@ -86,6 +86,7 @@ const MENU_WIDGETS: &str = "demo_menu_widgets";
 const MENU_CONTAINERS: &str = "demo_menu_containers";
 const MENU_SCENE: &str = "demo_menu_scene";
 const MENU_GRAPH: &str = "demo_menu_graph";
+const MENU_ICONS: &str = "demo_menu_icons";
 const MENU_THEME: &str = "demo_menu_theme";
 const MENU_KEYS: &str = "demo_menu_keys";
 const MENU_ABOUT: &str = "demo_menu_about";
@@ -144,6 +145,15 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         slot: 0,
         glyph: "E",
         tooltip: "Editor (graph + source)",
+        child_ribbon: None,
+    },
+    RibbonItem {
+        id: MENU_ICONS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::End,
+        slot: 1,
+        glyph: "I",
+        tooltip: "Fluent UI icon grid",
         child_ribbon: None,
     },
     RibbonItem {
@@ -402,6 +412,14 @@ impl eframe::App for FrostApp {
                 |pane| editor_panel(pane, graph, graph_viewer, code),
             );
         }
+        if is_open(MENU_ICONS) {
+            floating_window_for_item(
+                ctx, RIBBONS, RIBBON_ITEMS, placement,
+                MENU_ICONS, "Icons", egui::vec2(420.0, 560.0),
+                &mut keep_open, accent_col,
+                |pane| icons_panel(pane),
+            );
+        }
         if is_open(MENU_THEME) {
             floating_window_for_item(
                 ctx, RIBBONS, RIBBON_ITEMS, placement,
@@ -538,16 +556,16 @@ fn widgets_panel(
     let order = pane.section_order(["demo_flags", "demo_numbers", "demo_bars", "demo_buttons"]);
     for id in &order {
         match id.as_str() {
-            "demo_flags" => pane.section("demo_flags", "Flags", true, |ui| {
+            "demo_flags" => pane.section_with("demo_flags", "Flags", true, Some("flag"), 0, |_| {}, |ui| {
                 toggle(ui, "power", power, accent);
                 toggle(ui, "headlights", headlights, accent);
             }),
-            "demo_numbers" => pane.section("demo_numbers", "Numbers", true, |ui| {
+            "demo_numbers" => pane.section_with("demo_numbers", "Numbers", true, Some("calculator"), 0, |_| {}, |ui| {
                 drag_value(ui, "gravity (m/s²)", gravity, 0.05, 0.0..=30.0, 2, "");
                 drag_value(ui, "speed limit (m/s)", speed_limit, 0.1, 0.0..=100.0, 1, "");
                 drag_value(ui, "engine power (kW)", engine_power, 1.0, 0.0..=2_000.0, 0, "");
             }),
-            "demo_bars" => pane.section("demo_bars", "Bars", true, |ui| {
+            "demo_bars" => pane.section_with("demo_bars", "Bars", true, Some("gauge"), 0, |_| {}, |ui| {
                 pretty_slider(ui, "throttle", throttle, 0.0..=1.0, 2, "", accent);
                 pretty_slider(ui, "brake", brake, 0.0..=1.0, 2, "", accent);
                 pretty_progressbar_text(
@@ -558,7 +576,7 @@ fn widgets_panel(
                     accent,
                 );
             }),
-            "demo_buttons" => pane.section("demo_buttons", "Buttons", false, |ui| {
+            "demo_buttons" => pane.section_with("demo_buttons", "Buttons", false, Some("button"), 0, |_| {}, |ui| {
                 if wide_button(ui, "Refuel", accent).clicked() {
                     *fuel = 1.0;
                 }
@@ -584,7 +602,7 @@ fn containers_panel(
     let order = pane.section_order(["demo_transform"]);
     for id in &order {
         match id.as_str() {
-            "demo_transform" => pane.section("demo_transform", "Transform", true, |ui| {
+            "demo_transform" => pane.section_with("demo_transform", "Transform", true, Some("resize"), 0, |_| {}, |ui| {
                 subsection(
                     ui,
                     "demo_tr_pos",
@@ -642,7 +660,7 @@ fn elements_panel(
     let order = pane.section_order(["demo_scene_tree", "demo_elements"]);
     for id in &order {
         match id.as_str() {
-            "demo_scene_tree" => pane.section("demo_scene_tree", "Scene", true, |ui| {
+            "demo_scene_tree" => pane.section_with("demo_scene_tree", "Scene", true, Some("folder"), 0, |_| {}, |ui| {
                 search_field(ui, scene_query, "filter by name / path…", accent);
                 dropdown(ui, "kind", scene_filter, SCENE_FILTERS, accent);
 
@@ -678,7 +696,7 @@ fn elements_panel(
                     badge_row(ui, "flags", sel_flags, accent);
                 }
             }),
-            "demo_elements" => pane.section("demo_elements", "Flat list", true, |ui| {
+            "demo_elements" => pane.section_with("demo_elements", "Flat list", true, Some("list"), 0, |_| {}, |ui| {
                 let scroll_w = ui.available_width();
                 let scroll_out = ui.allocate_ui_with_layout(
                     egui::vec2(scroll_w, *flat_scroll_h),
@@ -740,18 +758,46 @@ fn editor_panel(
     let order = pane.section_order(["demo_graph", "demo_code"]);
     for id in &order {
         match id.as_str() {
-            "demo_graph" => pane.section("demo_graph", "Node graph", true, |ui| {
-                sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
-                let w = ui.available_width();
-                frost_snarl(ui, "demo_editor_snarl", graph, viewer, accent, egui::vec2(w, 260.0));
-            }),
-            "demo_code" => pane.section("demo_code", "Source", true, |ui| {
-                sub_caption(ui, "rust syntax · click ▢ to maximise");
-                let w = ui.available_width();
-                frost_code_editor(
-                    ui, "demo_editor_code", code, Syntax::rust(), accent, egui::vec2(w, 260.0),
-                );
-            }),
+            "demo_graph" => pane.section_with(
+                "demo_graph",
+                "Node graph",
+                true,
+                Some("flowchart"),
+                1,
+                |ui| header_action_maximize(ui, "demo_editor_snarl", accent),
+                |ui| {
+                    sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
+                    let w = ui.available_width();
+                    frost_snarl(
+                        ui,
+                        "demo_editor_snarl",
+                        graph,
+                        viewer,
+                        accent,
+                        egui::vec2(w, 260.0),
+                    );
+                },
+            ),
+            "demo_code" => pane.section_with(
+                "demo_code",
+                "Source",
+                true,
+                Some("code"),
+                1,
+                |ui| header_action_maximize(ui, "demo_editor_code", accent),
+                |ui| {
+                    sub_caption(ui, "rust syntax · click ▢ to maximise");
+                    let w = ui.available_width();
+                    frost_code_editor(
+                        ui,
+                        "demo_editor_code",
+                        code,
+                        Syntax::rust(),
+                        accent,
+                        egui::vec2(w, 260.0),
+                    );
+                },
+            ),
             _ => {}
         }
     }
@@ -764,10 +810,31 @@ fn theme_panel(
     tint_rgba: &mut [f32; 4],
 ) {
     let accent = pane.accent();
-    let order = pane.section_order(["demo_theme_colour", "demo_theme_glass"]);
+    let order = pane.section_order(["demo_theme_profile", "demo_theme_colour", "demo_theme_glass"]);
     for id in &order {
         match id.as_str() {
-            "demo_theme_colour" => pane.section("demo_theme_colour", "Accent", true, |ui| {
+            "demo_theme_profile" => pane.section_with("demo_theme_profile", "Profile", true, Some("person"), 0, |_| {}, |ui| {
+                // PRO and GAME are built-in; users can drop in a third
+                // by writing their own `Theme { ..theme_game() }` and
+                // calling `set_theme`. Stored selection is just an
+                // index into the list below — egui temp data keyed by
+                // a stable id.
+                let key = ui.id().with("frost_theme_profile_idx");
+                let mut idx: usize = ui.ctx().data(|d| d.get_temp(key).unwrap_or(0));
+                let prev_idx = idx;
+                if dropdown(ui, "profile", &mut idx, &["PRO", "GAME"], accent).changed()
+                    || prev_idx != idx
+                {
+                    let chosen = if idx == 1 { theme_game() } else { theme_pro() };
+                    set_theme(chosen);
+                    ui.ctx().data_mut(|d| d.insert_temp(key, idx));
+                }
+                sub_caption(
+                    ui,
+                    "PRO = soft glass, rounded, subtle borders. GAME = square, no borders, full-accent click.",
+                );
+            }),
+            "demo_theme_colour" => pane.section_with("demo_theme_colour", "Accent", true, Some("color"), 0, |_| {}, |ui| {
                 let c = accent_res.0;
                 let mut rgb = [
                     c.r() as f32 / 255.0,
@@ -783,7 +850,7 @@ fn theme_panel(
                     "Changing accent recolours every widget — one resource, one brush.",
                 );
             }),
-            "demo_theme_glass" => pane.section("demo_theme_glass", "Glass", true, |ui| {
+            "demo_theme_glass" => pane.section_with("demo_theme_glass", "Glass", true, Some("glasses"), 0, |_| {}, |ui| {
                 let mut v = glass.0 as f64;
                 if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
                     glass.0 = v.round().clamp(1.0, 100.0) as u8;
@@ -799,14 +866,81 @@ fn keys_panel(pane: &mut PaneBuilder) {
     let order = pane.section_order(["demo_keys_app", "demo_keys_layout"]);
     for id in &order {
         match id.as_str() {
-            "demo_keys_app" => pane.section("demo_keys_app", "App", true, |ui| {
+            "demo_keys_app" => pane.section_with("demo_keys_app", "App", true, Some("keyboard"), 0, |_| {}, |ui| {
                 keybinding_row(ui, "Ctrl+K", "toggle the command palette");
                 keybinding_row(ui, "Shift + chevron", "expand / collapse subtree");
                 keybinding_row(ui, "Right-click row", "frost-styled context menu");
             }),
-            "demo_keys_layout" => pane.section("demo_keys_layout", "Layout", false, |ui| {
+            "demo_keys_layout" => pane.section_with("demo_keys_layout", "Layout", false, Some("grid"), 0, |_| {}, |ui| {
                 keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
                 keybinding_row(ui, "Toggle ribbon btn", "open / close the pane");
+            }),
+            _ => {}
+        }
+    }
+}
+
+/// Demo pane for the iconflow integration — renders a deterministic
+/// sample of ~100 filled Fluent UI System Icons in a grid so the
+/// user can eyeball how they read against the active theme.
+///
+/// `iconflow::list(Pack::Fluentui)` returns thousands of icon
+/// names; we pick every Nth so the sample is well-distributed
+/// alphabetically and stays the same across runs (no `rand` dep).
+fn icons_panel(pane: &mut PaneBuilder) {
+    use egui_frost::iconflow::{list, Pack};
+    let accent = pane.accent();
+    let order = pane.section_order(["demo_icons_grid"]);
+    for id in &order {
+        match id.as_str() {
+            "demo_icons_grid" => pane.section_with("demo_icons_grid", "Fluent icons", true, Some("icons"), 0, |_| {}, |ui| {
+                let names: &[&'static str] = list(Pack::Fluentui);
+                const SAMPLE_COUNT: usize = 100;
+                let stride = (names.len() / SAMPLE_COUNT).max(1);
+                let sample: Vec<&'static str> = names
+                    .iter()
+                    .step_by(stride)
+                    .take(SAMPLE_COUNT)
+                    .copied()
+                    .collect();
+                sub_caption(ui, &format!("{} of {} icons (every {}th)", sample.len(), names.len(), stride));
+
+                const COLS: usize = 8;
+                const CELL: f32 = 36.0;
+                let icon_color = on_section();
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+                    for name in &sample {
+                        let (rect, resp) = ui.allocate_exact_size(
+                            egui::vec2(CELL, CELL),
+                            egui::Sense::hover(),
+                        );
+                        // Hover tints the cell so the user can pick
+                        // out individual icons in the grid.
+                        if resp.hovered() {
+                            ui.painter().rect_filled(
+                                rect,
+                                egui::CornerRadius::same(theme().radius_compact),
+                                row_hover_fill(accent),
+                            );
+                        }
+                        if let Some((glyph, family)) = egui_frost::icons::icon(name) {
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                glyph.to_string(),
+                                egui::FontId::new(20.0, family),
+                                if resp.hovered() { accent } else { icon_color },
+                            );
+                        }
+                        resp.on_hover_text(*name);
+                    }
+                    // Suppress the unused-COLS warning — the
+                    // wrap-layout above honours `available_width`,
+                    // not a fixed column count, so COLS just
+                    // documents the visual cadence we aim for.
+                    let _ = COLS;
+                });
             }),
             _ => {}
         }
@@ -817,7 +951,7 @@ fn about_panel(pane: &mut PaneBuilder) {
     let order = pane.section_order(["demo_about_intro"]);
     for id in &order {
         match id.as_str() {
-            "demo_about_intro" => pane.section("demo_about_intro", "egui_frost", true, |ui| {
+            "demo_about_intro" => pane.section_with("demo_about_intro", "egui_frost", true, Some("info"), 0, |_| {}, |ui| {
                 sub_caption(ui, "Reusable glass-themed editor UI kit for plain egui / eframe.");
                 readout_row(ui, "version", env!("CARGO_PKG_VERSION"));
                 readout_row(ui, "egui", "0.33");
@@ -854,10 +988,10 @@ enum NodeKind {
 impl NodeKind {
     fn glyph(self) -> &'static str {
         match self {
-            NodeKind::Group => "□",
-            NodeKind::Mesh => "▲",
-            NodeKind::Light => "☀",
-            NodeKind::Camera => "◉",
+            NodeKind::Group => "folder",
+            NodeKind::Mesh => "cube",
+            NodeKind::Light => "lightbulb",
+            NodeKind::Camera => "camera",
         }
     }
 }

@@ -22,8 +22,7 @@
 use egui;
 
 use crate::style::{
-    font, glass_alpha_card, glass_alpha_window, glass_fill, radius, widget_border, BG_1_PANEL,
-    BG_2_RAISED, TEXT_PRIMARY, TEXT_SECONDARY,
+    font, glass_alpha_card, glass_alpha_window, glass_fill, widget_border, BG_2_RAISED,
 };
 
 /// One entry in the palette's action list.
@@ -152,9 +151,9 @@ pub fn command_palette(
         .show(ctx, |ui| {
             ui.set_max_width(WIDTH);
             let frame = egui::Frame::new()
-                .fill(glass_fill(BG_1_PANEL, accent, glass_alpha_window()))
-                .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-                .corner_radius(egui::CornerRadius::same(radius::LG))
+                .fill(glass_fill(crate::style::popup_fill(accent), accent, glass_alpha_window()))
+                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .shadow(egui::epaint::Shadow {
                     offset: [0, 10],
@@ -203,7 +202,7 @@ pub fn command_palette(
                                 ui.add_space(8.0);
                                 ui.label(
                                     egui::RichText::new("No matches")
-                                        .color(TEXT_SECONDARY)
+                                        .color(crate::style::on_section_dim())
                                         .size(font::BODY),
                                 );
                             });
@@ -241,28 +240,29 @@ fn paint_row(
         ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let bg = if selected {
-            let blend = |a: u8, b: u8| ((a as f32) * 0.6 + (b as f32) * 0.4).round() as u8;
-            Some(egui::Color32::from_rgb(
-                blend(BG_2_RAISED.r(), accent.r()),
-                blend(BG_2_RAISED.g(), accent.g()),
-                blend(BG_2_RAISED.b(), accent.b()),
-            ))
+            Some(crate::style::row_selected_fill(accent))
         } else if resp.hovered() {
-            Some(BG_2_RAISED)
+            Some(crate::style::row_hover_fill(accent))
         } else {
             None
         };
         if let Some(c) = bg {
             ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(4), c);
+                .rect_filled(rect, egui::CornerRadius::same(crate::style::theme().radius_md), c);
         }
         let mid_y = rect.center().y;
+        // Palette rows sit on the palette frame (panel-style fill).
+        // Selected/hovered rows are accent-blended; pick contrast
+        // against whatever the row ended up coloured.
+        let row_bg = bg.unwrap_or(crate::style::pane_fill(accent));
+        let row_text = crate::style::contrast_text_for(row_bg);
+        let row_text_dim = crate::style::contrast_text_for(row_bg);
         ui.painter().text(
             egui::pos2(rect.min.x + 10.0, mid_y),
             egui::Align2::LEFT_CENTER,
             item.label,
             egui::FontId::proportional(font::BODY + 2.0),
-            TEXT_PRIMARY,
+            row_text,
         );
         if let Some(hint) = item.hint {
             ui.painter().text(
@@ -270,7 +270,7 @@ fn paint_row(
                 egui::Align2::RIGHT_CENTER,
                 hint,
                 egui::FontId::proportional(font::CAPTION),
-                TEXT_SECONDARY,
+                row_text_dim,
             );
         }
     }

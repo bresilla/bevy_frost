@@ -41,7 +41,7 @@ pub use crate::features::snarl::{
 
 use crate::maximize::maximizable;
 use crate::style::{
-    glass_alpha_card, glass_alpha_window, glass_fill, radius, widget_border, BG_1_PANEL,
+    glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
     BG_2_RAISED,
 };
 
@@ -53,7 +53,7 @@ use crate::style::{
 /// What the returned style pins down:
 ///
 /// * **Node frame** — `BG_2_RAISED` glass fill + `widget_border`
-///   stroke + `radius::MD` corner, matching
+///   stroke + `crate::style::theme().radius_md` corner, matching
 ///   [`section`](crate::widgets::foldable::section) so nodes look
 ///   like first-class frost surfaces.
 /// * **Background** — `BG_1_PANEL` glass fill behind everything,
@@ -66,9 +66,9 @@ use crate::style::{
 /// selection interactions remain familiar to upstream users.
 pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     let node_frame = egui::Frame::new()
-        .fill(glass_fill(BG_2_RAISED, accent, glass_alpha_card()))
-        .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-        .corner_radius(egui::CornerRadius::same(radius::MD))
+        .fill(glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_card()))
+        .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(8, 4));
 
     // Header frame — same corners + border but transparent fill so
@@ -77,10 +77,10 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     let header_frame = egui::Frame::new()
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
-        .corner_radius(egui::CornerRadius::same(radius::MD))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(6, 3));
 
-    let bg_fill = glass_fill(BG_1_PANEL, accent, glass_alpha_window());
+    let bg_fill = glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window());
 
     // Grid stroke — accent-tinted and semi-transparent so the
     // canvas pattern stays clearly below the graph content without
@@ -97,8 +97,8 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         bg_frame: Some(
             egui::Frame::new()
                 .fill(bg_fill)
-                .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-                .corner_radius(egui::CornerRadius::same(radius::LG))
+                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
                 .inner_margin(egui::Margin::same(2)),
         ),
         // Accent-tinted semi-transparent grid across the canvas —
@@ -113,8 +113,11 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // reserved for panel chrome / borders so the graph itself
         // doesn't change colour every time the user re-tints the
         // theme.
-        pin_fill: Some(egui::Color32::WHITE),
-        pin_stroke: Some(egui::Stroke::new(1.0, egui::Color32::from_gray(60))),
+        pin_fill: Some(crate::style::on_section()),
+        pin_stroke: Some(egui::Stroke::new(
+            crate::style::theme().snarl_pin_width,
+            crate::style::on_section_dim(),
+        )),
         wire_width: Some(1.5),
         wire_style: None,
         downscale_wire_frame: Some(true),

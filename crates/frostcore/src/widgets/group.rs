@@ -6,7 +6,7 @@
 
 use egui;
 
-use crate::style::{glass_alpha_group, glass_fill, radius, BG_3_HOVER, BORDER_SUBTLE};
+use crate::style::{glass_alpha_group, glass_fill, BORDER_SUBTLE};
 
 use super::shared::flush_pending_separator;
 
@@ -16,12 +16,16 @@ pub fn group_frame(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     flush_pending_separator(ui);
-    // Uses `BG_3_HOVER` as the base so groups sit a touch brighter
-    // than cards, reinforcing the stacked-pane feel.
-    egui::Frame::new()
-        .fill(glass_fill(BG_3_HOVER, accent, glass_alpha_group()))
-        .corner_radius(egui::CornerRadius::same(radius::WIDGET))
-        .stroke(egui::Stroke::new(1.0, BORDER_SUBTLE))
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .show(ui, body);
+    // PRO paints the slightly-brighter nested glass; GAME drops the
+    // frame so the group becomes a transparent grouper.
+    let frame = if crate::style::section_show_frame() {
+        egui::Frame::new()
+            .fill(glass_fill(crate::style::theme().bg_hover, accent, glass_alpha_group()))
+            .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_widget))
+            .stroke(egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE))
+            .inner_margin(egui::Margin::symmetric(8, 6))
+    } else {
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 6))
+    };
+    frame.show(ui, body);
 }

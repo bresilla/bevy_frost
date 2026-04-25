@@ -4,9 +4,7 @@
 
 use egui;
 
-use crate::style::{
-    glass_alpha_card, radius, widget_border, BG_2_RAISED, TEXT_PRIMARY, TEXT_SECONDARY,
-};
+use crate::style::{glass_alpha_card, widget_border};
 
 use super::shared::{flush_pending_separator, lerp_color, widget_separator};
 
@@ -24,13 +22,16 @@ pub fn wide_button(ui: &mut egui::Ui, label: &str, accent: egui::Color32) -> egu
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::click());
     if ui.is_rect_visible(rect) {
-        paint_accent_bg(ui, rect, accent, &resp);
+        let bg_col = paint_accent_bg(ui, rect, accent, &resp);
+        // Pick a contrasting label colour for whichever fill the
+        // button ended up with (accent under a GAME press, glass
+        // tint otherwise).
         ui.painter_at(rect).text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(12.0),
-            TEXT_PRIMARY,
+            crate::style::contrast_text_for(bg_col),
         );
     }
     widget_separator(ui);
@@ -66,7 +67,19 @@ pub fn card_button(
         return resp;
     }
 
-    paint_accent_bg(ui, rect, accent, &resp);
+    let bg_col = paint_accent_bg(ui, rect, accent, &resp);
+    let primary_col = crate::style::contrast_text_for(bg_col);
+    // Subtitle = primary blended 40 % toward bg → secondary
+    // hierarchy that always contrasts.
+    let secondary_col = {
+        let f = 0.4_f32;
+        let lerp = |a: u8, b: u8| ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u8;
+        egui::Color32::from_rgb(
+            lerp(primary_col.r(), bg_col.r()),
+            lerp(primary_col.g(), bg_col.g()),
+            lerp(primary_col.b(), bg_col.b()),
+        )
+    };
 
     let painter = ui.painter_at(rect);
 
@@ -86,20 +99,20 @@ pub fn card_button(
     let text_right = rect.max.x - (EDGE_PAD + GLYPH_COL + GLYPH_GAP);
     let max_w = (text_right - text_left).max(0.0);
 
-    let name_galley = elided_galley(ui, name, egui::FontId::proportional(12.0), TEXT_PRIMARY, max_w);
+    let name_galley = elided_galley(ui, name, egui::FontId::proportional(12.0), primary_col, max_w);
     let subtitle_galley = elided_galley(
         ui,
         subtitle,
         egui::FontId::proportional(10.0),
-        TEXT_SECONDARY,
+        secondary_col,
         max_w,
     );
 
     let center_y = rect.center().y;
     let name_pos = egui::pos2(text_left, center_y - 6.0 - name_galley.size().y * 0.5);
     let subtitle_pos = egui::pos2(text_left, center_y + 7.0 - subtitle_galley.size().y * 0.5);
-    painter.galley(name_pos, name_galley, TEXT_PRIMARY);
-    painter.galley(subtitle_pos, subtitle_galley, TEXT_SECONDARY);
+    painter.galley(name_pos, name_galley, primary_col);
+    painter.galley(subtitle_pos, subtitle_galley, secondary_col);
 
     widget_separator(ui);
     resp
@@ -108,39 +121,61 @@ pub fn card_button(
 // ─── Shared paint helpers ───────────────────────────────────────────
 
 /// Paint a rounded-rect button background with a tiny accent tint.
-/// Shared by `card_button` + `wide_button` so they read as one family.
+/// Shared by `card_button` + `wide_button` so they read as one
+/// family.
+///
+/// Press visual depends on the active theme:
+/// - PRO (`button_full_accent_on_press = false`) — pressed buttons
+///   show a `button_tint_press` accent lerp over the panel colour.
+/// - GAME (`button_full_accent_on_press = true`) — pressed buttons
+///   fill solid with `accent`, no halftone.
+///
+/// All three tint fractions (rest / hover / press) come from the
+/// active theme so a custom profile can dial them.
 fn paint_accent_bg(
     ui: &egui::Ui,
     rect: egui::Rect,
     accent: egui::Color32,
     resp: &egui::Response,
-) {
-    let tint = if resp.is_pointer_button_down_on() {
-        0.30
-    } else if resp.hovered() {
-        0.16
+) -> egui::Color32 {
+    let th = crate::style::theme();
+    let pressed = resp.is_pointer_button_down_on();
+
+    let bg = if pressed && th.button_full_accent_on_press {
+        accent
     } else {
-        0.08
+        let tint = if pressed {
+            th.button_tint_press
+        } else if resp.hovered() {
+            th.button_tint_hover
+        } else {
+            th.button_tint_rest
+        };
+        // Base = whichever surface the button is sitting on
+        // (section card if framed, pane otherwise) so the tint sits
+        // on the right colour family in both PRO and GAME.
+        let base = if th.section_show_frame {
+            crate::style::section_fill(accent)
+        } else {
+            crate::style::pane_fill(accent)
+        };
+        let solid = lerp_color(base, accent, tint);
+        egui::Color32::from_rgba_unmultiplied(
+            solid.r(),
+            solid.g(),
+            solid.b(),
+            glass_alpha_card(),
+        )
     };
-    // Preserve the glass alpha so buttons blend into the panel the
-    // same way card frames do. Unmultiplied so low alphas read as
-    // "mostly scene + tiny surface tint" rather than "gray block
-    // with partial transparency added on top".
-    let solid = lerp_color(BG_2_RAISED, accent, tint);
-    let bg = egui::Color32::from_rgba_unmultiplied(
-        solid.r(),
-        solid.g(),
-        solid.b(),
-        glass_alpha_card(),
-    );
     let border_col = if resp.hovered() { accent } else { widget_border(accent) };
     ui.painter_at(rect).rect(
         rect,
-        egui::CornerRadius::same(radius::WIDGET),
+        egui::CornerRadius::same(th.radius_widget),
         bg,
-        egui::Stroke::new(1.0, border_col),
+        egui::Stroke::new(th.border_width, border_col),
         egui::StrokeKind::Inside,
     );
+    bg
 }
 
 /// Lay out `text` onto a single row, truncated with `…` when it

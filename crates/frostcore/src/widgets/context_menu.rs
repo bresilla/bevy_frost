@@ -23,7 +23,7 @@
 use egui;
 
 use crate::style::{
-    glass_alpha_card, glass_alpha_window, glass_fill, radius, widget_border, BG_1_PANEL,
+    glass_alpha_card, glass_alpha_window, glass_fill, widget_border, BG_1_PANEL,
 };
 
 /// Attach a frost-styled context menu to `resp`. Opens on
@@ -35,9 +35,9 @@ pub fn context_menu_frost(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     let frame = egui::Frame::new()
-        .fill(glass_fill(BG_1_PANEL, accent, glass_alpha_window()))
-        .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-        .corner_radius(egui::CornerRadius::same(radius::MD))
+        .fill(glass_fill(crate::style::popup_fill(accent), accent, glass_alpha_window()))
+        .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .shadow(egui::epaint::Shadow {
             offset: [0, 4],

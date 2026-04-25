@@ -32,7 +32,13 @@ pub mod code;
 pub mod command_palette;
 pub mod features;
 pub mod floating;
+pub mod icons;
 pub mod maximize;
+
+/// Re-export of the bundled [`iconflow`] crate so consumers can
+/// reach `iconflow::list(Pack::Fluentui)`, `Pack`, etc. without
+/// adding their own dependency on the same version frost ships.
+pub use iconflow;
 pub mod prelude;
 pub mod ribbon;
 pub mod snarl;
@@ -44,7 +50,9 @@ pub mod widgets;
 // to reach into submodules.
 pub use command_palette::{command_palette, CommandPaletteState, PaletteItem};
 pub use floating::{floating_window, floating_window_scoped, PaneBuilder};
-pub use maximize::{is_any_maximized, is_maximized, maximizable, maximize_state_key};
+pub use maximize::{
+    header_action_maximize, is_any_maximized, is_maximized, maximizable, maximize_state_key,
+};
 pub use statusbar::statusbar;
 pub use ribbon::{
     draw_assembly, draw_ribbon_buttons, find_item, find_ribbon, floating_window_for_item,

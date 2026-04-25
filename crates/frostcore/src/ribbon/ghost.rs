@@ -72,7 +72,7 @@ pub fn paint_drop_ghost(
             );
             ui.painter().rect(
                 ghost_rect,
-                egui::CornerRadius::same(6),
+                egui::CornerRadius::same(crate::style::theme().radius_md),
                 ghost_fill,
                 egui::Stroke::new(1.5, ghost_stroke),
                 egui::StrokeKind::Inside,

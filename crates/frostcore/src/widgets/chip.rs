@@ -22,7 +22,7 @@
 //!   (status, severity). Border still uses `widget_border(accent)`
 //!   so the family remains coherent.
 
-use crate::style::{font, glass_alpha_group, glass_fill, radius, widget_border, BG_3_HOVER, TEXT_PRIMARY};
+use crate::style::{font, glass_alpha_group, glass_fill, widget_border, BG_3_HOVER, TEXT_PRIMARY};
 
 /// Total chip height, in px. Matches the tree-row rhythm so chips
 /// sit visually aligned with tree-row labels.
@@ -67,9 +67,9 @@ pub fn chip_colored(
     if ui.is_rect_visible(rect) {
         ui.painter().rect(
             rect,
-            egui::CornerRadius::same(radius::WIDGET),
+            egui::CornerRadius::same(crate::style::theme().radius_widget),
             fill,
-            egui::Stroke::new(1.0, widget_border(accent)),
+            egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)),
             egui::StrokeKind::Inside,
         );
         ui.painter().galley(

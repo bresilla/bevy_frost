@@ -62,10 +62,19 @@ pub(super) fn clear_pending_separator(ui: &mut egui::Ui) {
     ui.ctx().data_mut(|d| d.remove::<u64>(key));
 }
 
-/// Unconditional hairline — 1 px above, 1 px line, 1 px below. Tight
-/// cadence matches the tabular density of frost panels; used only
-/// by [`flush_pending_separator`].
+/// Hairline trailing divider painted by [`flush_pending_separator`].
+/// Skipped when the active theme has `border_width = 0` — a
+/// borderless theme (GAME) shouldn't grow stripes between rows.
+/// On themes that DO want it, paints 1 px above + 1 px line + 1 px
+/// below at α 96 of `BORDER_SUBTLE`.
 fn paint_hairline(ui: &mut egui::Ui) {
+    if crate::style::theme().border_width <= 0.0 {
+        // Borderless theme — separator would clash with the flat
+        // look. Add the same 3 px breathing room so widget cadence
+        // stays put, just skip the line itself.
+        ui.add_space(3.0);
+        return;
+    }
     ui.add_space(1.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
@@ -77,7 +86,7 @@ fn paint_hairline(ui: &mut egui::Ui) {
     );
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],
-        egui::Stroke::new(1.0, color),
+        egui::Stroke::new(crate::style::theme().border_width, color),
     );
     ui.add_space(1.0);
 }
@@ -117,11 +126,14 @@ pub(super) fn paint_value_bar(
     let fraction = fill_fraction.clamp(0.0, 1.0);
     let fill_w = rect.width() * fraction;
 
-    // Unfilled track (full width).
+    // Unfilled track — `track_fill(accent)` resolves PRO to the
+    // dark `bg_input` and GAME to a dim-accent shade, so the
+    // unfilled portion of every slider / progress bar reads as part
+    // of the same colour family as the panel it lives on.
     painter.rect_filled(
         rect,
         egui::CornerRadius::same(corner_radius),
-        ui.visuals().extreme_bg_color,
+        crate::style::track_fill(accent),
     );
 
     // Accent fill pinned to the left.

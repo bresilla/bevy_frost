@@ -26,10 +26,7 @@ use egui;
 
 use super::layout::dual_pane_labelled;
 use super::shared::{flush_pending_separator, widget_separator};
-use crate::style::{
-    glass_alpha_card, glass_fill, radius, widget_border, BG_2_RAISED, BG_3_HOVER,
-    TEXT_PRIMARY, TEXT_SECONDARY,
-};
+use crate::style::{glass_alpha_card, glass_fill, widget_border};
 
 /// Height of the trigger button. Matches the shared `interact_size.y`
 /// (20 px) so dropdown rows align with toggle / slider rows.
@@ -95,7 +92,11 @@ pub fn dropdown_control(
         } else {
             0.06
         };
-        let solid = lerp_color(BG_2_RAISED, accent, tint);
+        // Trigger base = `track_fill(accent)` — same colour family
+        // as the search field / DragValue inputs, so dropdowns
+        // visually belong to the same input cluster regardless of
+        // theme.
+        let solid = lerp_color(crate::style::track_fill(accent), accent, tint);
         let bg = egui::Color32::from_rgba_unmultiplied(
             solid.r(),
             solid.g(),
@@ -109,9 +110,9 @@ pub fn dropdown_control(
         };
         ui.painter().rect(
             rect,
-            egui::CornerRadius::same(radius::WIDGET),
+            egui::CornerRadius::same(crate::style::theme().radius_widget),
             bg,
-            egui::Stroke::new(1.0, border),
+            egui::Stroke::new(crate::style::theme().border_width, border),
             egui::StrokeKind::Inside,
         );
 
@@ -122,12 +123,13 @@ pub fn dropdown_control(
             egui::pos2(rect.max.x - CHEVRON_W - PAD_X, rect.max.y),
         );
         let display = options.get(*selected).copied().unwrap_or("—");
+        let trigger_text_col = crate::style::on_track();
         let galley = {
             let mut job = egui::text::LayoutJob::single_section(
                 display.to_string(),
                 egui::TextFormat::simple(
                     egui::FontId::proportional(12.0),
-                    TEXT_PRIMARY,
+                    trigger_text_col,
                 ),
             );
             job.wrap.max_width = text_rect.width().max(0.0);
@@ -139,23 +141,25 @@ pub fn dropdown_control(
         ui.painter().galley(
             egui::pos2(text_rect.min.x, text_rect.center().y - galley.size().y * 0.5),
             galley,
-            TEXT_PRIMARY,
+            trigger_text_col,
         );
 
-        // Chevron — small downward triangle in the right column.
+        // Chevron — filled Fluent UI down-arrow at the right column.
         let cx = rect.max.x - PAD_X - CHEVRON_W * 0.5;
         let cy = rect.center().y;
-        let r = 3.0_f32;
-        let chev_color = if resp.hovered() { accent } else { TEXT_SECONDARY };
-        ui.painter().add(egui::Shape::convex_polygon(
-            vec![
-                egui::pos2(cx - r, cy - r * 0.5),
-                egui::pos2(cx + r, cy - r * 0.5),
-                egui::pos2(cx, cy + r * 0.7),
-            ],
+        let chev_color = if resp.hovered() {
+            accent
+        } else {
+            crate::style::on_track_dim()
+        };
+        crate::icons::paint_icon(
+            ui.painter(),
+            egui::pos2(cx, cy),
+            egui::Align2::CENTER_CENTER,
+            "chevron_down",
+            12.0,
             chev_color,
-            egui::Stroke::NONE,
-        ));
+        );
     }
 
     // Attach a stable id so the popup's open-state memory keeps
@@ -176,9 +180,9 @@ pub fn dropdown_control(
         .width(rect.width())
         .frame(
             egui::Frame::new()
-                .fill(glass_fill(BG_2_RAISED, accent, glass_alpha_card()))
-                .stroke(egui::Stroke::new(1.0, widget_border(accent)))
-                .corner_radius(egui::CornerRadius::same(radius::WIDGET))
+                .fill(glass_fill(crate::style::popup_fill(accent), accent, glass_alpha_card()))
+                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_widget))
                 .inner_margin(egui::Margin::same(2)),
         );
 
@@ -193,29 +197,22 @@ pub fn dropdown_control(
             );
             if ui.is_rect_visible(row_rect) {
                 let bg = if is_selected {
-                    let blend = |a: u8, b: u8| {
-                        ((a as f32) * 0.55 + (b as f32) * 0.45).round() as u8
-                    };
-                    Some(egui::Color32::from_rgb(
-                        blend(BG_2_RAISED.r(), accent.r()),
-                        blend(BG_2_RAISED.g(), accent.g()),
-                        blend(BG_2_RAISED.b(), accent.b()),
-                    ))
+                    Some(crate::style::row_selected_fill(accent))
                 } else if row_resp.hovered() {
-                    Some(BG_3_HOVER)
+                    Some(crate::style::row_hover_fill(accent))
                 } else {
                     None
                 };
                 if let Some(c) = bg {
                     ui.painter()
-                        .rect_filled(row_rect, egui::CornerRadius::same(2), c);
+                        .rect_filled(row_rect, egui::CornerRadius::same(crate::style::theme().radius_compact), c);
                 }
                 ui.painter().text(
                     egui::pos2(row_rect.min.x + PAD_X, row_rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     opt,
                     egui::FontId::proportional(12.0),
-                    TEXT_PRIMARY,
+                    crate::style::on_section(),
                 );
             }
             if row_resp.clicked() && *selected != idx {

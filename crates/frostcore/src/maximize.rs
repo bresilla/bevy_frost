@@ -38,7 +38,7 @@ use std::hash::Hash;
 use egui;
 
 use crate::style::{
-    glass_alpha_window, glass_fill, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE, TEXT_PRIMARY,
+    glass_alpha_window, glass_fill, BORDER_SUBTLE,
 };
 
 /// The egui data key that [`maximizable`] uses to store the
@@ -116,6 +116,13 @@ pub fn maximizable(
             .data_mut(|d| d.insert_temp(global_key, (pass_nr, max_id)));
     }
 
+    // Chip dimensions for the maximised-overlay restore button.
+    // Inline mode no longer paints a floating chip — callers wire a
+    // header-action chip (`header_action_maximize`) into the
+    // hosting section's actions strip instead.
+    const CHIP: f32 = 24.0;
+    const CHIP_PAD: f32 = 4.0;
+
     if maximized {
         // Placeholder in the caller's layout so the surrounding
         // section / pane keep their footprint while the widget is
@@ -127,7 +134,7 @@ pub fn maximizable(
                 egui::Align2::CENTER_CENTER,
                 "(maximised)",
                 egui::FontId::proportional(12.0),
-                egui::Color32::from_gray(150),
+                crate::style::on_section_dim(),
             );
         }
 
@@ -145,28 +152,29 @@ pub fn maximizable(
                 ui.set_min_size(screen.size());
                 ui.set_max_size(screen.size());
                 let frame = egui::Frame::new()
-                    .fill(glass_fill(BG_1_PANEL, accent, glass_alpha_window()))
+                    .fill(glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window()))
                     .corner_radius(egui::CornerRadius::ZERO)
                     .inner_margin(egui::Margin::ZERO);
                 frame.show(ui, |ui| {
                     body(ui);
                 });
-                if max_button_overlay(
-                    &ctx,
-                    screen.min + egui::vec2(8.0, 8.0),
-                    true,
-                    accent,
-                    id_salt,
-                )
-                .clicked()
-                {
+                // Restore chip — top-RIGHT of the screen (was
+                // top-left before). User asked for it always on
+                // the right when maximised.
+                let chip_pos = egui::pos2(
+                    screen.max.x - CHIP - CHIP_PAD,
+                    screen.min.y + CHIP_PAD,
+                );
+                if max_button_overlay(&ctx, chip_pos, true, accent, id_salt).clicked() {
                     toggle = true;
                 }
             });
     } else {
-        // Inline — allocate a rect of `min_size`, render the body
-        // into a child `Ui` pinned to that rect, then overlay the
-        // maximise chip at the top-left.
+        // Inline — allocate a rect of `min_size` and render the
+        // body into a child `Ui` pinned to it. NO floating chip —
+        // the section header's actions strip is the right home for
+        // the maximise button, wired via [`header_action_maximize`].
+        let _ = some_other_maximized;
         let desired = egui::vec2(ui.available_width().max(min_size.x), min_size.y);
         let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
         let mut child = ui.new_child(
@@ -175,26 +183,58 @@ pub fn maximizable(
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         body(&mut child);
-        // Skip the maximise chip when a DIFFERENT widget is
-        // currently full-window — its overlay covers the whole
-        // screen, and the button area (`Order::Tooltip`) would
-        // otherwise paint on top of that overlay in the middle of
-        // nowhere.
-        if !some_other_maximized
-            && max_button_overlay(
-                ui.ctx(),
-                rect.min + egui::vec2(6.0, 6.0),
-                false,
-                accent,
-                id_salt,
-            )
-            .clicked()
-        {
-            toggle = true;
-        }
     }
 
     if toggle {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
+    }
+    // Silence the unused-bindings lint for the chip dims; only the
+    // maximised-overlay branch consumes them.
+    let _ = (CHIP, CHIP_PAD);
+}
+
+/// Drop-in chip for a section's `actions` slot. Toggles the same
+/// maximise state that [`maximizable`] reads, identified by the
+/// caller's `id_salt`. Sized to fit
+/// [`crate::widgets::foldable::HEADER_ACTION_SIZE`] so the chip
+/// lines up with the reserved cell.
+pub fn header_action_maximize(
+    ui: &mut egui::Ui,
+    id_salt: impl Hash + Copy,
+    accent: egui::Color32,
+) {
+    let max_id = maximize_state_key(id_salt);
+    let maximized: bool = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(max_id))
+        .unwrap_or(false);
+
+    let size = crate::widgets::foldable::HEADER_ACTION_SIZE;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(size, size),
+        egui::Sense::click(),
+    );
+    let resp = resp
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if maximized { "Restore" } else { "Maximize" });
+    if ui.is_rect_visible(rect) {
+        paint_ribbon_style_chip(
+            &ui.painter(),
+            rect,
+            accent,
+            /* active */ maximized,
+            /* hovered */ resp.hovered(),
+        );
+        paint_fullscreen_arrows(
+            &ui.painter(),
+            rect,
+            accent,
+            /* inward */ maximized,
+            /* hovered */ resp.hovered(),
+        );
+    }
+    if resp.clicked() {
         ui.ctx()
             .data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
     }
@@ -258,22 +298,22 @@ fn paint_ribbon_style_chip(
     let bg = if active {
         let blend = |a: u8, b: u8| ((a as f32) * 0.75 + (b as f32) * 0.25).round() as u8;
         let tinted = egui::Color32::from_rgb(
-            blend(BG_2_RAISED.r(), accent.r()),
-            blend(BG_2_RAISED.g(), accent.g()),
-            blend(BG_2_RAISED.b(), accent.b()),
+            blend(crate::style::theme().bg_raised.r(), accent.r()),
+            blend(crate::style::theme().bg_raised.g(), accent.g()),
+            blend(crate::style::theme().bg_raised.b(), accent.b()),
         );
         glass_fill(tinted, accent, glass_alpha_window())
     } else if hovered {
-        glass_fill(BG_2_RAISED, accent, glass_alpha_window())
+        glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_window())
     } else {
-        glass_fill(BG_1_PANEL, accent, glass_alpha_window())
+        glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window())
     };
     let stroke = if active { accent } else { BORDER_SUBTLE };
     painter.rect(
         rect,
-        egui::CornerRadius::same(6),
+        egui::CornerRadius::same(crate::style::theme().radius_md),
         bg,
-        egui::Stroke::new(1.0, stroke),
+        egui::Stroke::new(crate::style::theme().border_width, stroke),
         egui::StrokeKind::Inside,
     );
 }
@@ -289,7 +329,7 @@ fn paint_fullscreen_arrows(
     hovered: bool,
 ) {
     let color = if inward {
-        TEXT_PRIMARY
+        crate::style::on_section()
     } else if hovered {
         accent
     } else {

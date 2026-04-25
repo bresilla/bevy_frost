@@ -16,7 +16,14 @@ pub use crate::{
         RibbonItem, RibbonKind, RibbonLayout, RibbonMode, RibbonOpen, RibbonPlacement,
         RibbonRole, RibbonWidth, Side, SideActive, SideRibbon,
     },
-    style::{apply_theme, set_glass_opacity, AccentColor, GlassOpacity},
+    style::{
+        accent_hover, accent_pressed, active_accent, apply_theme, on_panel, on_panel_dim,
+        on_section, on_section_dim, on_track, on_track_dim, pane_fill, popup_fill,
+        row_hover_fill, row_selected_fill, section_fill, section_padding, section_show_frame,
+        section_show_title_divider, section_title_color, set_glass_opacity, set_theme, theme,
+        theme_game, theme_pro, track_fill, AccentColor, ColorMode, GlassOpacity, TextColorMode,
+        Theme,
+    },
     widgets::{
         axis_drag, badge_row, card_button, chip, chip_colored, color_rgb, color_rgba,
         context_menu_frost, drag_value, dropdown, dropdown_control, dual_pane,
@@ -29,6 +36,7 @@ pub use crate::{
         HYBRID_SELECT_ROW_H, TREE_ROW_H,
     },
     command_palette::{command_palette, CommandPaletteState, PaletteItem},
-    maximize::{is_any_maximized, is_maximized},
+    icons::{icon_text, paint_icon},
+    maximize::{header_action_maximize, is_any_maximized, is_maximized, maximizable},
     statusbar::statusbar,
 };

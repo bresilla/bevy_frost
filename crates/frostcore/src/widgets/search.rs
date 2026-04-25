@@ -23,7 +23,7 @@
 
 use egui;
 
-use crate::style::{glass_alpha_card, glass_fill, radius, widget_border, BG_4_INPUT, TEXT_SECONDARY};
+use crate::style::widget_border;
 
 use super::shared::flush_pending_separator;
 
@@ -60,22 +60,25 @@ pub fn search_field(
     if ui.is_rect_visible(rect) {
         ui.painter().rect(
             rect,
-            egui::CornerRadius::same(radius::WIDGET),
-            glass_fill(BG_4_INPUT, accent, glass_alpha_card()),
-            egui::Stroke::new(1.0, widget_border(accent)),
+            egui::CornerRadius::same(crate::style::theme().radius_widget),
+            crate::style::track_fill(accent),
+            egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)),
             egui::StrokeKind::Inside,
         );
     }
 
-    // Leading magnifier glyph.
+    // Leading magnifier — filled Fluent UI search icon, falls back
+    // to a plain emoji glyph if the font lookup ever fails.
     let mid_y = rect.center().y;
-    let search_glyph = "🔍";
-    ui.painter().text(
-        egui::pos2(rect.min.x + GLYPH_W * 0.5, mid_y),
+    let glyph_pos = egui::pos2(rect.min.x + GLYPH_W * 0.5, mid_y);
+    let glyph_color = crate::style::on_track_dim();
+    crate::icons::paint_icon(
+        ui.painter(),
+        glyph_pos,
         egui::Align2::CENTER_CENTER,
-        search_glyph,
-        egui::FontId::proportional(11.0),
-        TEXT_SECONDARY,
+        "search",
+        13.0,
+        glyph_color,
     );
 
     // Trailing clear (✕) hit-rect + glyph. Only visible /
@@ -97,13 +100,14 @@ pub fn search_field(
         let color = if clear_resp.hovered() {
             accent
         } else {
-            TEXT_SECONDARY
+            crate::style::on_track_dim()
         };
-        ui.painter().text(
+        crate::icons::paint_icon(
+            ui.painter(),
             clear_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "✕",
-            egui::FontId::proportional(12.0),
+            "dismiss",
+            13.0,
             color,
         );
         if clear_resp.clicked() {

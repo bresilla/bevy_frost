@@ -3,7 +3,7 @@
 
 use egui;
 
-use crate::style::{caption, radius, space, TEXT_SECONDARY};
+use crate::style::{caption, space};
 
 use super::shared::flush_pending_separator;
 
@@ -17,22 +17,29 @@ pub fn sub_caption(ui: &mut egui::Ui, text: &str) {
 
 /// Key-chip + action-label row, used in "Keys" help sections.
 /// Action text truncates with `…` if the full line would overflow.
+/// The chip's fill + text both flow through theme helpers — the
+/// chip sits at the same brightness tier as the search field and
+/// dropdown trigger (`track_fill`), with text picked by
+/// `on_track()` so it's readable on either theme + accent combo.
 pub fn keybinding_row(ui: &mut egui::Ui, keys: &str, action: &str) {
     flush_pending_separator(ui);
+    let accent = ui.visuals().selection.stroke.color;
     ui.horizontal(|ui| {
         let chip = egui::RichText::new(keys)
             .monospace()
             .small()
-            .color(ui.visuals().text_color());
+            .color(crate::style::on_track());
         let frame = egui::Frame::new()
-            .fill(ui.visuals().faint_bg_color)
+            .fill(crate::style::track_fill(accent))
             .inner_margin(egui::Margin::symmetric(5, 1))
-            .corner_radius(egui::CornerRadius::same(radius::WIDGET));
+            .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_widget));
         frame.show(ui, |ui| ui.label(chip));
         ui.add_space(space::TIGHT);
         ui.add(
             egui::Label::new(
-                egui::RichText::new(action).small().color(TEXT_SECONDARY),
+                egui::RichText::new(action)
+                    .small()
+                    .color(crate::style::on_section_dim()),
             )
             .truncate(),
         );
