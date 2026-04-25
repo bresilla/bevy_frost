@@ -15,6 +15,111 @@ fn pending_separator_key(ui: &egui::Ui) -> egui::Id {
     ui.id().with("frost_pending_separator")
 }
 
+/// Per-row state tracked by [`flush_pending_separator`] so the
+/// active theme's optional zebra-stripe row backdrop can paint
+/// without each widget knowing about it. Stored at
+/// [`row_zebra_key`] for the duration of one section body.
+///
+/// The key insight: a row's bottom Y isn't known until the NEXT
+/// row's `flush_pending_separator` call runs. So each `flush` does
+/// two things:
+///
+/// 1. Resolve the **previous** row's zebra by setting its reserved
+///    `Shape::Noop` to a `rect_filled` spanning the previous row's
+///    Y range × the section's full inner width.
+/// 2. Reserve a fresh `Shape::Noop` placeholder + record this row's
+///    starting Y, ready for the *next* `flush` (or for the
+///    section-body finalize call) to commit.
+///
+/// `pass_nr` is stored so a stale entry left from a previous frame
+/// (where the section may have been collapsed) is ignored cleanly.
+#[derive(Clone, Copy)]
+pub(super) struct RowZebraState {
+    pub pass_nr: u64,
+    pub start_y: f32,
+    pub min_x: f32,
+    pub width: f32,
+    pub shape_idx: egui::layers::ShapeIdx,
+    pub row_index: u32,
+    /// Id of the ui inside which the zebra mechanism is active.
+    /// Captured on the FIRST `flush_pending_separator` call after
+    /// `begin_row_zebra`, then enforced — any nested ui (subsection
+    /// body, group, hybrid select) that calls `flush_pending_separator`
+    /// with a different id is treated as zebra-inert. That stops
+    /// nested-ui flushes from corrupting the outer row counter (a
+    /// subsection's rect lives in a different cursor space, so a
+    /// mixed-ui resolve would paint zebra fills with the wrong x or
+    /// height).
+    pub owner_ui: egui::Id,
+}
+
+/// Key for the zebra-tracking entry. Hardcoded (single-string id)
+/// rather than mixed with `ui.id()` because the zebra mechanism
+/// only meaningfully scopes to a single section body — when the
+/// next section starts, [`begin_row_zebra`] resets it explicitly.
+pub(super) fn row_zebra_key() -> egui::Id {
+    egui::Id::new("frost_row_zebra")
+}
+
+/// Reset the zebra tracker and arm it for the next section body.
+/// Stores a sentinel state under [`row_zebra_key`] whose `owner_ui`
+/// is set to the *body ui* id passed in — the very next
+/// `flush_pending_separator(ui)` call from inside that ui will
+/// upgrade the sentinel into a live tracker. `flush` calls from
+/// nested uis (different `ui.id()`) skip zebra entirely.
+pub(crate) fn begin_row_zebra(ui: &mut egui::Ui) {
+    let pass = ui.ctx().cumulative_pass_nr();
+    let sentinel = RowZebraState {
+        pass_nr: pass,
+        start_y: 0.0,
+        min_x: 0.0,
+        width: 0.0,
+        // Reserve a dummy placeholder so the field type is valid; it
+        // never gets resolved (the first real flush replaces the
+        // whole state).
+        shape_idx: ui.painter().add(egui::Shape::Noop),
+        row_index: u32::MAX, // sentinel — first real flush rolls over to 0
+        owner_ui: ui.id(),
+    };
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(row_zebra_key(), sentinel));
+}
+
+/// Resolve the FINAL pending zebra entry (if any) at the end of a
+/// section body. Without this, the last row in a section never
+/// closes — a one-row visual quirk in long lists. Called from
+/// `widgets::foldable::section_tracked` after body() returns.
+pub(crate) fn commit_row_zebra(ui: &mut egui::Ui, accent: egui::Color32) {
+    let key = row_zebra_key();
+    let pass = ui.ctx().cumulative_pass_nr();
+    let prev: Option<RowZebraState> = ui.ctx().data(|d| d.get_temp(key));
+    if let Some(p) = prev {
+        if p.pass_nr == pass && p.row_index != u32::MAX {
+            paint_zebra_into_placeholder(ui, p, accent, ui.cursor().min.y);
+        }
+    }
+    ui.ctx().data_mut(|d| d.remove::<RowZebraState>(key));
+}
+
+fn paint_zebra_into_placeholder(
+    ui: &egui::Ui,
+    state: RowZebraState,
+    accent: egui::Color32,
+    bottom_y: f32,
+) {
+    if let Some(fill) = crate::style::row_alt_fill(accent, state.row_index) {
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(state.min_x, state.start_y),
+            egui::pos2(state.min_x + state.width, bottom_y),
+        );
+        ui.painter().set(
+            state.shape_idx,
+            egui::Shape::rect_filled(rect, egui::CornerRadius::ZERO, fill),
+        );
+    }
+    // If no fill (even row or alternation off), leave the Noop alone.
+}
+
 /// Trailing divider marker appended by every widget module. Does
 /// NOT paint immediately — it only records that *this frame* the
 /// current `ui` has a pending trailing separator. The paint is
@@ -51,6 +156,64 @@ pub(super) fn flush_pending_separator(ui: &mut egui::Ui) {
     if stored == Some(current) {
         paint_hairline(ui);
     }
+
+    // Zebra row tracking — runs *after* the optional hairline so the
+    // row's start Y already accounts for the separator's allocated
+    // space. Cheap when alternation is off (one ctx-data peek + one
+    // shape allocation per row).
+    advance_row_zebra(ui);
+}
+
+/// Close off the previous row's zebra fill (if any) and arm a fresh
+/// `Shape::Noop` placeholder for the row that's about to render. No
+/// painting happens here for the row currently arming — the actual
+/// fill is committed on the NEXT `flush_pending_separator` call (or
+/// by `commit_row_zebra` at section finalize), once the row's
+/// bottom Y is known.
+fn advance_row_zebra(ui: &mut egui::Ui) {
+    let key = row_zebra_key();
+    let pass = ui.ctx().cumulative_pass_nr();
+    let prev: Option<RowZebraState> = ui.ctx().data(|d| d.get_temp(key));
+
+    // No active section body — bail. Section bodies install a
+    // sentinel via `begin_row_zebra`; without that, this `flush`
+    // call is happening outside of any frost section (statusbar,
+    // floating window chrome, etc.) and shouldn't paint zebra.
+    let Some(prev) = prev else { return };
+    if prev.pass_nr != pass {
+        return;
+    }
+    // Foreign ui — a subsection / group / hybrid-select-row body
+    // that hosts its own row stack. Skip zebra so the outer
+    // section's rect math stays correct.
+    if prev.owner_ui != ui.id() {
+        return;
+    }
+
+    let cursor_top = ui.cursor().min.y;
+    let accent = ui.visuals().selection.stroke.color;
+    // Sentinel `row_index = u32::MAX` is the just-after-`begin`
+    // state — there's no previous row to commit; just arm row 0.
+    if prev.row_index != u32::MAX {
+        paint_zebra_into_placeholder(ui, prev, accent, cursor_top);
+    }
+
+    let shape_idx = ui.painter().add(egui::Shape::Noop);
+    let row_index = if prev.row_index == u32::MAX {
+        0
+    } else {
+        prev.row_index.wrapping_add(1)
+    };
+    let next = RowZebraState {
+        pass_nr: pass,
+        start_y: cursor_top,
+        min_x: ui.cursor().min.x,
+        width: ui.available_width(),
+        shape_idx,
+        row_index,
+        owner_ui: prev.owner_ui,
+    };
+    ui.ctx().data_mut(|d| d.insert_temp(key, next));
 }
 
 /// Discard any pending trailing separator WITHOUT painting it. Used
@@ -63,31 +226,46 @@ pub(super) fn clear_pending_separator(ui: &mut egui::Ui) {
 }
 
 /// Hairline trailing divider painted by [`flush_pending_separator`].
-/// Skipped when the active theme has `border_width = 0` — a
-/// borderless theme (GAME) shouldn't grow stripes between rows.
-/// On themes that DO want it, paints 1 px above + 1 px line + 1 px
-/// below at α 96 of `BORDER_SUBTLE`.
+/// Driven by `theme().row_separator_alpha` (NOT `border_alpha` /
+/// `border_width`) so a theme can hide every panel / section /
+/// widget outline while still keeping faint row dividers — the
+/// exact split GAME wants. Alpha 0 collapses the line entirely
+/// (cadence-only mode); any positive alpha paints a 1 px hairline
+/// in `border_subtle` with that alpha.
 fn paint_hairline(ui: &mut egui::Ui) {
-    if crate::style::theme().border_width <= 0.0 {
-        // Borderless theme — separator would clash with the flat
-        // look. Add the same 3 px breathing room so widget cadence
-        // stays put, just skip the line itself.
+    let th = crate::style::theme();
+    if th.row_separator_alpha == 0 {
         ui.add_space(3.0);
         return;
     }
     ui.add_space(1.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+    let base = if th.border_subtle == egui::Color32::TRANSPARENT {
+        BORDER_SUBTLE
+    } else {
+        th.border_subtle
+    };
     let color = egui::Color32::from_rgba_unmultiplied(
-        BORDER_SUBTLE.r(),
-        BORDER_SUBTLE.g(),
-        BORDER_SUBTLE.b(),
-        96,
+        base.r(),
+        base.g(),
+        base.b(),
+        th.row_separator_alpha,
     );
-    ui.painter().line_segment(
-        [rect.left_center(), rect.right_center()],
-        egui::Stroke::new(crate::style::theme().border_width, color),
-    );
+    let stroke = egui::Stroke::new(1.0, color);
+    if let Some((on, off)) = th.row_separator_dash {
+        crate::style::paint_dashed_line(
+            ui.painter(),
+            rect.left_center(),
+            rect.right_center(),
+            on,
+            off,
+            stroke,
+        );
+    } else {
+        ui.painter()
+            .line_segment([rect.left_center(), rect.right_center()], stroke);
+    }
     ui.add_space(1.0);
 }
 

@@ -12,7 +12,14 @@ use super::shared::flush_pending_separator;
 /// follows.
 pub fn sub_caption(ui: &mut egui::Ui, text: &str) {
     flush_pending_separator(ui);
-    ui.label(caption(text));
+    // Theme-driven prefix — GAME prepends `// ` so sub-captions read
+    // as code-style annotations (Mr Robot / Cyberpunk 2077 / VS
+    // console comment marker). PRO leaves the text bare.
+    let displayed: String = match crate::style::theme().subcaption_prefix {
+        Some(prefix) => format!("{}{}", prefix, text),
+        None => text.to_string(),
+    };
+    ui.label(caption(&displayed));
 }
 
 /// Key-chip + action-label row, used in "Keys" help sections.

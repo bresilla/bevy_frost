@@ -9,6 +9,49 @@ use crate::style::{
     glass_alpha_card, glass_alpha_window, glass_fill, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE,
 };
 
+/// sRGB lerp on RGB channels, alpha left at 255. Local copy so the
+/// ribbon paint module doesn't reach into `style`'s private helpers.
+pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |x: u8, y: u8| ((x as f32) * (1.0 - t) + (y as f32) * t).round() as u8;
+    egui::Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
+}
+
+/// Foreground (glyph / label) colour matching the recipe in
+/// [`paint_ribbon_button`]. Centralised so the static-ribbon path
+/// (`ribbon_button_area`) and the dynamic drag-aware path
+/// (`ribbon::layout`, `ribbon::assembly`) all pick text that
+/// contrasts with the EXACT fill the button paints, rather than
+/// each call site re-deriving it (and drifting out of sync the
+/// next time the bg recipe changes).
+pub(crate) fn ribbon_button_fg(
+    accent: egui::Color32,
+    is_active: bool,
+    hovered: bool,
+) -> egui::Color32 {
+    if crate::style::theme().ribbon_button_accent_fill {
+        // GAME ladder — pick contrast text against the EXACT fill the
+        // accent path painted, so the glyph sits cleanly against the
+        // dim / accent / brightened tier.
+        let fill = if is_active {
+            lerp_rgb(accent, egui::Color32::WHITE, 0.28)
+        } else if hovered {
+            accent
+        } else {
+            lerp_rgb(accent, egui::Color32::BLACK, 0.30)
+        };
+        return crate::style::contrast_text_for(fill);
+    }
+    // PRO recipe — restored. Active button paints over an accent
+    // tint, so contrast-against-accent. Idle / hover sit on the rail
+    // panel, dim panel text reads cleanest there.
+    if is_active {
+        crate::style::contrast_text_for(accent)
+    } else {
+        crate::style::on_panel_dim()
+    }
+}
+
 // ─── Layout constants ───────────────────────────────────────────────
 
 /// Edge length of each square ribbon button (VS Code / Fleet size).
@@ -20,10 +63,17 @@ pub const EDGE_GAP: f32 = 8.0;
 
 // ─── Paint ──────────────────────────────────────────────────────────
 
-/// Shared background / border recipe for every ribbon button. Same
-/// glass look as the main panels — [`BG_1_PANEL`] idle, lifts to
-/// [`BG_2_RAISED`] on hover, 25 % accent blend + accent stroke when
-/// active.
+/// Background / border recipe for every ribbon button. Per-theme
+/// branch:
+///
+/// * `ribbon_button_accent_fill = false` (PRO) → original glass
+///   look. Idle paints `BG_1_PANEL`, hover lifts to `BG_2_RAISED`,
+///   active blends 25 % accent into the raised tier and adds an
+///   accent stroke. Same recipe the kit shipped with.
+/// * `ribbon_button_accent_fill = true` (GAME) → three-tier accent
+///   ladder. Idle = accent dimmed 30 % toward black, hover = pure
+///   accent, active = accent brightened 28 % toward white + 1.5 px
+///   outer accent halo.
 pub(crate) fn paint_ribbon_button(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -31,6 +81,31 @@ pub(crate) fn paint_ribbon_button(
     is_active: bool,
     hovered: bool,
 ) {
+    let theme = crate::style::theme();
+    let radius = egui::CornerRadius::same(theme.radius_md);
+
+    if theme.ribbon_button_accent_fill {
+        // Just filled, three accent tiers, no stroke / halo / border.
+        // The active state's brightness lift is the entire selection
+        // cue — no extra outline.
+        let fill = if is_active {
+            lerp_rgb(accent, egui::Color32::WHITE, 0.28)
+        } else if hovered {
+            accent
+        } else {
+            lerp_rgb(accent, egui::Color32::BLACK, 0.30)
+        };
+        painter.rect(
+            rect,
+            radius,
+            fill,
+            egui::Stroke::NONE,
+            egui::StrokeKind::Inside,
+        );
+        return;
+    }
+
+    // PRO recipe — restored unchanged from the original glass look.
     let bg = if is_active {
         let blend = |a: u8, b: u8| ((a as f32) * 0.75 + (b as f32) * 0.25).round() as u8;
         let tinted = egui::Color32::from_rgb(
@@ -45,14 +120,11 @@ pub(crate) fn paint_ribbon_button(
         glass_fill(BG_1_PANEL, accent, glass_alpha_window())
     };
     let stroke = if is_active { accent } else { BORDER_SUBTLE };
-    // ONE `rect` call so the stroke and fill share the same rounded-
-    // corner tessellation. `StrokeKind::Inside` keeps the border
-    // flush with the edge.
     painter.rect(
         rect,
-        egui::CornerRadius::same(crate::style::theme().radius_md),
+        radius,
         bg,
-        egui::Stroke::new(crate::style::theme().border_width, stroke),
+        egui::Stroke::new(theme.border_width, stroke),
         egui::StrokeKind::Inside,
     );
     let _ = glass_alpha_card();
@@ -83,14 +155,7 @@ pub(crate) fn ribbon_button_area(
             );
 
             paint_ribbon_button(ui.painter(), rect, accent, is_active, resp.hovered());
-            // Active button is accent-tinted → contrast against
-            // accent. Inactive button sits on the rail (panel) →
-            // dim text on panel.
-            let fg = if is_active {
-                crate::style::contrast_text_for(accent)
-            } else {
-                crate::style::on_panel_dim()
-            };
+            let fg = ribbon_button_fg(accent, is_active, resp.hovered());
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,

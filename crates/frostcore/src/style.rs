@@ -405,10 +405,15 @@ pub fn srgb_to_egui(rgb: [f32; 3]) -> egui::Color32 {
 /// Size: 12 pt body baseline + 15 % bump so section titles read
 /// clearly larger than body copy inside the same card.
 pub fn section_caps(label: &str, accent: egui::Color32) -> egui::RichText {
-    egui::RichText::new(label.to_uppercase())
+    let mut t = egui::RichText::new(label.to_uppercase())
         .strong()
         .size(12.0 * 1.15)
-        .color(accent)
+        .color(accent);
+    let spacing = theme().section_title_letter_spacing;
+    if spacing > 0.0 {
+        t = t.extra_letter_spacing(spacing);
+    }
+    t
 }
 
 pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
@@ -551,6 +556,96 @@ pub struct Theme {
     pub text_disabled:  egui::Color32,
     /// How the section / pane title colour is resolved.
     pub title_color_mode: TextColorMode,
+    /// Lerp fraction toward the title's surface applied AFTER
+    /// [`title_color_mode`] resolves. PRO: `0.0` (titles render at
+    /// full contrast / pure accent). GAME: a positive value softens
+    /// titles so body row text reads as the *darker / heavier* tier
+    /// — flipping the conventional "title darker than body" hierarchy
+    /// so on a bright accent panel the row content punches and the
+    /// header recedes. Body labels (`body_label` → `on_section_dim`)
+    /// sit at a 40 % surface lerp, so a title softness of `0.55`
+    /// orders three tiers: title (softest) → label (mid) → row text
+    /// (full punch).
+    pub title_softness: f32,
+    /// `true` → ribbon buttons paint the three-tier accent ladder
+    /// (idle = accent dimmed 30 % toward black, hover = pure accent,
+    /// active = accent brightened 28 % toward white + outer accent
+    /// halo). `false` → the original PRO recipe (panel fill idle,
+    /// raised fill hover, 25 %-accent-blend + accent stroke active).
+    /// PRO `false`, GAME `true`.
+    pub ribbon_button_accent_fill: bool,
+    /// Vertical gap painted between consecutive sections inside a
+    /// pane. The gap is *transparent* — the scene below shows
+    /// through, so each section reads as its own bracketed module
+    /// instead of all sections being one undifferentiated stack.
+    /// PRO `0.0` (back-to-back sections, original look). GAME
+    /// `6.0` — pairs with `section_corner_ticks_inset` so the
+    /// corner brackets sit just inside the gap.
+    pub section_gap: f32,
+    /// Pixels to inset L-bracket corner ticks from the section's
+    /// outer rect. `0.0` paints them flush at the corners; a
+    /// positive value pulls them in so they sit *inside* the
+    /// section's inner edge, which reads as a "frame inside a
+    /// frame" once `section_gap > 0` separates the sections. PRO
+    /// `0.0`, GAME `2.0`.
+    pub section_corner_ticks_inset: f32,
+    /// `true` → wrap the section title text in literal `[ … ]`
+    /// brackets — the iconic terminal / Helldivers / Pip-Boy cue.
+    /// PRO false, GAME true.
+    pub section_title_brackets: bool,
+    /// Optional glyph prefix prepended to section titles (with a
+    /// trailing space). `None` skips. PRO `None`, GAME `Some("▸")`
+    /// — the "tactical menu" caret marker found in Cyberpunk 2077,
+    /// Helldivers, Mass Effect Andromeda. Painted in the title
+    /// colour, before any bracketing.
+    pub section_title_prefix: Option<&'static str>,
+    /// Extra letter-spacing (px) applied to section titles via
+    /// `section_caps`. PRO `0.0`, GAME `1.5` — wide tracking is the
+    /// near-universal "this is a system / game UI heading" cue.
+    pub section_title_letter_spacing: f32,
+    /// Optional glyph prefix prepended to `sub_caption` text. PRO
+    /// `None`, GAME `Some("// ")` — `fsociety` / Helldivers / VS
+    /// console comment marker; reads as code-style annotation.
+    pub subcaption_prefix: Option<&'static str>,
+    /// `true` → paint a dashed accent rule along the section's
+    /// bottom edge after the body finishes rendering. Gives every
+    /// section a "closes here" boundary even when there are no
+    /// borders. PRO false, GAME true.
+    pub section_bottom_rule: bool,
+    /// `true` → the floating pane paints its main fill across the
+    /// whole window (PRO behaviour). `false` → the pane's frame is
+    /// **transparent**, the scene below shows through, and each
+    /// section is responsible for painting its own opaque
+    /// background. Combined with `section_gap`, this turns the pane
+    /// into a stack of *floating cards* with see-through gaps
+    /// between them — the modular HUD look the GAME theme is built
+    /// around. The pane title strip still paints opaque (manually)
+    /// even when this is false. PRO `true`, GAME `false`.
+    pub pane_fill_visible: bool,
+    /// `true` → paint the rotating chevron glyph at the start of
+    /// every section header. `false` → no chevron at all (the title
+    /// row still toggles on click; the visual cue is dropped). PRO
+    /// `true`, GAME `false` — pure bracketed-title look without a
+    /// fold indicator.
+    pub show_section_chevron: bool,
+    /// `Some((on, off))` → row separators paint dashed instead of
+    /// solid, with `on` pixels of line and `off` pixels of gap. `None`
+    /// keeps the original solid hairline. PRO `None`, GAME
+    /// `Some((4.0, 3.0))` — the universal "machine-drawn, not
+    /// designed" cue every cyberpunk / tactical / HUD UI uses.
+    pub row_separator_dash: Option<(f32, f32)>,
+    /// `true` → after the section title text, a dashed horizontal
+    /// rule fills the remaining header width up to the actions tail
+    /// (DOOM Eternal / Helldivers / EVE Online pattern). The line
+    /// uses `row_separator_dash` if set, otherwise solid. PRO false,
+    /// GAME true.
+    pub section_title_trailing_rule: bool,
+    /// Length of the L-bracket arms painted at the four corners of
+    /// the section / pane's outer rect — the iconic HUD anchor seen
+    /// in Destiny 2, Apex, Rainbow Six, Tron Legacy. `0.0` skips them
+    /// entirely (PRO); a positive value paints two perpendicular
+    /// strokes of that length flush at each corner. GAME `7.0`.
+    pub section_corner_ticks: f32,
 
     // ── Borders / strokes ──
     /// Base border colour (before the accent tint blend).
@@ -565,6 +660,14 @@ pub struct Theme {
     /// subsections, group frames, inputs, …). `0.0` paints no border
     /// at all — handy for the GAME profile.
     pub border_width:       f32,
+    /// Alpha applied to the hairline row-separator painted between
+    /// row widgets in a section body. Decoupled from
+    /// [`border_alpha`] so a theme can hide panel borders while
+    /// keeping faint row dividers (the GAME profile does exactly
+    /// that — `border_width = 0` so panes / sections paint no
+    /// outline, while `row_separator_alpha = 32` keeps a faint
+    /// hairline between widgets). PRO `96`, GAME `32`.
+    pub row_separator_alpha: u8,
 
     // ── Glass ──
     /// Card alpha as a fraction of window alpha. PRO ≈ 0.76; GAME
@@ -585,10 +688,20 @@ pub struct Theme {
     pub radius_lg:      u8,
 
     // ── Body row visuals ──
-    /// PRO: false. GAME: true → reserved for an alternating-fill
-    /// pattern on row-level widgets so a borderless stack still reads
-    /// as a list (helper landing in a follow-up).
+    /// PRO: false. GAME: true → row-level widgets paint an alternating
+    /// fill behind every other row so a borderless widget stack still
+    /// reads as a list. Implemented via a ctx-data row counter +
+    /// deferred shape resolved from `widgets/shared.rs`'s
+    /// `flush_pending_separator` — each `flush` call closes off the
+    /// previous row, paints its zebra fill if the row index is odd,
+    /// and arms the next row's placeholder.
     pub row_alternation: bool,
+    /// Lightness lerp toward white applied to the panel base when
+    /// painting an alternating row's fill. The five cross-app theming
+    /// references (Houdini, Substance, Godot, AE, Logic) cluster
+    /// around 4–6%; below 3% reads as noise, above 8% screams
+    /// "stripes". PRO uses `0.0` (alternation off); GAME uses `0.05`.
+    pub row_alt_lift: f32,
 
     // ── Click visuals ──
     /// `false` → press-state uses the subtle accent lerp the PRO
@@ -655,11 +768,26 @@ pub const fn theme_pro() -> Theme {
         text_secondary: TEXT_SECONDARY,
         text_disabled:  TEXT_DISABLED,
         title_color_mode: TextColorMode::Accent,
+        title_softness: 0.0,
+        ribbon_button_accent_fill: false,
+        section_gap: 0.0,
+        section_corner_ticks_inset: 0.0,
+        section_title_brackets: false,
+        section_title_prefix: None,
+        section_title_letter_spacing: 0.0,
+        subcaption_prefix: None,
+        section_bottom_rule: false,
+        pane_fill_visible: true,
+        show_section_chevron: true,
+        row_separator_dash: None,
+        section_title_trailing_rule: false,
+        section_corner_ticks: 0.0,
         border_subtle:      BORDER_SUBTLE,
         border_inner:       BORDER_INNER,
         border_alpha:       230,
         border_accent_tint: 0.06,
         border_width:       1.0,
+        row_separator_alpha: 96,
         glass_card_factor:  0.76,
         glass_group_factor: 0.57,
         glass_accent_tint:  0.03,
@@ -669,6 +797,7 @@ pub const fn theme_pro() -> Theme {
         radius_md:      radius::MD,
         radius_lg:      radius::LG,
         row_alternation: false,
+        row_alt_lift: 0.0,
         button_full_accent_on_press: false,
         button_tint_rest:  0.08,
         button_tint_hover: 0.16,
@@ -700,22 +829,79 @@ pub const fn theme_game() -> Theme {
         bg_raised:  egui::Color32::from_rgb(0x16, 0x1B, 0x29),
         bg_hover:   egui::Color32::from_rgb(0x1F, 0x26, 0x38),
         bg_input:   egui::Color32::from_rgb(0x06, 0x08, 0x0E),
-        panel_fill_mode:   ColorMode::FromAccent { lerp_factor: 0.65 },
-        section_fill_mode: ColorMode::FromBg,
-        section_show_frame: false,
+        // Panel: lerp 22 % toward accent — markedly darker than the
+        // previous 35 % so cards read as deep tactical surfaces with
+        // a faint accent hue, not lit accent panels. Body text and
+        // accent titles both pop more.
+        panel_fill_mode:   ColorMode::FromAccent { lerp_factor: 0.22 },
+        // Sections paint their own opaque bg in GAME — needed because
+        // the pane frame is now transparent (`pane_fill_visible:
+        // false`) so the scene shows through the gaps. Each section
+        // resolves its fill via `FromAccent` matching the panel's
+        // 22 % lerp factor so cards stay one consistent dark
+        // tactical tone.
+        section_fill_mode: ColorMode::FromAccent { lerp_factor: 0.22 },
+        section_show_frame: true,
         section_show_title_divider: false,
-        section_pad_x: 0,
-        section_pad_y: 0,
-        section_body_indent: 6.0,
+        // Padding — `pad_y = 8` so the last row in each section gets
+        // a clear breathing band before the card's bottom edge
+        // instead of almost touching it. Top picks up the same
+        // value, which keeps the header strip from looking crammed
+        // against the corner ticks.
+        section_pad_x: 6,
+        section_pad_y: 8,
+        section_body_indent: 8.0,
         text_primary:   egui::Color32::from_rgb(0xF0, 0xF4, 0xFF),
         text_secondary: egui::Color32::from_rgb(0x9E, 0xA8, 0xC0),
         text_disabled:  egui::Color32::from_rgb(0x4A, 0x52, 0x66),
-        title_color_mode: TextColorMode::ContrastWithPanel,
-        border_subtle:      egui::Color32::from_rgb(0x06, 0x08, 0x0E),
+        // Title in pure accent — a different *hue* from the body's
+        // near-black contrast text. On a 65 %-lerp accent panel, the
+        // saturated accent reads ~35 % brighter than the panel, so
+        // it pops without needing extra softening. Body text
+        // (`on_section`) remains at full contrast, which is the
+        // "darker than title" tier the user asked for in GAME.
+        title_color_mode: TextColorMode::Accent,
+        title_softness: 0.0,
+        ribbon_button_accent_fill: true,
+        // Bumped from 6 → 12 so the gap between sections is genuinely
+        // visible — at 6 px it was being eaten by section padding /
+        // anti-aliasing fuzz at typical DPIs.
+        section_gap: 12.0,
+        // Corner ticks sit 2 px inside the section's painted edge —
+        // gives every bracket some breathing room from the edge
+        // (which the user explicitly asked for) AND guarantees the
+        // strokes can't bleed past the rect under any sub-pixel
+        // rounding.
+        section_corner_ticks_inset: 2.0,
+        section_title_brackets: true,
+        section_title_prefix: Some("▸"),
+        section_title_letter_spacing: 1.5,
+        subcaption_prefix: Some("// "),
+        section_bottom_rule: true,
+        // Pane frame goes transparent → scene shows through the
+        // gaps between sections. Each section will paint its own
+        // opaque bg via `section_show_frame: true` below; the title
+        // strip falls back to a manual paint inside floating.rs.
+        pane_fill_visible: false,
+        // No chevron — bracketed title is the only header chrome.
+        show_section_chevron: false,
+        row_separator_dash: Some((4.0, 3.0)),
+        section_title_trailing_rule: true,
+        // Longer ticks (10 px arms) read as deliberate "frame
+        // brackets" rather than incidental ticks.
+        section_corner_ticks: 10.0,
+        // Pane / section / input / button outlines: OFF in GAME (the
+        // square borderless look the profile is built around). The
+        // faint hairline the user wanted is exclusively for **row
+        // separators inside section bodies** — see
+        // `row_separator_alpha`. Mid-grey separator base so the line
+        // reads on both bright and dark accent panels.
+        border_subtle:      egui::Color32::from_rgb(0x80, 0x80, 0x80),
         border_inner:       egui::Color32::from_rgb(0x1F, 0x26, 0x38),
         border_alpha:       0,
         border_accent_tint: 0.0,
         border_width:       0.0,
+        row_separator_alpha: 60,
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,
@@ -724,7 +910,8 @@ pub const fn theme_game() -> Theme {
         radius_sm:      0,
         radius_md:      0,
         radius_lg:      0,
-        row_alternation: true,
+        row_alternation: false,
+        row_alt_lift: 0.0,
         button_full_accent_on_press: true,
         button_tint_rest:  0.0,
         button_tint_hover: 0.18,
@@ -837,12 +1024,23 @@ pub fn section_fill(accent: egui::Color32) -> egui::Color32 {
 /// near-black titles and a dark panel shows near-white.
 pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
-    match th.title_color_mode {
-        TextColorMode::Accent => accent,
-        TextColorMode::Primary => th.text_primary,
-        TextColorMode::Secondary => th.text_secondary,
-        TextColorMode::ContrastWithPanel => contrast_text_for(pane_fill(accent)),
-        TextColorMode::ContrastWithSection => contrast_text_for(section_fill(accent)),
+    let (resolved, surface) = match th.title_color_mode {
+        TextColorMode::Accent => (accent, pane_fill(accent)),
+        TextColorMode::Primary => (th.text_primary, pane_fill(accent)),
+        TextColorMode::Secondary => (th.text_secondary, pane_fill(accent)),
+        TextColorMode::ContrastWithPanel => {
+            let surface = pane_fill(accent);
+            (contrast_text_for(surface), surface)
+        }
+        TextColorMode::ContrastWithSection => {
+            let surface = section_fill(accent);
+            (contrast_text_for(surface), surface)
+        }
+    };
+    if th.title_softness > 0.0 {
+        lerp_rgb(resolved, surface, th.title_softness.clamp(0.0, 1.0))
+    } else {
+        resolved
     }
 }
 
@@ -891,6 +1089,51 @@ fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
 /// own — so tracks read as a consistent "input on the accent
 /// panel" tier rather than a near-black block sitting on a bright
 /// accent.
+/// Paint a dashed line between two points by walking the segment
+/// from `p1` to `p2` in `dash_on + dash_off` increments. Cheap; one
+/// `line_segment` shape per dash. Used by the row hairline and
+/// section title trailing rule when a theme requests dashes
+/// (`row_separator_dash`).
+pub fn paint_dashed_line(
+    painter: &egui::Painter,
+    p1: egui::Pos2,
+    p2: egui::Pos2,
+    dash_on: f32,
+    dash_off: f32,
+    stroke: egui::Stroke,
+) {
+    let total = (p2 - p1).length();
+    if total <= 0.0 || dash_on <= 0.0 {
+        return;
+    }
+    let dir = (p2 - p1) / total;
+    let step = dash_on + dash_off.max(0.0);
+    let mut t = 0.0;
+    while t < total {
+        let start = p1 + dir * t;
+        let end_t = (t + dash_on).min(total);
+        let end = p1 + dir * end_t;
+        painter.line_segment([start, end], stroke);
+        t += step;
+    }
+}
+
+/// Background fill for an alternating row. Returns `None` when the
+/// active theme has `row_alternation = false` OR `row_index` is even
+/// (zebra paints odd rows, even rows stay on the bare panel). When
+/// the row IS to be tinted, the result is the panel base lifted
+/// `row_alt_lift` toward white in straight RGB — avoids the hue
+/// shift you'd get pulling toward a coloured highlight, which keeps
+/// accent-tinted GAME panels reading as a single colour family.
+pub fn row_alt_fill(accent: egui::Color32, row_index: u32) -> Option<egui::Color32> {
+    let th = theme();
+    if !th.row_alternation || row_index % 2 == 0 {
+        return None;
+    }
+    let base = pane_fill(accent);
+    Some(lerp_rgb(base, egui::Color32::WHITE, th.row_alt_lift))
+}
+
 pub fn track_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {

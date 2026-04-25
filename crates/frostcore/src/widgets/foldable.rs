@@ -20,7 +20,7 @@ use crate::style::{
     glass_alpha_card, glass_fill, section_caps, thin_divider, widget_border,
 };
 
-use super::shared::flush_pending_separator;
+use super::shared::{begin_row_zebra, commit_row_zebra, flush_pending_separator};
 
 /// Horizontal inner padding inside the container, in px.
 pub const PAD_X: i8 = 4;
@@ -107,7 +107,14 @@ pub(crate) fn section_tracked(
 ) -> SectionTrack {
     flush_pending_separator(ui);
     let full_w = ui.available_width();
-    let inner_w = (full_w - OUTER_INSET).max(0.0);
+    // Theme-driven outer inset — must match the frame's actual
+    // horizontal footprint or successive sections render at slightly
+    // different visible widths (frame overflows by a few px and
+    // egui clips it inconsistently). Footprint = inner_margin x2 +
+    // border_width x2.
+    let theme_outer_inset = (crate::style::theme().section_pad_x as f32) * 2.0
+        + crate::style::theme().border_width * 2.0;
+    let inner_w = (full_w - theme_outer_inset).max(0.0);
     let outer_top = ui.cursor().min;
 
     // Use a frost-managed state id so the pane can read / write the
@@ -135,7 +142,7 @@ pub(crate) fn section_tracked(
         // pane background.
         egui::Frame::new().inner_margin(crate::style::section_padding())
     };
-    frame.show(ui, |ui| {
+    let frame_inner = frame.show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(inner_w, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
@@ -188,50 +195,134 @@ pub(crate) fn section_tracked(
                     // dark against a bright accent panel).
                     let title_col = crate::style::section_title_color(accent);
 
-                    let openness = state.openness(ui.ctx());
-                    let chevron_rect = egui::Rect::from_min_size(
-                        title_strip_rect.min,
-                        egui::vec2(CHEVRON_W, HEADER_H),
-                    );
-                    paint_chevron(ui, chevron_rect, openness, title_col);
+                    let theme_now = crate::style::theme();
 
-                    // Optional icon between chevron and title.
-                    let mut text_x = chevron_rect.right() + 2.0;
-                    if let Some(name) = icon {
-                        let icon_rect = egui::Rect::from_min_size(
-                            egui::pos2(text_x, title_strip_rect.min.y),
-                            egui::vec2(ICON_W, HEADER_H),
+                    // Chevron — themes that opt out (GAME) skip both
+                    // the paint AND its reserved horizontal slot, so
+                    // the title shifts left and reclaims the space.
+                    let mut text_x = title_strip_rect.min.x;
+                    if theme_now.show_section_chevron {
+                        let openness = state.openness(ui.ctx());
+                        let chevron_rect = egui::Rect::from_min_size(
+                            title_strip_rect.min,
+                            egui::vec2(CHEVRON_W, HEADER_H),
                         );
-                        crate::icons::paint_icon(
-                            &ui.painter(),
-                            icon_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            name,
-                            ICON_W - 4.0,
-                            title_col,
-                        );
-                        text_x = icon_rect.right() + 4.0;
+                        paint_chevron(ui, chevron_rect, openness, title_col);
+                        text_x = chevron_rect.right() + 2.0;
                     }
 
-                    // Render the header text via the `section_caps`
-                    // RichText recipe (uppercase + strong) at the
-                    // theme-resolved title colour. Wrap the title at
-                    // the title-strip width so a long title doesn't
-                    // overrun into the actions tail.
+                    // Build a mixed-font galley for the header so the
+                    // optional Fluent icon sits *inside* the bracket
+                    // pair next to the title — `[ ICON TITLE ]` — with
+                    // no separator dot between icon and title. The
+                    // icon needs the Fluent UI font family; the
+                    // brackets and title use the default proportional
+                    // font with the same caps + size + letter-spacing
+                    // recipe `section_caps` would have produced.
+                    //
+                    // PRO (no brackets, with icon) renders the icon as
+                    // a separate paint before the title text — same
+                    // visual as before, just routed through the same
+                    // composition path.
+                    let title_size_pt = 12.0 * 1.15;
+                    let default_font =
+                        egui::FontId::new(title_size_pt, egui::FontFamily::Proportional);
+                    let default_format = egui::TextFormat {
+                        font_id: default_font.clone(),
+                        color: title_col,
+                        extra_letter_spacing: theme_now.section_title_letter_spacing,
+                        ..Default::default()
+                    };
+
                     let title_max_w = (title_strip_rect.max.x - text_x).max(0.0);
-                    let title_widget =
-                        egui::WidgetText::from(section_caps(title, title_col));
-                    let title_galley = title_widget.into_galley(
-                        ui,
-                        Some(egui::TextWrapMode::Truncate),
-                        title_max_w,
-                        egui::TextStyle::Body,
-                    );
+                    let mut job = egui::text::LayoutJob::default();
+                    job.wrap.max_width = title_max_w;
+                    job.wrap.max_rows = 1;
+                    job.wrap.break_anywhere = true;
+
+                    // Optional prefix glyph (only when brackets are
+                    // OFF — when brackets are ON the prefix is dropped
+                    // because the bracket pair is the visual anchor
+                    // and chaining `▸ [ … ]` reads as cluttered).
+                    if let (Some(prefix), false) =
+                        (theme_now.section_title_prefix, theme_now.section_title_brackets)
+                    {
+                        job.append(prefix, 0.0, default_format.clone());
+                        job.append(" ", 0.0, default_format.clone());
+                    }
+
+                    if theme_now.section_title_brackets {
+                        job.append("[ ", 0.0, default_format.clone());
+                    }
+
+                    // Icon — embedded in the same galley using the
+                    // Fluent font family so it sits inline with the
+                    // bracketed title text, no separator dot.
+                    if let Some(name) = icon {
+                        if let Some((glyph, family)) = crate::icons::icon(name) {
+                            let icon_format = egui::TextFormat {
+                                font_id: egui::FontId::new(title_size_pt, family),
+                                color: title_col,
+                                ..Default::default()
+                            };
+                            job.append(&glyph.to_string(), 0.0, icon_format);
+                            job.append(" ", 0.0, default_format.clone());
+                        }
+                    }
+
+                    job.append(&title.to_uppercase(), 0.0, default_format.clone());
+
+                    if theme_now.section_title_brackets {
+                        job.append(" ]", 0.0, default_format.clone());
+                    }
+
+                    let title_galley = ui.painter().layout_job(job);
                     let title_pos = egui::pos2(
                         text_x,
                         title_strip_rect.center().y - title_galley.size().y * 0.5,
                     );
+                    let title_size = title_galley.size();
                     ui.painter().galley(title_pos, title_galley, title_col);
+
+                    // Trailing horizontal rule (DOOM Eternal /
+                    // Helldivers / EVE pattern): from just past the
+                    // title text to the actions tail's left edge. Uses
+                    // the same dash recipe as row separators so the
+                    // rule reads as part of the same machine-drawn
+                    // family. Theme-gated via
+                    // `section_title_trailing_rule`.
+                    if crate::style::theme().section_title_trailing_rule {
+                        let rule_y = title_strip_rect.center().y;
+                        let rule_x_start = title_pos.x + title_size.x + 8.0;
+                        let rule_x_end = title_strip_rect.max.x - 4.0;
+                        if rule_x_end > rule_x_start + 4.0 {
+                            let alpha = crate::style::theme().row_separator_alpha.max(50);
+                            let base = crate::style::theme().border_subtle;
+                            let line_col = egui::Color32::from_rgba_unmultiplied(
+                                base.r(),
+                                base.g(),
+                                base.b(),
+                                alpha,
+                            );
+                            let stroke = egui::Stroke::new(1.0, line_col);
+                            let p1 = egui::pos2(rule_x_start, rule_y);
+                            let p2 = egui::pos2(rule_x_end, rule_y);
+                            if let Some((on, off)) =
+                                crate::style::theme().row_separator_dash
+                            {
+                                crate::style::paint_dashed_line(
+                                    &ui.painter(),
+                                    p1,
+                                    p2,
+                                    on,
+                                    off,
+                                    stroke,
+                                );
+                            } else {
+                                ui.painter().line_segment([p1, p2], stroke);
+                            }
+                        }
+                    }
 
                     if resp.clicked() {
                         state.toggle(ui);
@@ -267,28 +358,142 @@ pub(crate) fn section_tracked(
                         // left spacer in front of every body widget
                         // without disturbing each widget's own
                         // dual_pane / labelled_row layout.
+                        //
+                        // Row-zebra brackets — `begin_row_zebra` resets
+                        // the per-section row counter so every section
+                        // alternates from row 0; `commit_row_zebra`
+                        // closes off the LAST row's deferred fill (the
+                        // normal `flush_pending_separator`-driven
+                        // resolve path only ever closes the *previous*
+                        // row, so without an end-of-body flush the
+                        // bottom row of every section would be left
+                        // unstriped).
                         let indent = crate::style::theme().section_body_indent;
                         if indent > 0.0 {
                             ui.horizontal(|ui| {
                                 ui.add_space(indent);
                                 ui.vertical(|ui| {
                                     ui.spacing_mut().item_spacing.y = 0.0;
+                                    // Begin AFTER the indent wrap so the
+                                    // owner_ui captured matches the ui
+                                    // each direct row widget will be
+                                    // called on.
+                                    begin_row_zebra(ui);
                                     body(ui);
+                                    commit_row_zebra(ui, accent);
                                 });
                             });
                         } else {
+                            begin_row_zebra(ui);
                             body(ui);
+                            commit_row_zebra(ui, accent);
                         }
                     });
                 },
             );
         });
 
-    let outer_bottom = ui.cursor().min.y;
-    let outer_rect = egui::Rect::from_min_max(
-        outer_top,
-        egui::pos2(outer_top.x + full_w, outer_bottom),
-    );
+    // Outer rect = the frame's *actual painted rect*, not the
+    // post-frame cursor. After `frame.show`, `ui.cursor()` already
+    // includes egui's `item_spacing.y` (~4–6 px), so anchoring the
+    // bottom corners to the cursor placed them several pixels BELOW
+    // the visible edge of the section card. The frame's own
+    // `InnerResponse.response.rect` is exactly the painted area.
+    let outer_rect = frame_inner.response.rect;
+    let _ = (theme_outer_inset, inner_w); // referenced only inside body now
+
+    // Section bottom rule — dashed accent line along the bottom
+    // edge after body finishes. Gives every section a "closes here"
+    // boundary even though the theme paints no border. Y is snapped
+    // so the line lands fully inside the section card (`max.y -
+    // inset - 0.5` keeps the 1 px stroke crisp and inside the rect).
+    if crate::style::theme().section_bottom_rule {
+        let alpha = crate::style::theme().row_separator_alpha.max(50);
+        let col = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha);
+        let stroke = egui::Stroke::new(1.0, col);
+        let inset = crate::style::theme().section_corner_ticks_inset;
+        let y = (outer_rect.max.y - inset).round() - 0.5;
+        let p1 = egui::pos2(outer_rect.min.x + inset, y);
+        let p2 = egui::pos2(outer_rect.max.x - inset, y);
+        if let Some((on, off)) = crate::style::theme().row_separator_dash {
+            crate::style::paint_dashed_line(ui.painter(), p1, p2, on, off, stroke);
+        } else {
+            ui.painter().line_segment([p1, p2], stroke);
+        }
+    }
+
+    // L-bracket corner ticks — every game-UI agent flagged this as
+    // the highest-ROI HUD signal: four 1 px strokes per corner of
+    // the section's outer rect, sized via `section_corner_ticks`
+    // (PRO `0.0` → no-op). Tinted in accent at α 200 so they read as
+    // accent-coloured ticks, not random strokes. The corners are
+    // optionally inset by `section_corner_ticks_inset` px so they
+    // sit *inside* the section rect — pairs with the inter-section
+    // gap so each module reads as a self-contained bracketed card.
+    let tick_len = crate::style::theme().section_corner_ticks;
+    if tick_len > 0.0 {
+        let inset = crate::style::theme().section_corner_ticks_inset;
+        let r = if inset > 0.0 {
+            outer_rect.shrink(inset)
+        } else {
+            outer_rect
+        };
+        // Pixel-snap. For a 1 px stroke to render crisp the line
+        // *centre* must sit on half-integer coords. Crucially, left /
+        // top edges snap with `+0.5` (line covers pixels at the
+        // edge, just inside the rect) while right / bottom edges
+        // snap with `-0.5` (also just inside) — without this, the
+        // right & bottom strokes land OUTSIDE the rect by half a
+        // pixel, which is exactly the "going outside few pixels"
+        // bleed the user reported.
+        let snap_low = |v: f32| v.round() + 0.5;
+        let snap_high = |v: f32| v.round() - 0.5;
+        let lx = snap_low(r.min.x);
+        let ty = snap_low(r.min.y);
+        let rx = snap_high(r.max.x);
+        let by = snap_high(r.max.y);
+        let len = tick_len;
+        let col = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220);
+        let stroke = egui::Stroke::new(1.0, col);
+        let painter = ui.painter();
+        // Top-left  ┌
+        painter.line_segment(
+            [egui::pos2(lx, ty), egui::pos2(lx + len, ty)],
+            stroke,
+        );
+        painter.line_segment(
+            [egui::pos2(lx, ty), egui::pos2(lx, ty + len)],
+            stroke,
+        );
+        // Top-right ┐
+        painter.line_segment(
+            [egui::pos2(rx - len, ty), egui::pos2(rx, ty)],
+            stroke,
+        );
+        painter.line_segment(
+            [egui::pos2(rx, ty), egui::pos2(rx, ty + len)],
+            stroke,
+        );
+        // Bottom-left └
+        painter.line_segment(
+            [egui::pos2(lx, by - len), egui::pos2(lx, by)],
+            stroke,
+        );
+        painter.line_segment(
+            [egui::pos2(lx, by), egui::pos2(lx + len, by)],
+            stroke,
+        );
+        // Bottom-right ┘
+        painter.line_segment(
+            [egui::pos2(rx - len, by), egui::pos2(rx, by)],
+            stroke,
+        );
+        painter.line_segment(
+            [egui::pos2(rx, by - len), egui::pos2(rx, by)],
+            stroke,
+        );
+    }
+
     SectionTrack {
         state_id,
         outer_rect,

@@ -196,6 +196,16 @@ impl<'a> PaneBuilder<'a> {
             return;
         }
 
+        // Transparent gap between consecutive sections — pane
+        // background bleeds through, so each section reads as its
+        // own bracketed module instead of all of them merging into
+        // one stack. Theme-driven (`section_gap`); PRO `0.0` keeps
+        // the original back-to-back layout.
+        let gap = crate::style::theme().section_gap;
+        if gap > 0.0 && self.non_dragged_count > 0 {
+            self.ui.add_space(gap);
+        }
+
         // If a drag is in progress and we're at the cursor's target
         // slot (computed in the non-dragged-only index space),
         // insert a ribbon-style ghost-rect gap before rendering this
@@ -680,10 +690,21 @@ pub fn floating_window_scoped(
     // PRO returns the dark `bg_panel`; GAME returns an
     // accent-derived dark colour so the pane visually carries the
     // user's accent across its whole surface.
+    // Pane fill: themes that want a pane-wide opaque background
+    // paint it via the egui Frame's fill (PRO). Themes that want
+    // see-through gaps between sections (GAME) flip
+    // `pane_fill_visible` off — the egui frame paints transparent,
+    // and each section will render its own opaque card so the gap
+    // *between* sections shows the scene below.
+    let pane_fill_col = if crate::style::theme().pane_fill_visible {
+        glass_fill(crate::style::pane_fill(accent), accent, glass_alpha_window())
+    } else {
+        egui::Color32::TRANSPARENT
+    };
     let frame = egui::Frame {
         inner_margin: egui::Margin { left: 2, right: 2, top: 2, bottom: 2 },
         outer_margin: egui::Margin::ZERO,
-        fill: glass_fill(crate::style::pane_fill(accent), accent, glass_alpha_window()),
+        fill: pane_fill_col,
         stroke: egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE),
         corner_radius: egui::CornerRadius::same(crate::style::theme().radius_lg),
         shadow: egui::epaint::Shadow {
@@ -717,6 +738,18 @@ pub fn floating_window_scoped(
                 egui::vec2(ui.available_width(), title_h),
                 egui::Sense::hover(),
             );
+            // When the pane frame is transparent, paint the title
+            // strip's background manually — the title stays anchored
+            // on a solid card while the body's section gaps remain
+            // see-through. Card colour = the same `pane_fill` the
+            // egui frame *would* have painted.
+            if !crate::style::theme().pane_fill_visible {
+                ui.painter().rect_filled(
+                    rect,
+                    egui::CornerRadius::same(crate::style::theme().radius_lg),
+                    crate::style::pane_fill(accent),
+                );
+            }
             let (align, tx) = if on_right_side {
                 (egui::Align2::RIGHT_CENTER, rect.max.x - TITLE_INSET)
             } else {

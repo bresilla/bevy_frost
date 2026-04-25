@@ -24,7 +24,6 @@ use egui;
 
 use crate::style::{font, glass_alpha_group, glass_fill, widget_border};
 
-use super::foldable::OUTER_INSET;
 use super::shared::{flush_pending_separator, widget_separator};
 
 /// Left indent applied to the body so it steps in from the chevron
@@ -48,7 +47,14 @@ pub fn subsection(
 ) {
     flush_pending_separator(ui);
     let full_w = ui.available_width();
-    let inner_w = (full_w - OUTER_INSET).max(0.0);
+    // Theme-aware footprint: the frame's inner_margin (section_pad_x
+    // each side) plus border_width on each side. A hardcoded `10`
+    // used to live here from the PRO-only era, which overflowed by
+    // 2 px under GAME's `pad_x = 6, border = 0` and made the Transform
+    // section's nested subsections push wider than the pane.
+    let outer_inset = (crate::style::theme().section_pad_x as f32) * 2.0
+        + crate::style::theme().border_width * 2.0;
+    let inner_w = (full_w - outer_inset).max(0.0);
 
     // Same accent-tinted recipe as the parent section's stroke,
     // re-alpha'd so nested frames read softer.

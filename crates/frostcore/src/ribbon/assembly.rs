@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 use egui;
 
-use super::paint::{paint_ribbon_button, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
+use super::paint::{paint_ribbon_button, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
 
 // ─── Enums: edge / cluster / mode / role ────────────────────────────
 
@@ -832,11 +832,11 @@ pub fn draw_assembly(
                     is_active,
                     r.hovered() || is_dragging_this,
                 );
-                let fg = if is_active || is_dragging_this {
-                    crate::style::contrast_text_for(accent)
-                } else {
-                    crate::style::on_panel_dim()
-                };
+                let fg = ribbon_button_fg(
+                    accent,
+                    is_active || is_dragging_this,
+                    r.hovered() || is_dragging_this,
+                );
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
