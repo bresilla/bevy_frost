@@ -35,7 +35,15 @@ const CHIP_PAD_X: f32 = 6.0;
 /// Text is at [`font::CAPTION`] size. Returns the `Response` so
 /// callers can react to clicks / hover (e.g. tooltips).
 pub fn chip(ui: &mut egui::Ui, label: &str, accent: egui::Color32) -> egui::Response {
-    let fill = glass_fill(BG_3_HOVER, accent, glass_alpha_group());
+    // Theme-aware default fill: pulls from `subsection_fill` so the
+    // chip's "raised pill" surface lifts off the parent panel in
+    // both Dark and Light variants instead of using the dark-only
+    // `BG_3_HOVER` palette constant.
+    let fill = glass_fill(
+        crate::style::subsection_fill(accent),
+        accent,
+        glass_alpha_group(),
+    );
     chip_colored(ui, label, fill, accent)
 }
 
@@ -55,7 +63,7 @@ pub fn chip_colored(
     let galley = {
         let mut job = egui::text::LayoutJob::single_section(
             label.to_string(),
-            egui::TextFormat::simple(font, TEXT_PRIMARY),
+            egui::TextFormat::simple(font, crate::style::on_section()),
         );
         job.wrap.max_rows = 1;
         job.wrap.break_anywhere = true;
@@ -78,7 +86,7 @@ pub fn chip_colored(
                 rect.center().y - galley.size().y * 0.5,
             ),
             galley,
-            TEXT_PRIMARY,
+            crate::style::on_section(),
         );
     }
     resp

@@ -20,9 +20,9 @@ pub fn group_frame(
     // frame so the group becomes a transparent grouper.
     let frame = if crate::style::section_show_frame() {
         egui::Frame::new()
-            .fill(glass_fill(crate::style::theme().bg_hover, accent, glass_alpha_group()))
+            .fill(glass_fill(crate::style::subsection_fill(accent), accent, glass_alpha_group()))
             .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_widget))
-            .stroke(egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE))
+            .stroke(egui::Stroke::new(crate::style::theme().border_width, crate::style::widget_border(accent)))
             .inner_margin(egui::Margin::symmetric(8, 6))
     } else {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 6))

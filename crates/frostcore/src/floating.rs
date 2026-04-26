@@ -139,6 +139,12 @@ pub struct PaneBuilder<'a> {
     /// user just expanded doesn't immediately get force-closed when
     /// the new content overshoots the body.
     just_toggled_id: Option<String>,
+    /// Seconds since the pane became visible this open. Section
+    /// order indexes this to compute their staggered fade-in
+    /// progress. `99.0` (or any value > the longest stagger window)
+    /// means the pane is settled and sections paint at full
+    /// opacity; freshly opened panes start at `0.0`.
+    pane_open_elapsed: f32,
 }
 
 struct RenderedSection {
@@ -224,6 +230,25 @@ impl<'a> PaneBuilder<'a> {
             }
         }
 
+        // Per-section staggered fade-in. Each container appears
+        // FULLY (not partially clipped) one after another:
+        //
+        //   section i is "starting"  at  i * STAGGER seconds,
+        //                "settled"   at  i * STAGGER + FADE seconds.
+        //
+        // Opacity ramps `0 → 1` through smoothstep over the fade
+        // window. The body always allocates its full layout so the
+        // pane height stays stable from t=0; only the alpha changes.
+        const STAGGER: f32 = 0.18;
+        const FADE: f32 = 0.45;
+        let section_idx = self.non_dragged_count as f32;
+        let start = section_idx * STAGGER;
+        let raw = ((self.pane_open_elapsed - start) / FADE).clamp(0.0, 1.0);
+        let opacity = raw * raw * (3.0 - 2.0 * raw);
+        let prev_opacity = self.ui.opacity();
+        if opacity < 1.0 {
+            self.ui.multiply_opacity(opacity);
+        }
         let track = crate::widgets::foldable::section_tracked(
             self.ui,
             id_salt,
@@ -233,6 +258,9 @@ impl<'a> PaneBuilder<'a> {
             icon,
             body,
         );
+        // Restore the parent ui's opacity so the next section
+        // computes its own multiplier from a clean baseline.
+        self.ui.set_opacity(prev_opacity);
 
         // Latch drag start (the only response field we still need —
         // everything else is polled from `ctx.input` in finalize so
@@ -345,6 +373,7 @@ impl<'a> PaneBuilder<'a> {
             base_order_this_frame: _,
             cached_rects,
             just_toggled_id,
+            pane_open_elapsed: _,
         } = self;
 
         // Promote the drag-started latch into persistent state.
@@ -555,7 +584,7 @@ fn paint_drag_preview(
             ui.multiply_opacity(0.5);
             egui::Frame::new()
                 .fill(crate::style::glass_fill(
-                    crate::style::BG_2_RAISED,
+                    crate::style::theme().bg_raised,
                     accent,
                     crate::style::glass_alpha_card(),
                 ))
@@ -626,6 +655,14 @@ pub fn floating_window_scoped(
     width_scope: egui::Id,
     add_contents: impl FnOnce(&mut PaneBuilder),
 ) {
+    // Adapt the user's raw accent into the readable lightness band
+    // for the active brightness mode BEFORE threading it through
+    // every section / widget below — this makes the aggressive
+    // light/dark caps actually take effect (otherwise the raw
+    // accent would propagate through `PaneBuilder.accent` and the
+    // adaptation would only affect helpers that read
+    // `active_accent()`).
+    let accent = crate::style::adapt_accent_to_mode(accent, crate::style::theme().is_light);
     let on_right_side = matches!(
         anchor,
         egui::Align2::RIGHT_TOP | egui::Align2::RIGHT_CENTER | egui::Align2::RIGHT_BOTTOM
@@ -687,34 +724,33 @@ pub fn floating_window_scoped(
         _ => egui::vec2(side_inset, EDGE_GAP),
     };
 
-    // Open-animation: title strip appears immediately at full
-    // opacity, body unrolls downward from behind it. Implemented as
-    // a clip rect that grows below the title row over `t` —
-    // achieves the "curtain reveal" effect without resizing the
-    // window itself (which would shift the surrounding layout).
-    // Closing is instant: the host stops calling this function the
-    // moment the menu toggles shut, so the body just vanishes.
-    let anim_t: f32 = {
+    // Open-animation: track elapsed seconds since the pane became
+    // visible. Sections render with a staggered per-section
+    // fade-in (each section pops in fully, one after the other)
+    // instead of a body-wide clip curtain. The elapsed time is
+    // threaded into `PaneBuilder` and consumed by `section_with`.
+    let pane_open_elapsed: f32 = {
         let frame_key = egui::Id::new(("frost_pane_anim_frame", id));
         let state_key = egui::Id::new(("frost_pane_anim_state", id));
         let frame_now = ctx.cumulative_pass_nr();
         let last_frame: u64 = ctx.data(|d| d.get_temp(frame_key)).unwrap_or(0);
-        let mut state: f32 = ctx.data(|d| d.get_temp(state_key)).unwrap_or(1.0);
+        let mut elapsed: f32 = ctx.data(|d| d.get_temp(state_key)).unwrap_or(99.0);
         if last_frame + 1 < frame_now {
-            state = 0.0;
+            elapsed = 0.0;
         }
-        let animation_time = ctx.style().animation_time.max(0.001);
         let dt = ctx.input(|i| i.unstable_dt).max(0.0);
-        state = (state + dt / animation_time).min(1.0);
+        elapsed += dt;
         ctx.data_mut(|d| {
-            d.insert_temp(state_key, state);
+            d.insert_temp(state_key, elapsed);
             d.insert_temp(frame_key, frame_now);
         });
-        if state < 1.0 {
+        // Repaint while any reasonably staged section is still
+        // animating in (~12 sections × 0.18 stagger + 0.45 fade
+        // ≈ 2.6 s — keep some headroom).
+        if elapsed < 3.0 {
             ctx.request_repaint();
         }
-        let s = state.clamp(0.0, 1.0);
-        s * s * (3.0 - 2.0 * s)
+        elapsed
     };
 
     // `pane_fill(accent)` resolves the theme's panel-fill mode —
@@ -736,7 +772,7 @@ pub fn floating_window_scoped(
         inner_margin: egui::Margin { left: 2, right: 2, top: 2, bottom: 2 },
         outer_margin: egui::Margin::ZERO,
         fill: pane_fill_col,
-        stroke: egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE),
+        stroke: egui::Stroke::new(crate::style::theme().border_width, crate::style::widget_border(accent)),
         corner_radius: egui::CornerRadius::same(crate::style::theme().radius_lg),
         shadow: egui::epaint::Shadow {
             offset: [0, crate::style::theme().pane_shadow_y],
@@ -808,7 +844,7 @@ pub fn floating_window_scoped(
                 ui.painter().hline(
                     rect.min.x..=rect.max.x,
                     rect.max.y + 3.0,
-                    egui::Stroke::new(crate::style::theme().border_width, BORDER_SUBTLE),
+                    egui::Stroke::new(crate::style::theme().border_width, crate::style::widget_border(accent)),
                 );
             }
             ui.add_space(6.0);
@@ -823,23 +859,7 @@ pub fn floating_window_scoped(
             let body_left = ui.cursor().min.x;
             let body_w = ui.available_width();
             let body_h = (ui.max_rect().bottom() - body_top).max(0.0);
-
-            // Curtain-reveal animation: clamp the body's clip rect
-            // to a strip starting at `body_top` and growing
-            // downward as `anim_t` ramps 0 → 1. ONLY applied while
-            // the animation is in progress; once `anim_t == 1.0` we
-            // leave the parent ui's natural clip alone so nothing
-            // inside the body is accidentally trimmed.
-            let prev_clip = ui.clip_rect();
-            let animating = anim_t < 1.0;
-            if animating {
-                let reveal_h = body_h * anim_t;
-                let body_clip = egui::Rect::from_min_size(
-                    egui::pos2(body_left, body_top),
-                    egui::vec2(body_w, reveal_h),
-                );
-                ui.set_clip_rect(prev_clip.intersect(body_clip));
-            }
+            let _ = (body_top, body_left, body_w, body_h);
             let body_rect = egui::Rect::from_min_size(
                 egui::pos2(body_left, body_top),
                 egui::vec2(body_w, body_h),
@@ -862,6 +882,7 @@ pub fn floating_window_scoped(
                 base_order_this_frame: Vec::new(),
                 cached_rects,
                 just_toggled_id: None,
+                pane_open_elapsed,
             };
             // Stash the pane's anchor-side so widgets rendered inside
             // (e.g. the maximise chip) can mirror their layout when the
@@ -882,11 +903,6 @@ pub fn floating_window_scoped(
                 }
             });
             pane.finalize();
-            // Restore the parent ui's clip — only meaningful when
-            // the animation overrode it this frame.
-            if animating {
-                ui.set_clip_rect(prev_clip);
-            }
         });
 
     let Some(inner) = inner else { return };

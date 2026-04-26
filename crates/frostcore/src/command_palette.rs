@@ -178,7 +178,7 @@ pub fn command_palette(
                     (bg, text, hint)
                 } else {
                     (
-                        glass_fill(BG_2_RAISED, accent, glass_alpha_card()),
+                        glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_card()),
                         crate::style::on_section(),
                         crate::style::on_section_dim(),
                     )

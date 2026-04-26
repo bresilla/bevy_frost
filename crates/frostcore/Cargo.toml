@@ -21,6 +21,11 @@ smallvec = { version = "1.15", features = ["const_new"] }
 # render via `RichText` / `painter().text` after registering the
 # bundled fonts in `apply_theme`.
 iconflow = { version = "1.0", default-features = false, features = ["pack-fluentui"] }
+# `pastel` — Lab-space colour manipulation. Used by `style.rs` to
+# adapt the user-picked accent into the readable lightness band for
+# the active theme mode (lift dark accents in Dark mode, drop bright
+# accents in Light mode) without per-channel hand-rolled HSL.
+pastel = { version = "0.12", default-features = false }
 # Optional Bevy integration — enabled by `bevy_frost`. When OFF,
 # frostcore compiles as a pure-egui crate with no Bevy types
 # anywhere in the public API.

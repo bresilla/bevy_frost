@@ -239,10 +239,14 @@ pub fn tree_row(
 
     // Indent guides: faint vertical lines at each ancestor depth so
     // the reader can tell which branch a deep row descends from.
+    // Theme-aware base — read `border_subtle` from the active theme
+    // so light variants flip from the dark default to a paler grey
+    // (otherwise indent guides paint near-black on white panels).
+    let guide_base = crate::style::theme().border_subtle;
     let guide_color = egui::Color32::from_rgba_unmultiplied(
-        BORDER_SUBTLE.r(),
-        BORDER_SUBTLE.g(),
-        BORDER_SUBTLE.b(),
+        guide_base.r(),
+        guide_base.g(),
+        guide_base.b(),
         90,
     );
     let mut guides = Vec::with_capacity(depth as usize);

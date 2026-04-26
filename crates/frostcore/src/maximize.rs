@@ -316,7 +316,7 @@ fn paint_ribbon_style_chip(
     } else {
         glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window())
     };
-    let stroke = if active { accent } else { BORDER_SUBTLE };
+    let stroke = if active { accent } else { crate::style::widget_border(accent) };
     painter.rect(
         rect,
         egui::CornerRadius::same(crate::style::theme().radius_md),

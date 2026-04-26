@@ -366,21 +366,12 @@ pub(crate) fn section_tracked<'i>(
                         title_pos_x,
                         title_strip_rect.center().y - title_size.y * 0.5,
                     );
-                    // Double-paint with a half-pixel horizontal offset
-                    // when unfolded to fake a heavier / bolder weight.
-                    // egui's `TextFormat` has no `bold` field, so this
-                    // is the standard trick: render the same galley
-                    // twice slightly offset, which thickens every
-                    // stroke without needing a separate bold font in
-                    // the FontDefinitions.
-                    if captured_openness >= 0.5 {
-                        let bold_strength = ((captured_openness - 0.5) * 2.0).clamp(0.0, 1.0);
-                        ui.painter().galley(
-                            title_pos + egui::vec2(0.6 * bold_strength, 0.0),
-                            title_galley.clone(),
-                            title_col,
-                        );
-                    }
+                    // Single-paint title galley. The previous
+                    // double-paint "fake bold" trick (offset by
+                    // 0.6 px) produced a pixelated halo of mismatched
+                    // anti-aliasing on bright accent banners — visible
+                    // as a faint dark fringe around white text on
+                    // yellow / cyan accents. Removed.
                     ui.painter().galley(title_pos, title_galley, title_col);
 
                     // Floating right-edge icon. Sizes inverted from
@@ -696,21 +687,28 @@ pub(crate) fn section_tracked<'i>(
         let rx = snap_high(r.max.x);
         let by = snap_high(r.max.y);
         let len = tick_len;
-        // Bottom corners flip to the contrast colour when the banner
-        // has grown down to cover them (folded / mid-animation).
-        // When the section is fully open the banner only covers the
-        // top, so the bottom corners sit on the dark card and stay
-        // accent-coloured — exactly what the user described.
-        let accent_col =
-            egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220);
+        // Top corners sit on the accent title banner (when filled)
+        // → contrast text. Bottom corners sit on the section card
+        // body → accent colour. Alpha is full (255) in Light mode
+        // so the accent reads strongly on the pale panel; Dark mode
+        // keeps the original 220 so the strokes stay just-shy of
+        // shouting on a dark surface.
+        let tick_alpha = if crate::style::theme().is_light { 255 } else { 220 };
+        let accent_col = egui::Color32::from_rgba_unmultiplied(
+            accent.r(),
+            accent.g(),
+            accent.b(),
+            tick_alpha,
+        );
         let contrast_col = crate::style::contrast_text_for(accent);
         let top_col = if crate::style::theme().title_strip_filled {
             contrast_col
         } else {
             accent_col
         };
-        // The bottom corners' Y is `by`; if the banner extends past
-        // that Y, the corners are sitting on the banner.
+        // Bottom corners follow whichever surface they're sitting
+        // on: under the banner (folded / mid-animation) → contrast
+        // colour; on the dark/light card body (unfolded) → accent.
         let bot_col = if crate::style::theme().title_strip_filled
             && banner_max_y >= by - 0.5
         {

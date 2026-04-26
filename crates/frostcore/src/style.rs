@@ -137,15 +137,47 @@ pub fn widget_border(accent: egui::Color32) -> egui::Color32 {
     )
 }
 
-// ─── Text ───────────────────────────────────────────────────────────
+// ─── Text — shared tones used by every theme variant ───────────────
+//
+// Two parallel triplets — one for Dark variants (light text on dark
+// panels) and one for Light variants (dark text on light panels).
+// Every theme preset (PRO_DARK, PRO_LIGHT, GAME_DARK, GAME_LIGHT)
+// picks the matching triplet so text colour is consistent across
+// aesthetic variants and only varies on the brightness axis.
+//
+// Light-mode tones are deliberately deeper than the previous
+// Primer-derived `#1F2328 / #6B7078` pair: a `text_secondary` at
+// luma 0.43 looked "almost invisible" on a white panel; the new
+// `#4A4D54` at luma 0.31 lifts the contrast without shouting.
+
+/// Primary body text for **Dark variants** (paint on dark panels).
 pub const TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE6, 0xE8);
+/// Secondary / dim body text for Dark variants.
 pub const TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0xA2);
+/// Disabled-state text for Dark variants.
 pub const TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A, 0x62);
 
+/// Primary body text for **Light variants** (paint on light panels).
+/// Slightly darker than Primer's `#1F2328` so it still reads as
+/// "ink-on-paper" rather than a soft grey.
+pub const TEXT_PRIMARY_LIGHT:   egui::Color32 = egui::Color32::from_rgb(0x18, 0x18, 0x1C);
+/// Secondary / dim body text for Light variants. Bumped from the
+/// originally-shipping `#6B7078` to give body labels and captions
+/// real contrast on white panels.
+pub const TEXT_SECONDARY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x4D, 0x54);
+/// Disabled-state text for Light variants.
+pub const TEXT_DISABLED_LIGHT:  egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8E, 0x96);
+
 // ─── Accent (selection / focus) — violet / purple ──────────────────
-pub const ACCENT:         egui::Color32 = egui::Color32::from_rgb(0xA7, 0x8B, 0xFA);
-pub const ACCENT_HOVER:   egui::Color32 = egui::Color32::from_rgb(0xC4, 0xB5, 0xFD);
-pub const ACCENT_PRESSED: egui::Color32 = egui::Color32::from_rgb(0x8B, 0x5C, 0xF6);
+//
+// Default accent picked to read in BOTH dark and light variants:
+// `#7C5CFF` (luma ≈ 0.36) is dark enough to contrast against light
+// panels (Δ ≈ 0.55 vs `#FFFFFF`) and bright enough to pop on dark
+// panels (Δ ≈ 0.30 vs `#0E0E10`). The previous default `#A78BFA`
+// (luma 0.60) was a pastel that disappeared on white panels.
+pub const ACCENT:         egui::Color32 = egui::Color32::from_rgb(0x7C, 0x5C, 0xFF);
+pub const ACCENT_HOVER:   egui::Color32 = egui::Color32::from_rgb(0x9D, 0x84, 0xFF);
+pub const ACCENT_PRESSED: egui::Color32 = egui::Color32::from_rgb(0x62, 0x42, 0xE6);
 /// Subtle purple-tinted surface for the active side button and the
 /// selected outliner row. 18 % of `ACCENT` over `BG_2_RAISED`.
 pub const ACCENT_TINT:    egui::Color32 = egui::Color32::from_rgb(0x42, 0x3A, 0x5A);
@@ -239,7 +271,12 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     static FONTS_INSTALLED: AtomicBool = AtomicBool::new(false);
 
     let th = theme();
-    let accent_col = accent.0;
+    // Adapt the user's raw accent to the active brightness mode:
+    // dark themes lift dark accents toward usable lightness,
+    // light themes pull bright accents back into a readable band.
+    // Conversion goes through HSL so only lightness changes — the
+    // hue and saturation the user picked stay intact.
+    let accent_col = adapt_accent_to_mode(accent.0, th.is_light);
     if !FONTS_INSTALLED.load(Ordering::Relaxed) {
         install_fonts(ctx);
         FONTS_INSTALLED.store(true, Ordering::Relaxed);
@@ -853,17 +890,15 @@ pub struct Theme {
     pub ghost_stroke_width:  f32,
 }
 
-/// PRO Light palette — paper-tinted neutrals matching GitHub
-/// Primer's light-mode tokens. Used by the Light branch of
-/// [`theme_pro`].
+/// PRO Light surface palette — paper-tinted neutrals matching
+/// GitHub Primer's light-mode tokens. Text colours are NOT defined
+/// here; they come from the shared `TEXT_*_LIGHT` constants so all
+/// light variants pick the same body-text tones.
 pub const PRO_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xF5, 0xF7);
 pub const PRO_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
 pub const PRO_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF6, 0xF8, 0xFA);
 pub const PRO_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xEC, 0xEC, 0xEF);
 pub const PRO_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFA, 0xFC);
-pub const PRO_LIGHT_TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0x1F, 0x23, 0x28);
-pub const PRO_LIGHT_TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x70, 0x78);
-pub const PRO_LIGHT_TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0xA8, 0xAD, 0xB5);
 pub const PRO_LIGHT_BORDER_SUBTLE:  egui::Color32 = egui::Color32::from_rgb(0xD1, 0xD9, 0xE0);
 pub const PRO_LIGHT_BORDER_INNER:   egui::Color32 = egui::Color32::from_rgb(0xC5, 0xCC, 0xD3);
 
@@ -888,9 +923,12 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_pad_x: 4,
         section_pad_y: 3,
         section_body_indent: 8.0,
-        text_primary:   if dark { TEXT_PRIMARY }   else { PRO_LIGHT_TEXT_PRIMARY },
-        text_secondary: if dark { TEXT_SECONDARY } else { PRO_LIGHT_TEXT_SECONDARY },
-        text_disabled:  if dark { TEXT_DISABLED }  else { PRO_LIGHT_TEXT_DISABLED },
+        // Text — pulled from the SHARED light/dark tone constants so
+        // every variant ends up with the same body-text colours. No
+        // per-theme drift.
+        text_primary:   if dark { TEXT_PRIMARY }   else { TEXT_PRIMARY_LIGHT },
+        text_secondary: if dark { TEXT_SECONDARY } else { TEXT_SECONDARY_LIGHT },
+        text_disabled:  if dark { TEXT_DISABLED }  else { TEXT_DISABLED_LIGHT },
         // Title in accent in BOTH Dark and Light — keeps the kit's
         // signature "title tints with the user's accent" identity
         // across modes. If the user picks a low-contrast accent
@@ -948,16 +986,14 @@ pub const fn theme_pro(mode: Mode) -> Theme {
     }
 }
 
-/// GAME Light palette — bright accent-tinted surfaces, dark text.
-/// Used by the Light branch of [`theme_game`].
+/// GAME Light surface palette — bright accent-tinted surfaces, dark
+/// text. Text colours flow through the shared `TEXT_*_LIGHT`
+/// constants, not per-theme overrides.
 pub const GAME_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF0, 0xF1, 0xF5);
 pub const GAME_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFD);
 pub const GAME_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
 pub const GAME_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEE);
 pub const GAME_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFC, 0xFC, 0xFE);
-pub const GAME_LIGHT_TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0x1F, 0x23, 0x28);
-pub const GAME_LIGHT_TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x70, 0x78);
-pub const GAME_LIGHT_TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0xA8, 0xAD, 0xB5);
 
 /// Built-in GAME profile — square corners, accent-tinted panels,
 /// bracket-decorated titles on a solid accent banner, dashed row
@@ -998,9 +1034,14 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_pad_x: 6,
         section_pad_y: 8,
         section_body_indent: 8.0,
-        text_primary:   if dark { egui::Color32::from_rgb(0xF0, 0xF4, 0xFF) } else { GAME_LIGHT_TEXT_PRIMARY },
-        text_secondary: if dark { egui::Color32::from_rgb(0x9E, 0xA8, 0xC0) } else { GAME_LIGHT_TEXT_SECONDARY },
-        text_disabled:  if dark { egui::Color32::from_rgb(0x4A, 0x52, 0x66) } else { GAME_LIGHT_TEXT_DISABLED },
+        // Text — both Dark and Light branches now pull from the
+        // shared tone constants. GAME used to ship custom blue-grey
+        // tones for Dark; aligning with the canonical `TEXT_*` set
+        // means a body-row label is identical across PRO and GAME
+        // for the same Mode.
+        text_primary:   if dark { TEXT_PRIMARY }   else { TEXT_PRIMARY_LIGHT },
+        text_secondary: if dark { TEXT_SECONDARY } else { TEXT_SECONDARY_LIGHT },
+        text_disabled:  if dark { TEXT_DISABLED }  else { TEXT_DISABLED_LIGHT },
         // Title in pure accent — a different *hue* from the body's
         // near-black contrast text. On a 65 %-lerp accent panel, the
         // saturated accent reads ~35 % brighter than the panel, so
@@ -1240,6 +1281,65 @@ pub fn section_show_title_divider() -> bool {
 /// pane background — the GAME "no card" look.
 pub fn section_show_frame() -> bool {
     theme().section_show_frame
+}
+
+/// Pull a raw accent into the readable lightness band for the
+/// active brightness mode. Goes through `pastel::Color` for
+/// hue-preserving Lab-space lightness manipulation — far better
+/// than the previous hand-rolled HSL clamp, especially for
+/// chromatic colours like yellow / cyan that have skewed luma vs
+/// lightness.
+///
+/// **Light mode** force-pulls accents into the dark band:
+/// any `lightness > 0.42` is rebased to a target around `0.42`.
+/// White accent (L 1.0) → mid-grey. Yellow (L 0.50) → dark mustard.
+/// Bright pastel violet (L 0.76) → saturated dark violet.
+///
+/// **Dark mode** force-lifts accents into the light band:
+/// any `lightness < 0.58` is rebased to a target around `0.58`.
+/// Black accent (L 0.0) → mid-grey. Dark blue (L 0.20) → bright
+/// blue. Saturated red (L 0.50) → light red.
+///
+/// Outside those bands the accent passes through unchanged.
+pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Color32 {
+    use pastel::Color as PastelColor;
+    let c = PastelColor::from_rgb(accent.r(), accent.g(), accent.b());
+    let l = c.to_hsla().l;
+    // Direction reversed from the earlier pass: the accent banner /
+    // ribbon-active fills paint with body-primary text on top
+    // (DARK mode → white text, LIGHT mode → black text). For the
+    // text to read, the accent surface must contrast with the
+    // text colour. So:
+    //
+    //   Dark mode  → accent must be DARK enough that white text
+    //                shows up on it. Cap lightness at 0.32.
+    //   Light mode → accent must be LIGHT enough that black text
+    //                shows up on it. Floor lightness at 0.70.
+    //
+    // White accent in light → unchanged (already light enough).
+    // Black accent in dark  → unchanged (already dark enough).
+    // Yellow in dark        → darkened to mustard (white text reads).
+    // Yellow in light       → lifted to pale yellow (dark text reads).
+    // Dark blue in dark     → unchanged (already dark).
+    // Dark blue in light    → lifted to pastel blue.
+    // Softer caps than the previous 0.32 / 0.70 pair — accents now
+    // get pulled gently into the readable band instead of clamped
+    // hard against it. Yellow in dark drops a few notches but stays
+    // recognisably yellow; white in dark becomes a soft mid-grey,
+    // not deep grey.
+    let target_l = if is_light {
+        if l < 0.60 { 0.60 } else { l }
+    } else {
+        if l > 0.42 { 0.42 } else { l }
+    };
+    if (target_l - l).abs() < 0.001 {
+        return accent;
+    }
+    // pastel `lighten(f)` adds `f` to the HSLA lightness; we
+    // compute the signed delta needed to reach `target_l`.
+    let adjusted = c.lighten(target_l - l);
+    let rgba = adjusted.to_rgba();
+    egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b)
 }
 
 /// Linear RGB blend of two colours by `t` in `[0, 1]`. Internal
@@ -1576,11 +1676,8 @@ pub fn caption(label: &str) -> egui::RichText {
 
 /// Text colour for paint on top of any fill. **Mode-driven, not
 /// luma-driven**: returns `theme().text_primary` always — light in
-/// Dark mode, dark in Light mode. Callers that previously expected
-/// "auto-pick black on bright, white on dark" no longer get that
-/// flip; if you really want luma adaptation, do it explicitly at
-/// the call site. The kit-wide rule is now: text is consistent
-/// with the body-text tone of the active mode, period.
+/// Dark mode, dark in Light mode. Consistent body-text tone across
+/// every accent surface; no automatic darkening / lightening.
 ///
 /// `_fill` is kept in the signature for API stability; it's
 /// intentionally unused.

@@ -158,21 +158,28 @@ pub(crate) fn paint_ribbon_button(
         return;
     }
 
-    // PRO recipe — restored unchanged from the original glass look.
+    // PRO recipe — theme-aware: idle uses the active panel fill,
+    // hover lifts to bg_raised, active blends 25 % accent into the
+    // raised tier. Replacing the legacy hard-coded `BG_*` constants
+    // so light variants stop painting near-black ribbon buttons on
+    // a white window.
+    let bg_raised = theme.bg_raised;
+    let bg_idle = theme.bg_panel;
     let bg = if is_active {
         let blend = |a: u8, b: u8| ((a as f32) * 0.75 + (b as f32) * 0.25).round() as u8;
         let tinted = egui::Color32::from_rgb(
-            blend(BG_2_RAISED.r(), accent.r()),
-            blend(BG_2_RAISED.g(), accent.g()),
-            blend(BG_2_RAISED.b(), accent.b()),
+            blend(bg_raised.r(), accent.r()),
+            blend(bg_raised.g(), accent.g()),
+            blend(bg_raised.b(), accent.b()),
         );
         glass_fill(tinted, accent, glass_alpha_window())
     } else if hovered {
-        glass_fill(BG_2_RAISED, accent, glass_alpha_window())
+        glass_fill(bg_raised, accent, glass_alpha_window())
     } else {
-        glass_fill(BG_1_PANEL, accent, glass_alpha_window())
+        glass_fill(bg_idle, accent, glass_alpha_window())
     };
-    let stroke = if is_active { accent } else { BORDER_SUBTLE };
+    let stroke = if is_active { accent } else { crate::style::widget_border(accent) };
+    let _ = (BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE);
     painter.rect(
         rect,
         radius,
