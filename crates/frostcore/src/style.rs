@@ -697,6 +697,15 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // 0.15 s; GAME a deliberate 0.35 s for the cinematic feel.
     style.animation_time = th.section_animation_time;
 
+    // Performance — parallel tessellation. egui's painter→mesh
+    // pass runs on rayon when this is on, splitting large shape
+    // batches across CPU cores. Defaults to true in egui 0.33
+    // already; we set it explicitly so a host can't accidentally
+    // disable it elsewhere and quietly halve our render speed.
+    ctx.tessellation_options_mut(|opts| {
+        opts.parallel_tessellation = true;
+    });
+
     ctx.set_style(style);
 }
 
@@ -772,19 +781,47 @@ pub fn body_accent(accent: egui::Color32) -> egui::Color32 {
 /// saturation are touched, so the user's hue is preserved exactly
 /// (yellow stays yellow, red stays red, etc.).
 pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
+    // Single-slot memo: if the (accent, is_light) input matches the
+    // last call, skip the HSL roundtrip and return the cached
+    // output. Frostcore's section bracket paint calls this on
+    // every section every frame; with N sections at 60 fps that's
+    // N × 60 pastel conversions / second otherwise.
+    static CACHE: std::sync::OnceLock<std::sync::RwLock<Option<((u32, bool), u32)>>> =
+        std::sync::OnceLock::new();
+    fn pack(c: egui::Color32) -> u32 {
+        ((c.r() as u32) << 24)
+            | ((c.g() as u32) << 16)
+            | ((c.b() as u32) << 8)
+            | (c.a() as u32)
+    }
+    fn unpack(p: u32) -> egui::Color32 {
+        egui::Color32::from_rgba_premultiplied(
+            ((p >> 24) & 0xff) as u8,
+            ((p >> 16) & 0xff) as u8,
+            ((p >> 8) & 0xff) as u8,
+            (p & 0xff) as u8,
+        )
+    }
+    let is_light = theme().is_light;
+    let key = (pack(accent), is_light);
+    let lock = CACHE.get_or_init(|| std::sync::RwLock::new(None));
+    if let Some((k, v)) = *lock.read().unwrap() {
+        if k == key {
+            return unpack(v);
+        }
+    }
+
     use pastel::Color as PastelColor;
     let c = PastelColor::from_rgb(accent.r(), accent.g(), accent.b());
     let hsl = c.to_hsla();
-    // Target lightness — 0.88 on Dark themes (almost white), 0.18
-    // on Light themes (almost black). We pull 70 % of the way from
-    // the accent's current L toward the target so chromatic
-    // accents (yellow, lime) keep some hue character.
-    let target_l = if theme().is_light { 0.18 } else { 0.88 };
+    let target_l = if is_light { 0.18 } else { 0.88 };
     let new_l = hsl.l + (target_l - hsl.l) * 0.70;
     let new_s = (hsl.s * 1.15).min(1.0);
     let adjusted = PastelColor::from_hsla(hsl.h, new_s, new_l, 1.0);
     let rgba = adjusted.to_rgba();
-    egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b)
+    let out = egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b);
+    *lock.write().unwrap() = Some((key, pack(out)));
+    out
 }
 
 pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
