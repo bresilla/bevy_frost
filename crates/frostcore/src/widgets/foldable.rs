@@ -522,8 +522,14 @@ pub(crate) fn section_tracked<'i>(
                         };
                         let rule_x_end = title_strip_rect.max.x - 4.0 - icon_reserve;
                         if rule_x_end > rule_x_start + 4.0 {
-                            let alpha = crate::style::theme().row_separator_alpha.max(50);
-                            let base = crate::style::theme().border_subtle;
+                            // Section title trailing rule — same
+                            // recipe as every other separator in the
+                            // kit: `outline_base` (mode-aware) +
+                            // `row_separator_alpha`. Was using raw
+                            // `border_subtle` with a `.max(50)` floor
+                            // that overrode the theme's intent.
+                            let alpha = crate::style::theme().row_separator_alpha;
+                            let base = crate::style::outline_base();
                             let line_col = egui::Color32::from_rgba_unmultiplied(
                                 base.r(),
                                 base.g(),
@@ -656,7 +662,11 @@ pub(crate) fn section_tracked<'i>(
     // so the line lands fully inside the section card (`max.y -
     // inset - 0.5` keeps the 1 px stroke crisp and inside the rect).
     if crate::style::theme().section_bottom_rule {
-        let alpha = crate::style::theme().row_separator_alpha.max(50);
+        // Section bottom rule keeps the accent colour (intentional —
+        // signals "section closes here" with the user's accent), but
+        // drops the `.max(50)` alpha floor so it follows
+        // `row_separator_alpha` like every other dashed line.
+        let alpha = crate::style::theme().row_separator_alpha;
         let col = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha);
         let stroke = egui::Stroke::new(1.0, col);
         let inset = crate::style::theme().section_corner_ticks_inset;

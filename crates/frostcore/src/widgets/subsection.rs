@@ -30,11 +30,6 @@ use super::shared::{flush_pending_separator, widget_separator};
 /// column — reinforces the "each layer goes narrower" look.
 pub const SUBSECTION_BODY_INDENT: f32 = 6.0;
 
-/// Alpha applied on top of the shared [`widget_border`] for nested
-/// sub-sections. Lower than 255 so it doesn't compete with the
-/// parent section's stroke, but high enough to be clearly visible.
-const BORDER_ALPHA: u8 = 160;
-
 /// Nested collapsible container.
 pub fn subsection(
     ui: &mut egui::Ui,
@@ -56,15 +51,12 @@ pub fn subsection(
         + crate::style::theme().border_width * 2.0;
     let inner_w = (full_w - outer_inset).max(0.0);
 
-    // Same accent-tinted recipe as the parent section's stroke,
-    // re-alpha'd so nested frames read softer.
-    let shared = widget_border(accent);
-    let border = egui::Color32::from_rgba_unmultiplied(
-        shared.r(),
-        shared.g(),
-        shared.b(),
-        BORDER_ALPHA,
-    );
+    // Same border every other widget in the kit uses — kit-wide
+    // `widget_border` flows through `outline_base` + `border_alpha`,
+    // already toned for the active theme. The previous hardcoded
+    // α 160 override no longer makes sense now that `border_alpha`
+    // is mode-tuned and lower than 160 on Dark.
+    let border = widget_border(accent);
 
     // Honour the active theme: PRO paints the nested frame
     // (slightly brighter glass over the parent card); GAME drops the

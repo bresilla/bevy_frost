@@ -810,20 +810,21 @@ pub fn floating_window_scoped(
             // on a solid card while the body's section gaps remain
             // see-through. Card colour = the same `pane_fill` the
             // egui frame *would* have painted.
-            if !crate::style::theme().pane_fill_visible {
+            let stripes_on = crate::style::theme().pane_title_stripes;
+            // When stripes are on, the strip background is painted
+            // entirely by `paint_caution_stripes` (neutral base +
+            // alternating solid / translucent accent slabs). Skip
+            // the regular `pane_fill` paint here so the translucent
+            // slabs blend over the neutral base instead of accent —
+            // otherwise transparency over an already-accent surface
+            // produces no visible alternation.
+            if !crate::style::theme().pane_fill_visible && !stripes_on {
                 ui.painter().rect_filled(
                     rect,
                     egui::CornerRadius::same(crate::style::theme().radius_lg),
                     crate::style::pane_fill(accent),
                 );
             }
-            // GAME themes paint "do-not-cross" diagonal stripes
-            // (accent + panel-neutral) behind the title text — see
-            // `Theme::pane_title_stripes`. Painted AFTER the pane
-            // fill above so the stripes sit on top of the card, and
-            // BEFORE the title text so the glyphs land on top of the
-            // banded background.
-            let stripes_on = crate::style::theme().pane_title_stripes;
             if stripes_on {
                 crate::style::paint_caution_stripes(ui.painter(), rect, accent);
             }

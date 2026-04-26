@@ -14,11 +14,20 @@
 #![allow(dead_code)]
 
 // ─── Neutrals ───────────────────────────────────────────────────────
-pub const BG_0_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x1A, 0x1A, 0x1C);
-pub const BG_1_PANEL:  egui::Color32 = egui::Color32::from_rgb(0x24, 0x24, 0x28);
-pub const BG_2_RAISED: egui::Color32 = egui::Color32::from_rgb(0x2D, 0x2D, 0x32);
-pub const BG_3_HOVER:  egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x3F);
-pub const BG_4_INPUT:  egui::Color32 = egui::Color32::from_rgb(0x18, 0x18, 0x1A);
+// PRO Dark palette. Wider tier deltas than the previous pass — each
+// "step up" or "step down" from the panel is now ~20+ units instead
+// of ~10, so sections, hover lifts, and inputs read as obviously
+// different surfaces instead of subtle adjacencies.
+//
+// Window sits ~14 below panel, raised sits ~28 above, hover sits
+// ~50 above, input ~16 below. With borders / separators dialed
+// down on Dark, hierarchy now comes from the surface tier alone,
+// which needs the colour delta to do the work.
+pub const BG_0_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x06, 0x08, 0x0E);
+pub const BG_1_PANEL:  egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1D);
+pub const BG_2_RAISED: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x30, 0x3D);
+pub const BG_3_HOVER:  egui::Color32 = egui::Color32::from_rgb(0x40, 0x46, 0x55);
+pub const BG_4_INPUT:  egui::Color32 = egui::Color32::from_rgb(0x06, 0x08, 0x0C);
 
 // ─── Glass opacity (slider-driven) ──────────────────────────────────
 //
@@ -57,11 +66,21 @@ pub fn set_glass_opacity(value: u8) {
     GLASS_OPACITY.store(value.clamp(1, 100), Ordering::Relaxed);
 }
 
-/// Map the slider's `1..=100` onto a window opacity fraction in
-/// `0.80..=1.00`. `1 → 0.80`, `100 → 1.00`, linear in between.
+/// Map the slider's `1..=100` onto a window opacity fraction.
+/// Mode-aware floor:
+///
+/// * Dark: `0.55..=1.00`. A dark panel at 30 % over a brighter scene
+///   reads as nearly missing — too aggressive. 55 % keeps the
+///   panel readable while still giving the slider perceptual room.
+/// * Light: `0.10..=1.00`. A near-white panel needs to drop much
+///   lower before the scene shows through, so the floor goes deeper
+///   on Light to match the *perceived* see-through Dark gets at 55 %.
+///
+/// `1 → floor`, `100 → 1.00`, linear in between.
 fn opacity_frac() -> f32 {
+    let floor = if theme().is_light { 0.10 } else { 0.55 };
     let t = (GLASS_OPACITY.load(Ordering::Relaxed).max(1) as f32 - 1.0) / 99.0;
-    0.80 + 0.20 * t
+    floor + (1.0 - floor) * t
 }
 
 pub fn glass_alpha_window() -> u8 {
@@ -118,21 +137,49 @@ pub fn glass_fill(base: egui::Color32, accent: egui::Color32, alpha: u8) -> egui
 pub const BORDER_SUBTLE: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x0E, 0x10);
 pub const BORDER_INNER:  egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x42);
 
+/// Single shared base colour for **every** outline + separator in the
+/// kit (widget borders, row hairlines, dividers, palette rules). The
+/// active theme's `border_subtle` is pulled 50 % toward the OPPOSITE
+/// luma extreme of the panel — black-leaning on Light themes, white-
+/// leaning on Dark themes — so the resulting line always reads against
+/// whatever brightness the panel sits at.
+///
+/// Without this lerp, PRO Dark paints a near-black `BORDER_SUBTLE` on
+/// a dark panel (low contrast → invisible), and PRO Light paints a
+/// pale-grey on a white panel (also invisible). Centralising the
+/// "luma flip" here means every consumer (`widget_border`,
+/// `paint_hairline`, `divider`, `thin_divider`) gets a contrasting
+/// base for free; each consumer just chooses its own alpha.
+pub fn outline_base() -> egui::Color32 {
+    let th = theme();
+    let target = if th.is_light {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    };
+    let blend = |a: u8, b: u8| ((a as f32) * 0.5 + (b as f32) * 0.5).round() as u8;
+    egui::Color32::from_rgb(
+        blend(th.border_subtle.r(), target.r()),
+        blend(th.border_subtle.g(), target.g()),
+        blend(th.border_subtle.b(), target.b()),
+    )
+}
+
 /// The canonical border colour used by **every** frost surface —
 /// foldable cards, sub-section frames, inputs, toggles, buttons.
-/// The base colour, accent-tint fraction, and alpha all come from
-/// the active [`Theme`]; PRO blends 6 % of accent over a near-black
-/// at α 230, GAME pushes alpha to 0 so no border is drawn at all.
+/// Built on top of [`outline_base`]: starts with the mode-aware base,
+/// blends in `border_accent_tint` of accent (PRO 6 %, GAME 0 %),
+/// applies `border_alpha`. GAME themes pin `border_alpha = 0` so no
+/// border paints; PRO themes use a high alpha so the line reads.
 pub fn widget_border(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
+    let base = outline_base();
     let t = th.border_accent_tint;
-    let blend = |base: u8, acc: u8| {
-        ((base as f32) * (1.0 - t) + (acc as f32) * t).round() as u8
-    };
+    let blend = |b: u8, a: u8| ((b as f32) * (1.0 - t) + (a as f32) * t).round() as u8;
     egui::Color32::from_rgba_unmultiplied(
-        blend(th.border_subtle.r(), accent.r()),
-        blend(th.border_subtle.g(), accent.g()),
-        blend(th.border_subtle.b(), accent.b()),
+        blend(base.r(), accent.r()),
+        blend(base.g(), accent.g()),
+        blend(base.b(), accent.b()),
         th.border_alpha,
     )
 }
@@ -1170,16 +1217,29 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         border_inner:       if dark { BORDER_INNER }  else { PRO_LIGHT_BORDER_INNER  },
         // Light borders are paler hairlines — full 230 alpha looks
         // too heavy on white; Primer / Linear settle around α 140.
-        border_alpha:       if dark { 230 } else { 140 },
+        // Dark gets a softer alpha than Light — a light-grey
+        // outline on a dark panel reads stronger to the eye than a
+        // dark-grey outline on a white panel at the same alpha.
+        // Tuned further down on Dark so widget borders barely
+        // whisper instead of competing with the surface tier.
+        border_alpha:       if dark { 70 } else { 160 },
         border_accent_tint: 0.06,
         border_width:       1.0,
         // Light needs a stronger alpha than Dark — α 64 of an already
         // pale `PRO_LIGHT_BORDER_SUBTLE` over a near-white panel
         // collapses the separator into invisibility. Bumping to 110
         // gives the same visual weight Dark has at 96.
-        row_separator_alpha: if dark { 96 } else { 110 },
-        glass_card_factor:  0.76,
-        glass_group_factor: 0.57,
+        // Same Dark < Light asymmetry as `border_alpha`. Dark gets
+        // pulled even further down so row separators sit just shy of
+        // disappearing — present as rhythm, not as a drawn line.
+        row_separator_alpha: if dark { 35 } else { 80 },
+        // Was 0.76 / 0.57 — too transparent to keep the panel/section
+        // tier delta visible. Bumped so sections paint opaque enough
+        // for the new bg_panel → bg_raised delta to actually read.
+        // Hierarchy first; the glass effect is still preserved by the
+        // outer window opacity slider.
+        glass_card_factor:  0.92,
+        glass_group_factor: 0.78,
         glass_accent_tint:  0.03,
         radius_widget:  radius::WIDGET,
         radius_compact: radius::COMPACT,
@@ -1337,7 +1397,10 @@ pub const fn theme_game(mode: Mode) -> Theme {
         border_width:       0.0,
         // Light needs a stronger separator alpha to compensate for
         // the lower contrast against a pale panel.
-        row_separator_alpha: if dark { 60 } else { 110 },
+        // Same Dark < Light asymmetry as PRO. GAME's dashed pattern
+        // accentuates each segment, so Dark can stay very low and
+        // still read as a rhythm.
+        row_separator_alpha: if dark { 35 } else { 80 },
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,
@@ -1444,12 +1507,7 @@ pub fn paint_caution_stripes(
     // the gaps (untouched). The alternation reads as
     // "accent-tinted band / pane band", same colour family on both
     // sides, no harsh second colour.
-    let solid = egui::Color32::from_rgba_unmultiplied(
-        accent.r(),
-        accent.g(),
-        accent.b(),
-        255,
-    );
+    let solid = accent;
     let translucent = egui::Color32::from_rgba_unmultiplied(
         accent.r(),
         accent.g(),
@@ -1460,16 +1518,29 @@ pub fn paint_caution_stripes(
     // Width of a single diagonal slab. Pattern period = STRIPE_W*2
     // (one solid + one translucent).
     const STRIPE_W: f32 = 12.0;
+    // Logical points / second the pattern slides along the strip.
+    // Slow enough to read as a deliberate "live banner" rather than
+    // a frantic scroll.
+    const SCROLL_SPEED: f32 = 18.0;
+
+    let ctx = painter.ctx();
+    let t = ctx.input(|i| i.time) as f32;
+    let period = STRIPE_W * 2.0;
+    // Modulo with manual rem_euclid so a hot reload that drops time
+    // backwards doesn't produce a negative offset.
+    let raw = (t * SCROLL_SPEED) % period;
+    let x_offset = if raw < 0.0 { raw + period } else { raw };
+    // Stripes are visible — keep animating. Without this egui only
+    // repaints on input events and the strip would appear frozen.
+    ctx.request_repaint();
 
     let clipped = painter.clone().with_clip_rect(rect);
 
     let h = rect.height();
-    // Every slab paints; even indices use full-opacity accent, odd
-    // indices use 80%-transparent accent. Both colours are the
-    // same accent so the banner reads as one hue family with two
-    // brightness tiers, the dimmer tier letting the pane below
-    // bleed through.
-    let mut x = -h;
+    // Walk `x` from `-h - period` (one extra period to the left so
+    // the wrapped offset still covers the left edge cleanly) up to
+    // the rect's width.
+    let mut x = -h - period - x_offset;
     let mut idx = 0;
     while x < rect.width() {
         let x0 = rect.min.x + x;
@@ -1941,17 +2012,22 @@ pub fn divider(ui: &mut egui::Ui) {
         egui::vec2(full_width, 1.0),
         egui::Sense::empty(),
     );
+    let th = theme();
+    let base = outline_base();
+    let color = egui::Color32::from_rgba_unmultiplied(
+        base.r(), base.g(), base.b(), th.border_alpha,
+    );
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],
-        egui::Stroke::new(bw, BORDER_SUBTLE),
+        egui::Stroke::new(bw, color),
     );
 }
 
-/// Title divider — same shape as [`divider`], painted hard enough to
-/// clearly read as "the container title ends here". Used under
-/// foldable section headers so the title block stands apart from the
-/// body content. Matches the opacity of the panel's main title rule
-/// so every title-to-body transition in the UI reads the same way.
+/// Title divider — same shape as [`divider`]. Used under foldable
+/// section headers so the title block stands apart from the body
+/// content. Routes through `outline_base` + `border_alpha` so it
+/// matches every other border / outline in the kit (was hardcoded
+/// to α 220, far stronger than the kit's actual border weight).
 pub fn thin_divider(ui: &mut egui::Ui) {
     let bw = theme().border_width;
     if bw <= 0.0 {
@@ -1962,11 +2038,10 @@ pub fn thin_divider(ui: &mut egui::Ui) {
         egui::vec2(full_width, 1.0),
         egui::Sense::empty(),
     );
+    let th = theme();
+    let base = outline_base();
     let color = egui::Color32::from_rgba_unmultiplied(
-        BORDER_SUBTLE.r(),
-        BORDER_SUBTLE.g(),
-        BORDER_SUBTLE.b(),
-        220,
+        base.r(), base.g(), base.b(), th.border_alpha,
     );
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],

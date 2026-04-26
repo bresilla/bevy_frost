@@ -221,8 +221,13 @@ pub fn command_palette(
                         egui::vec2(w, 1.0),
                         egui::Sense::hover(),
                     );
-                    let alpha = crate::style::theme().row_separator_alpha.max(60);
-                    let base = crate::style::theme().border_subtle;
+                    // Input-to-results divider — kit-shared
+                    // `outline_base` + `row_separator_alpha`. Drops
+                    // the previous `.max(60)` alpha floor and the
+                    // raw `border_subtle` lookup; both were the
+                    // pre-unification fallback path.
+                    let alpha = crate::style::theme().row_separator_alpha;
+                    let base = crate::style::outline_base();
                     let col = egui::Color32::from_rgba_unmultiplied(
                         base.r(), base.g(), base.b(), alpha,
                     );
@@ -256,7 +261,10 @@ pub fn command_palette(
                         }
                         let dash = crate::style::theme().row_separator_dash;
                         let row_alpha = crate::style::theme().row_separator_alpha;
-                        let row_base = crate::style::theme().border_subtle;
+                        // Use kit-shared `outline_base` so the
+                        // inter-item rule matches every other row
+                        // separator across the kit.
+                        let row_base = crate::style::outline_base();
                         for (i, it) in filtered.iter().enumerate() {
                             if paint_row(ui, it, i == state.selected, accent).clicked() {
                                 picked = Some(it.id);
