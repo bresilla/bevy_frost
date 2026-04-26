@@ -668,14 +668,11 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     ]
     .into();
 
-    // Slow the global animation curve from egui's default ~83 ms up
-    // to 220 ms so fold / unfold (and every other `animate_bool`
-    // user — chevron rotation, accordion height, the new banner
-    // height + floating-icon size lerps in `widgets/foldable.rs`)
-    // reads as a deliberate ease-in-ease-out rather than an instant
-    // pop. Applied to *both* themes — every animation gets the same
-    // smoothstep treatment.
-    style.animation_time = 0.22;
+    // Animation timing now flows from the active theme. Drives
+    // every `animate_bool` consumer (foldable chevron + banner,
+    // hover lifts, accordion height, etc.). PRO ships a snappy
+    // 0.15 s; GAME a deliberate 0.35 s for the cinematic feel.
+    style.animation_time = th.section_animation_time;
 
     ctx.set_style(style);
 }
@@ -903,6 +900,13 @@ pub struct Theme {
     /// distinct "body is inside" cue without the title needing to
     /// be cramped against the frame edge.
     pub section_body_indent: f32,
+    /// Section open / close animation duration in seconds. Drives
+    /// egui's `style.animation_time`, so it also governs every
+    /// `animate_bool` consumer in the kit (chevron rotation,
+    /// banner height, hover-state lerps). PRO favours snap-quick
+    /// fold / unfold; GAME favours a deliberate softer ease so the
+    /// banner expansion reads as "scene transition".
+    pub section_animation_time: f32,
 
     // ── Text ──
     pub text_primary:   egui::Color32,
@@ -1182,6 +1186,9 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_pad_x: 4,
         section_pad_y: 3,
         section_body_indent: 8.0,
+        // PRO — quick snappy fold / unfold so flipping sections
+        // open while inspecting feels responsive.
+        section_animation_time: 0.15,
         // Text — pulled from the SHARED light/dark tone constants so
         // every variant ends up with the same body-text colours. No
         // per-theme drift.
@@ -1315,6 +1322,9 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_pad_x: 6,
         section_pad_y: 8,
         section_body_indent: 8.0,
+        // GAME — slower fold / unfold so the banner expansion reads
+        // as a deliberate "scene change" cue.
+        section_animation_time: 0.35,
         // Text — both Dark and Light branches now pull from the
         // shared tone constants. GAME used to ship custom blue-grey
         // tones for Dark; aligning with the canonical `TEXT_*` set
