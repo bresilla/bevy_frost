@@ -21,7 +21,7 @@ pub use crate::{
         on_section, on_section_dim, on_track, on_track_dim, pane_fill, popup_fill,
         row_hover_fill, row_selected_fill, section_fill, section_padding, section_show_frame,
         section_show_title_divider, section_title_color, set_glass_opacity, set_theme, theme,
-        theme_game, theme_pro, track_fill, AccentColor, ColorMode, GlassOpacity, TextColorMode,
+        theme_game, theme_pro, track_fill, AccentColor, ColorMode, GlassOpacity, Mode, TextColorMode,
         Theme,
     },
     widgets::{

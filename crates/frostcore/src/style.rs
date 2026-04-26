@@ -283,7 +283,15 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     let unified_border = widget_border(accent_col);
     let stroke_w = th.border_width;
 
-    let mut visuals = egui::Visuals::dark();
+    // Pick the egui visual base matching the active theme's
+    // brightness mode. Light variants need `Visuals::light()` so
+    // the host's default text / hyperlink / faint_bg colours don't
+    // come back as light-on-light from the dark base.
+    let mut visuals = if th.is_light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
     visuals.panel_fill          = glass_panel;
     visuals.window_fill         = glass_panel;
     visuals.window_stroke       = egui::Stroke::new(stroke_w, unified_border);
@@ -504,19 +512,43 @@ pub mod radius {
 // That keeps every widget call a plain field access with no lock /
 // reference threading.
 
+/// Brightness mode of the kit — orthogonal to the theme variant.
+/// Each theme variant (PRO, GAME) has a Dark and Light incarnation;
+/// the user picks both axes independently.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Mode {
+    Dark,
+    Light,
+}
+
+impl Mode {
+    pub const fn flipped(self) -> Self {
+        match self {
+            Mode::Dark => Mode::Light,
+            Mode::Light => Mode::Dark,
+        }
+    }
+}
+
 /// How a surface fill is computed. Either pulled straight out of
 /// the theme palette ([`ColorMode::FromBg`] — the PRO behaviour) or
-/// derived from the runtime accent colour by lerping from black
-/// ([`ColorMode::FromAccent`] — the GAME behaviour, where the panel
-/// itself takes on whatever colour the user set as accent).
+/// derived from the runtime accent colour by lerping toward a
+/// fixed colour ([`ColorMode::FromAccent`] — the GAME behaviour).
+/// `lerp_target` lets the same enum cover Dark mode (lerp toward
+/// black, dark accent surface) and Light mode (lerp toward white,
+/// pale accent surface) without forking the panel-fill code.
 #[derive(Copy, Clone, Debug)]
 pub enum ColorMode {
     /// Use the corresponding `bg_*` field from the theme directly.
     FromBg,
-    /// Compute as `lerp(Color32::BLACK, accent, lerp_factor)`. A
-    /// factor of `0.65` produces a richly accent-toned panel, `0.85`
-    /// is close to full accent, `0.0` is pure black.
-    FromAccent { lerp_factor: f32 },
+    /// Compute as `lerp(lerp_target, accent, lerp_factor)`. A factor
+    /// of `0.22` over `BLACK` produces the deep accent-tinted GAME
+    /// dark panel; a factor of `0.18` over `WHITE` produces a pale
+    /// accent-tinted GAME light panel.
+    FromAccent {
+        lerp_factor: f32,
+        lerp_target: egui::Color32,
+    },
 }
 
 /// How the title text colour is picked. Lets a theme flip the
@@ -547,6 +579,12 @@ pub struct Theme {
     /// distinct names for distinct themes or the egui style won't
     /// re-apply on switch.
     pub name: &'static str,
+    /// `true` for light-mode variants of the built-in themes —
+    /// drives `apply_theme` to start from `egui::Visuals::light()`
+    /// rather than `Visuals::dark()`, and lets widgets that need
+    /// to know "am I in a light or dark context" branch cheaply
+    /// without reading luma.
+    pub is_light: bool,
 
     // ── Surfaces — palette ──
     pub bg_window:  egui::Color32,
@@ -815,18 +853,34 @@ pub struct Theme {
     pub ghost_stroke_width:  f32,
 }
 
-/// Built-in PRO profile — the look this kit shipped with: glass
-/// surfaces, rounded corners, subtle accent-tinted borders, dimmed
-/// click halftone. Every value here matches the constants the kit
-/// used before the theme system landed.
-pub const fn theme_pro() -> Theme {
+/// PRO Light palette — paper-tinted neutrals matching GitHub
+/// Primer's light-mode tokens. Used by the Light branch of
+/// [`theme_pro`].
+pub const PRO_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xF5, 0xF7);
+pub const PRO_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
+pub const PRO_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF6, 0xF8, 0xFA);
+pub const PRO_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xEC, 0xEC, 0xEF);
+pub const PRO_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFA, 0xFC);
+pub const PRO_LIGHT_TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0x1F, 0x23, 0x28);
+pub const PRO_LIGHT_TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x70, 0x78);
+pub const PRO_LIGHT_TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0xA8, 0xAD, 0xB5);
+pub const PRO_LIGHT_BORDER_SUBTLE:  egui::Color32 = egui::Color32::from_rgb(0xD1, 0xD9, 0xE0);
+pub const PRO_LIGHT_BORDER_INNER:   egui::Color32 = egui::Color32::from_rgb(0xC5, 0xCC, 0xD3);
+
+/// Built-in PRO profile — soft glass, rounded corners, subtle
+/// accent-tinted borders. Pick a [`Mode`] to flip between the
+/// original dark surfaces and a paper-tinted light variant; every
+/// other field (shape / chrome / brackets) is shared across modes.
+pub const fn theme_pro(mode: Mode) -> Theme {
+    let dark = matches!(mode, Mode::Dark);
     Theme {
-        name: "PRO",
-        bg_window:  BG_0_WINDOW,
-        bg_panel:   BG_1_PANEL,
-        bg_raised:  BG_2_RAISED,
-        bg_hover:   BG_3_HOVER,
-        bg_input:   BG_4_INPUT,
+        name: if dark { "PRO_DARK" } else { "PRO_LIGHT" },
+        is_light: !dark,
+        bg_window:  if dark { BG_0_WINDOW } else { PRO_LIGHT_BG_WINDOW },
+        bg_panel:   if dark { BG_1_PANEL  } else { PRO_LIGHT_BG_PANEL  },
+        bg_raised:  if dark { BG_2_RAISED } else { PRO_LIGHT_BG_RAISED },
+        bg_hover:   if dark { BG_3_HOVER  } else { PRO_LIGHT_BG_HOVER  },
+        bg_input:   if dark { BG_4_INPUT  } else { PRO_LIGHT_BG_INPUT  },
         panel_fill_mode:    ColorMode::FromBg,
         section_fill_mode:  ColorMode::FromBg,
         section_show_frame: true,
@@ -834,9 +888,13 @@ pub const fn theme_pro() -> Theme {
         section_pad_x: 4,
         section_pad_y: 3,
         section_body_indent: 8.0,
-        text_primary:   TEXT_PRIMARY,
-        text_secondary: TEXT_SECONDARY,
-        text_disabled:  TEXT_DISABLED,
+        text_primary:   if dark { TEXT_PRIMARY }   else { PRO_LIGHT_TEXT_PRIMARY },
+        text_secondary: if dark { TEXT_SECONDARY } else { PRO_LIGHT_TEXT_SECONDARY },
+        text_disabled:  if dark { TEXT_DISABLED }  else { PRO_LIGHT_TEXT_DISABLED },
+        // Title in accent in BOTH Dark and Light — keeps the kit's
+        // signature "title tints with the user's accent" identity
+        // across modes. If the user picks a low-contrast accent
+        // (light accent on light panel), that's the user's call.
         title_color_mode: TextColorMode::Accent,
         title_softness: 0.0,
         ribbon_button_accent_fill: false,
@@ -858,12 +916,14 @@ pub const fn theme_pro() -> Theme {
         row_separator_dash: None,
         section_title_trailing_rule: false,
         section_corner_ticks: 0.0,
-        border_subtle:      BORDER_SUBTLE,
-        border_inner:       BORDER_INNER,
-        border_alpha:       230,
+        border_subtle:      if dark { BORDER_SUBTLE } else { PRO_LIGHT_BORDER_SUBTLE },
+        border_inner:       if dark { BORDER_INNER }  else { PRO_LIGHT_BORDER_INNER  },
+        // Light borders are paler hairlines — full 230 alpha looks
+        // too heavy on white; Primer / Linear settle around α 140.
+        border_alpha:       if dark { 230 } else { 140 },
         border_accent_tint: 0.06,
         border_width:       1.0,
-        row_separator_alpha: 96,
+        row_separator_alpha: if dark { 96 } else { 64 },
         glass_card_factor:  0.76,
         glass_group_factor: 0.57,
         glass_accent_tint:  0.03,
@@ -888,35 +948,46 @@ pub const fn theme_pro() -> Theme {
     }
 }
 
-/// Built-in GAME profile — the inverse of PRO: the **panel** itself
-/// takes the user's accent colour (lerped 65 % toward black so it
-/// stays readable), sections render with **no frame** at all so
-/// content sits flush on the accent panel, the section title flips
-/// to a luma-contrasted near-black/near-white, every corner is
-/// square, every border is gone, padding is zero, and pressed
-/// buttons fill solid with full accent. Palette colours are kept
-/// (used by hover / input states) but most surfaces derive from
-/// accent at runtime.
-pub const fn theme_game() -> Theme {
+/// GAME Light palette — bright accent-tinted surfaces, dark text.
+/// Used by the Light branch of [`theme_game`].
+pub const GAME_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF0, 0xF1, 0xF5);
+pub const GAME_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFD);
+pub const GAME_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
+pub const GAME_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEE);
+pub const GAME_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFC, 0xFC, 0xFE);
+pub const GAME_LIGHT_TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0x1F, 0x23, 0x28);
+pub const GAME_LIGHT_TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x70, 0x78);
+pub const GAME_LIGHT_TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0xA8, 0xAD, 0xB5);
+
+/// Built-in GAME profile — square corners, accent-tinted panels,
+/// bracket-decorated titles on a solid accent banner, dashed row
+/// separators, L-bracket corner ticks. Pick a [`Mode`] to flip the
+/// whole brightness axis: Dark lerps surfaces toward black for the
+/// deep tactical look, Light lerps toward white for a paper /
+/// accent-stained variant.
+pub const fn theme_game(mode: Mode) -> Theme {
+    let dark = matches!(mode, Mode::Dark);
+    let lerp_target = if dark {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    };
+    let lerp_factor = if dark { 0.22 } else { 0.18 };
     Theme {
-        name: "GAME",
-        bg_window:  egui::Color32::from_rgb(0x08, 0x0A, 0x12),
-        bg_panel:   egui::Color32::from_rgb(0x10, 0x14, 0x1F),
-        bg_raised:  egui::Color32::from_rgb(0x16, 0x1B, 0x29),
-        bg_hover:   egui::Color32::from_rgb(0x1F, 0x26, 0x38),
-        bg_input:   egui::Color32::from_rgb(0x06, 0x08, 0x0E),
-        // Panel: lerp 22 % toward accent — markedly darker than the
-        // previous 35 % so cards read as deep tactical surfaces with
-        // a faint accent hue, not lit accent panels. Body text and
-        // accent titles both pop more.
-        panel_fill_mode:   ColorMode::FromAccent { lerp_factor: 0.22 },
-        // Sections paint their own opaque bg in GAME — needed because
-        // the pane frame is now transparent (`pane_fill_visible:
-        // false`) so the scene shows through the gaps. Each section
-        // resolves its fill via `FromAccent` matching the panel's
-        // 22 % lerp factor so cards stay one consistent dark
-        // tactical tone.
-        section_fill_mode: ColorMode::FromAccent { lerp_factor: 0.22 },
+        name: if dark { "GAME_DARK" } else { "GAME_LIGHT" },
+        is_light: !dark,
+        bg_window:  if dark { egui::Color32::from_rgb(0x08, 0x0A, 0x12) } else { GAME_LIGHT_BG_WINDOW },
+        bg_panel:   if dark { egui::Color32::from_rgb(0x10, 0x14, 0x1F) } else { GAME_LIGHT_BG_PANEL },
+        bg_raised:  if dark { egui::Color32::from_rgb(0x16, 0x1B, 0x29) } else { GAME_LIGHT_BG_RAISED },
+        bg_hover:   if dark { egui::Color32::from_rgb(0x1F, 0x26, 0x38) } else { GAME_LIGHT_BG_HOVER },
+        bg_input:   if dark { egui::Color32::from_rgb(0x06, 0x08, 0x0E) } else { GAME_LIGHT_BG_INPUT },
+        // Panel surface flows through `FromAccent` with the mode's
+        // brightness target. Dark mode: lerp 22 % toward BLACK,
+        // producing the deep accent-tinted tactical surface. Light
+        // mode: lerp 18 % toward WHITE, producing a pale
+        // accent-tinted paper surface.
+        panel_fill_mode:   ColorMode::FromAccent { lerp_factor, lerp_target },
+        section_fill_mode: ColorMode::FromAccent { lerp_factor, lerp_target },
         section_show_frame: true,
         section_show_title_divider: false,
         // Padding — `pad_y = 8` so the last row in each section gets
@@ -927,9 +998,9 @@ pub const fn theme_game() -> Theme {
         section_pad_x: 6,
         section_pad_y: 8,
         section_body_indent: 8.0,
-        text_primary:   egui::Color32::from_rgb(0xF0, 0xF4, 0xFF),
-        text_secondary: egui::Color32::from_rgb(0x9E, 0xA8, 0xC0),
-        text_disabled:  egui::Color32::from_rgb(0x4A, 0x52, 0x66),
+        text_primary:   if dark { egui::Color32::from_rgb(0xF0, 0xF4, 0xFF) } else { GAME_LIGHT_TEXT_PRIMARY },
+        text_secondary: if dark { egui::Color32::from_rgb(0x9E, 0xA8, 0xC0) } else { GAME_LIGHT_TEXT_SECONDARY },
+        text_disabled:  if dark { egui::Color32::from_rgb(0x4A, 0x52, 0x66) } else { GAME_LIGHT_TEXT_DISABLED },
         // Title in pure accent — a different *hue* from the body's
         // near-black contrast text. On a 65 %-lerp accent panel, the
         // saturated accent reads ~35 % brighter than the panel, so
@@ -989,12 +1060,22 @@ pub const fn theme_game() -> Theme {
         // separators inside section bodies** — see
         // `row_separator_alpha`. Mid-grey separator base so the line
         // reads on both bright and dark accent panels.
-        border_subtle:      egui::Color32::from_rgb(0x80, 0x80, 0x80),
+        // Mid-grey separator in Dark, darker grey in Light — on a
+        // pale accent-tinted panel a #80 grey at α 60 disappears,
+        // so Light dropping closer to the text colour keeps the
+        // dashed dividers visible.
+        border_subtle:      if dark {
+            egui::Color32::from_rgb(0x80, 0x80, 0x80)
+        } else {
+            egui::Color32::from_rgb(0x6B, 0x70, 0x78)
+        },
         border_inner:       egui::Color32::from_rgb(0x1F, 0x26, 0x38),
         border_alpha:       0,
         border_accent_tint: 0.0,
         border_width:       0.0,
-        row_separator_alpha: 60,
+        // Light needs a stronger separator alpha to compensate for
+        // the lower contrast against a pale panel.
+        row_separator_alpha: if dark { 60 } else { 110 },
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,
@@ -1054,7 +1135,7 @@ static ACTIVE_THEME: std::sync::OnceLock<std::sync::RwLock<Theme>> =
     std::sync::OnceLock::new();
 
 fn theme_lock() -> &'static std::sync::RwLock<Theme> {
-    ACTIVE_THEME.get_or_init(|| std::sync::RwLock::new(theme_pro()))
+    ACTIVE_THEME.get_or_init(|| std::sync::RwLock::new(theme_pro(Mode::Dark)))
 }
 
 /// Replace the active theme. Takes effect on the next paint —
@@ -1078,15 +1159,15 @@ pub fn theme() -> Theme {
 fn resolve_color(mode: ColorMode, fallback: egui::Color32, accent: egui::Color32) -> egui::Color32 {
     match mode {
         ColorMode::FromBg => fallback,
-        ColorMode::FromAccent { lerp_factor } => {
+        ColorMode::FromAccent { lerp_factor, lerp_target } => {
             let f = lerp_factor.clamp(0.0, 1.0);
             let lerp = |a: u8, b: u8| {
                 ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u8
             };
             egui::Color32::from_rgb(
-                lerp(0, accent.r()),
-                lerp(0, accent.g()),
-                lerp(0, accent.b()),
+                lerp(lerp_target.r(), accent.r()),
+                lerp(lerp_target.g(), accent.g()),
+                lerp(lerp_target.b(), accent.b()),
             )
         }
     }
@@ -1118,6 +1199,9 @@ pub fn section_fill(accent: egui::Color32) -> egui::Color32 {
 pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     let (resolved, surface) = match th.title_color_mode {
+        // No luma guard, no contrast check: title literally tints
+        // with the user's accent. Trust the user; if they pick a
+        // low-contrast accent they accept the visual.
         TextColorMode::Accent => (accent, pane_fill(accent)),
         TextColorMode::Primary => (th.text_primary, pane_fill(accent)),
         TextColorMode::Secondary => (th.text_secondary, pane_fill(accent)),
@@ -1223,12 +1307,23 @@ pub fn paint_dashed_line(
 pub fn subsection_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor } => {
-            let base = lerp_rgb(egui::Color32::BLACK, accent, lerp_factor);
-            lerp_rgb(base, egui::Color32::WHITE, 0.06)
+        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+            let base = lerp_rgb(lerp_target, accent, lerp_factor);
+            lerp_rgb(base, raise_target(lerp_target), 0.06)
         }
         ColorMode::FromBg => th.bg_hover,
     }
+}
+
+/// Direction to lerp TOWARD when raising a surface one tier above
+/// the panel. Always white — both Dark and Light modes treat
+/// "raised / elevated" as "lighter" so inputs / popups / subsections
+/// look consistently raised instead of mirrored between modes.
+/// (Earlier this returned the visual opposite of `lerp_target`,
+/// which inverted the elevation direction in light mode and made
+/// raised surfaces look sunken — fixed.)
+fn raise_target(_lerp_target: egui::Color32) -> egui::Color32 {
+    egui::Color32::WHITE
 }
 
 /// Background fill for an alternating row. Returns `None` when the
@@ -1250,15 +1345,14 @@ pub fn row_alt_fill(accent: egui::Color32, row_index: u32) -> Option<egui::Color
 pub fn track_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor } => {
-            // Track sits one tier ABOVE the panel — `lerp(panel,
-            // WHITE, 0.10)` so it always reads as a slightly
-            // raised input regardless of how dark the user's
-            // accent is. Going darker (the previous attempt)
-            // produced near-black inputs on dark accents; lighter
-            // is uniformly readable.
-            let panel_color = lerp_rgb(egui::Color32::BLACK, accent, lerp_factor);
-            lerp_rgb(panel_color, egui::Color32::WHITE, 0.10)
+        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+            // Track sits one tier ABOVE the panel — raise toward
+            // the opposite of the panel's `lerp_target` so dark
+            // panels raise toward white and light panels raise
+            // toward black. Either way the input reads as one tier
+            // up from the surrounding panel.
+            let panel_color = lerp_rgb(lerp_target, accent, lerp_factor);
+            lerp_rgb(panel_color, raise_target(lerp_target), 0.10)
         }
         ColorMode::FromBg => th.bg_input,
     }
@@ -1274,12 +1368,12 @@ pub fn track_fill(accent: egui::Color32) -> egui::Color32 {
 pub fn popup_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor } => {
-            // Popup sits one tier ABOVE the panel — `lerp(panel,
-            // WHITE, 0.18)` so menus always read as raised against
-            // whatever the user's accent ended up being.
-            let panel_color = lerp_rgb(egui::Color32::BLACK, accent, lerp_factor);
-            lerp_rgb(panel_color, egui::Color32::WHITE, 0.18)
+        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+            // Popup sits one tier ABOVE the panel — raises toward
+            // the opposite of the panel's `lerp_target` so it works
+            // identically in dark and light modes.
+            let panel_color = lerp_rgb(lerp_target, accent, lerp_factor);
+            lerp_rgb(panel_color, raise_target(lerp_target), 0.18)
         }
         ColorMode::FromBg => th.bg_raised,
     }
@@ -1308,48 +1402,42 @@ fn dim_against(text: egui::Color32, surface: egui::Color32) -> egui::Color32 {
 }
 
 /// Primary-weight text colour for paint directly on the pane fill.
-/// Resolves via `contrast_text_for(pane_fill(active_accent))`.
+/// Reads `text_primary` from the active theme — predictable per
+/// `Mode` regardless of how the user's accent shifts the panel's
+/// luma. (The previous implementation derived this from
+/// `contrast_text_for(pane_fill)` and would flip unexpectedly when
+/// an accent landed near the panel-mode's mid-luma; switching to a
+/// direct theme-field read makes Dark always return light text and
+/// Light always return dark text, which is what callers actually
+/// want.)
 pub fn on_panel() -> egui::Color32 {
-    contrast_text_for(pane_fill(active_accent()))
+    theme().text_primary
 }
 /// Secondary-weight (~`TEXT_SECONDARY` role) version of [`on_panel`].
 pub fn on_panel_dim() -> egui::Color32 {
-    dim_against(on_panel(), pane_fill(active_accent()))
+    theme().text_secondary
 }
 
 /// Primary-weight text colour for paint inside a section frame.
-/// When the active theme has `section_show_frame = false`, falls
-/// through to [`on_panel`] since the body content is now sitting on
-/// the pane fill instead.
+/// Same direct-from-theme rule as [`on_panel`] — sections share the
+/// brightness mode of their parent pane.
 pub fn on_section() -> egui::Color32 {
-    let acc = active_accent();
-    if theme().section_show_frame {
-        contrast_text_for(section_fill(acc))
-    } else {
-        contrast_text_for(pane_fill(acc))
-    }
+    theme().text_primary
 }
 /// Secondary-weight version of [`on_section`].
 pub fn on_section_dim() -> egui::Color32 {
-    let acc = active_accent();
-    let surface = if theme().section_show_frame {
-        section_fill(acc)
-    } else {
-        pane_fill(acc)
-    };
-    dim_against(on_section(), surface)
+    theme().text_secondary
 }
 
 /// Primary-weight text colour for paint on a track surface — search
 /// field input, dropdown trigger label, slider/progress-bar readout
-/// over the unfilled portion. Resolves via `contrast_text_for(track_fill(active_accent))`.
+/// over the unfilled portion. Same direct-from-theme rule.
 pub fn on_track() -> egui::Color32 {
-    contrast_text_for(track_fill(active_accent()))
+    theme().text_primary
 }
-/// Secondary-weight version of [`on_track`] — placeholder hints,
-/// trailing chrome glyphs, secondary readouts.
+/// Secondary-weight version of [`on_track`].
 pub fn on_track_dim() -> egui::Color32 {
-    dim_against(on_track(), track_fill(active_accent()))
+    theme().text_secondary
 }
 
 /// Derived "hover" variant of the runtime accent — used by the
@@ -1486,19 +1574,16 @@ pub fn caption(label: &str) -> egui::RichText {
     egui::RichText::new(label).small().italics().color(on_section_dim())
 }
 
-/// Text colour that stays readable on top of an arbitrary accent
-/// fill. Uses Rec. 709 luma of the fill — bright fills get near-black
-/// text, dim fills get white — so progress-bar readouts never
-/// disappear into the accent when the user drives a yellow harvester
-/// or a pastel-lavender husky.
-pub fn contrast_text_for(fill: egui::Color32) -> egui::Color32 {
-    let r = fill.r() as f32 / 255.0;
-    let g = fill.g() as f32 / 255.0;
-    let b = fill.b() as f32 / 255.0;
-    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    if luma > 0.55 {
-        egui::Color32::from_rgb(0x18, 0x18, 0x1C)
-    } else {
-        TEXT_PRIMARY
-    }
+/// Text colour for paint on top of any fill. **Mode-driven, not
+/// luma-driven**: returns `theme().text_primary` always — light in
+/// Dark mode, dark in Light mode. Callers that previously expected
+/// "auto-pick black on bright, white on dark" no longer get that
+/// flip; if you really want luma adaptation, do it explicitly at
+/// the call site. The kit-wide rule is now: text is consistent
+/// with the body-text tone of the active mode, period.
+///
+/// `_fill` is kept in the signature for API stability; it's
+/// intentionally unused.
+pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
+    theme().text_primary
 }

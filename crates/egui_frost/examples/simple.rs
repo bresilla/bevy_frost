@@ -779,24 +779,40 @@ fn theme_panel(
     for id in &order {
         match id.as_str() {
             "demo_theme_profile" => pane.section_with("demo_theme_profile", "Profile", true, Some("person"), |ui| {
-                // PRO and GAME are built-in; users can drop in a third
-                // by writing their own `Theme { ..theme_game() }` and
-                // calling `set_theme`. Stored selection is just an
-                // index into the list below — egui temp data keyed by
-                // a stable id.
-                let key = ui.id().with("frost_theme_profile_idx");
-                let mut idx: usize = ui.ctx().data(|d| d.get_temp(key).unwrap_or(0));
-                let prev_idx = idx;
-                if dropdown(ui, "profile", &mut idx, &["PRO", "GAME"], accent).changed()
-                    || prev_idx != idx
+                // PRO and GAME are the two built-in *theme* shapes;
+                // Dark / Light is an orthogonal *mode* axis. Two
+                // dropdowns keep them visibly independent in the
+                // demo. Both selections live in egui temp data so
+                // they survive panel re-renders.
+                let theme_key = ui.id().with("frost_theme_idx");
+                let mode_key  = ui.id().with("frost_mode_idx");
+                let mut theme_idx: usize = ui.ctx().data(|d| d.get_temp(theme_key).unwrap_or(0));
+                let mut mode_idx:  usize = ui.ctx().data(|d| d.get_temp(mode_key).unwrap_or(0));
+                let prev_theme = theme_idx;
+                let prev_mode  = mode_idx;
+                let theme_changed =
+                    dropdown(ui, "theme", &mut theme_idx, &["PRO", "GAME"], accent).changed();
+                let mode_changed =
+                    dropdown(ui, "mode", &mut mode_idx, &["Dark", "Light"], accent).changed();
+                if theme_changed || mode_changed
+                    || prev_theme != theme_idx
+                    || prev_mode != mode_idx
                 {
-                    let chosen = if idx == 1 { theme_game() } else { theme_pro() };
+                    let mode = if mode_idx == 1 { egui_frost::style::Mode::Light } else { egui_frost::style::Mode::Dark };
+                    let chosen = if theme_idx == 1 {
+                        egui_frost::style::theme_game(mode)
+                    } else {
+                        egui_frost::style::theme_pro(mode)
+                    };
                     set_theme(chosen);
-                    ui.ctx().data_mut(|d| d.insert_temp(key, idx));
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(theme_key, theme_idx);
+                        d.insert_temp(mode_key, mode_idx);
+                    });
                 }
                 sub_caption(
                     ui,
-                    "PRO = soft glass, rounded, subtle borders. GAME = square, no borders, full-accent click.",
+                    "Theme = aesthetic (PRO soft glass / GAME bracketed accent). Mode = brightness (Dark / Light).",
                 );
             }),
             "demo_theme_colour" => pane.section_with("demo_theme_colour", "Accent", true, Some("color"), |ui| {
