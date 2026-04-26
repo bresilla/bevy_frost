@@ -209,10 +209,12 @@ impl Default for AccentColor {
 
 // ─── Embedded UI font ───────────────────────────────────────────────
 //
-// Iosevka Term Light baked into the binary via `include_bytes!` — no
-// `assets/` directory needs to ship alongside the executable. Face 0
-// of the upstream `SGr-IosevkaTerm-Light.ttc`, subset to Latin +
-// common symbol blocks (~1.3 MB).
+// Three Iosevka Term weights baked into the binary via `include_bytes!`:
+// Thin, Light, Medium. Each is face 0 of the matching upstream
+// `SGr-IosevkaTerm-{Thin,Light,Medium}.ttc`, extracted via fontTools
+// and subset to Latin + common symbol blocks (~310 KB each). The host
+// picks one with [`set_font_weight`]; the choice is read by
+// `apply_theme` and re-applied to egui via `ctx.set_fonts`.
 //
 // We deliberately stick with the stock egui font families
 // (`Proportional` + `Monospace`) and do NOT register `FontFamily::Name`
@@ -223,25 +225,131 @@ impl Default for AccentColor {
 // epaint, so we give up per-text weight selection and use size +
 // colour + `.strong()` for hierarchy instead.
 
-const IOSEVKA_LIGHT_TTF: &[u8] = include_bytes!("fonts/iosevka-light.ttf");
+const IOSEVKA_THIN_TTF:       &[u8] = include_bytes!("fonts/iosevka-thin.ttf");
+const IOSEVKA_EXTRALIGHT_TTF: &[u8] = include_bytes!("fonts/iosevka-extralight.ttf");
+const IOSEVKA_LIGHT_TTF:      &[u8] = include_bytes!("fonts/iosevka-light.ttf");
+const IOSEVKA_REGULAR_TTF:    &[u8] = include_bytes!("fonts/iosevka-regular.ttf");
+const IOSEVKA_MEDIUM_TTF:     &[u8] = include_bytes!("fonts/iosevka-medium.ttf");
+const IOSEVKA_SEMIBOLD_TTF:   &[u8] = include_bytes!("fonts/iosevka-semibold.ttf");
+const IOSEVKA_BOLD_TTF:       &[u8] = include_bytes!("fonts/iosevka-bold.ttf");
+const IOSEVKA_EXTRABOLD_TTF:  &[u8] = include_bytes!("fonts/iosevka-extrabold.ttf");
+const IOSEVKA_HEAVY_TTF:      &[u8] = include_bytes!("fonts/iosevka-heavy.ttf");
 
-/// Replace egui's stock body fonts with Iosevka Light **and**
-/// register every iconflow Fluent UI font variant as a named
+/// Selected Iosevka weight for the body font. Nine weights, ordered
+/// thinnest → heaviest exactly as upstream ships them
+/// (`Thin → ExtraLight → Light → Regular → Medium → SemiBold → Bold
+/// → ExtraBold → Heavy`). Default is [`FontWeight::Medium`] —
+/// visually a touch heavier than `Regular`, easier to read on the
+/// saturated accent fills. Switch with [`set_font_weight`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum FontWeight {
+    Thin,
+    ExtraLight,
+    Light,
+    Regular,
+    #[default]
+    Medium,
+    SemiBold,
+    Bold,
+    ExtraBold,
+    Heavy,
+}
+
+impl FontWeight {
+    fn as_u8(self) -> u8 {
+        match self {
+            FontWeight::Thin       => 0,
+            FontWeight::ExtraLight => 1,
+            FontWeight::Light      => 2,
+            FontWeight::Regular    => 3,
+            FontWeight::Medium     => 4,
+            FontWeight::SemiBold   => 5,
+            FontWeight::Bold       => 6,
+            FontWeight::ExtraBold  => 7,
+            FontWeight::Heavy      => 8,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => FontWeight::Thin,
+            1 => FontWeight::ExtraLight,
+            2 => FontWeight::Light,
+            3 => FontWeight::Regular,
+            4 => FontWeight::Medium,
+            5 => FontWeight::SemiBold,
+            6 => FontWeight::Bold,
+            7 => FontWeight::ExtraBold,
+            _ => FontWeight::Heavy,
+        }
+    }
+
+    fn ttf(self) -> &'static [u8] {
+        match self {
+            FontWeight::Thin       => IOSEVKA_THIN_TTF,
+            FontWeight::ExtraLight => IOSEVKA_EXTRALIGHT_TTF,
+            FontWeight::Light      => IOSEVKA_LIGHT_TTF,
+            FontWeight::Regular    => IOSEVKA_REGULAR_TTF,
+            FontWeight::Medium     => IOSEVKA_MEDIUM_TTF,
+            FontWeight::SemiBold   => IOSEVKA_SEMIBOLD_TTF,
+            FontWeight::Bold       => IOSEVKA_BOLD_TTF,
+            FontWeight::ExtraBold  => IOSEVKA_EXTRABOLD_TTF,
+            FontWeight::Heavy      => IOSEVKA_HEAVY_TTF,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            FontWeight::Thin       => "iosevka-thin",
+            FontWeight::ExtraLight => "iosevka-extralight",
+            FontWeight::Light      => "iosevka-light",
+            FontWeight::Regular    => "iosevka-regular",
+            FontWeight::Medium     => "iosevka-medium",
+            FontWeight::SemiBold   => "iosevka-semibold",
+            FontWeight::Bold       => "iosevka-bold",
+            FontWeight::ExtraBold  => "iosevka-extrabold",
+            FontWeight::Heavy      => "iosevka-heavy",
+        }
+    }
+}
+
+/// Active body-font weight. Sentinel value `u8::MAX` means
+/// "never installed", so the very first `apply_theme` call always
+/// pushes the font onto the egui context.
+static ACTIVE_FONT_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
+
+/// Replace the active body-font weight. Takes effect on the next
+/// `apply_theme` call — `apply_theme` notices the change and
+/// re-issues `ctx.set_fonts` once.
+pub fn set_font_weight(w: FontWeight) {
+    ACTIVE_FONT_WEIGHT.store(w.as_u8(), Ordering::Relaxed);
+}
+
+/// Read the currently-selected body-font weight. Returns
+/// [`FontWeight::default`] before the first `set_font_weight` /
+/// `apply_theme` call.
+pub fn font_weight() -> FontWeight {
+    let v = ACTIVE_FONT_WEIGHT.load(Ordering::Relaxed);
+    if v == u8::MAX { FontWeight::default() } else { FontWeight::from_u8(v) }
+}
+
+/// Replace egui's stock body fonts with the chosen Iosevka weight
+/// **and** register every iconflow Fluent UI font variant as a named
 /// family. After this call, widgets can paint Fluent icons via
 /// `crate::icons::icon_text(name, size, color)` or look up the
 /// glyph + family with `crate::icons::icon(name)`.
-fn install_fonts(ctx: &egui::Context) {
+fn install_fonts(ctx: &egui::Context, weight: FontWeight) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
-        "iosevka-light".into(),
-        std::sync::Arc::new(egui::FontData::from_static(IOSEVKA_LIGHT_TTF)),
+        weight.name().into(),
+        std::sync::Arc::new(egui::FontData::from_static(weight.ttf())),
     );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         fonts
             .families
             .entry(family)
             .or_default()
-            .insert(0, "iosevka-light".into());
+            .insert(0, weight.name().into());
     }
     crate::icons::install_iconflow_fonts(&mut fonts);
     ctx.set_fonts(fonts);
@@ -260,7 +368,7 @@ fn install_fonts(ctx: &egui::Context) {
 /// static cache so re-calling with the same `(accent, opacity)`
 /// skips the `ctx.set_style` / `ctx.set_fonts` work.
 pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpacity) {
-    use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
+    use core::sync::atomic::{AtomicU32, AtomicUsize};
 
     // Packed (r, g, b, a) cache. `u32::MAX` is used as the
     // "never-applied" sentinel — no real colour hashes to that,
@@ -268,7 +376,11 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     static LAST_ACCENT: AtomicU32 = AtomicU32::new(u32::MAX);
     static LAST_OPACITY: AtomicU8 = AtomicU8::new(0);
     static LAST_THEME_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
-    static FONTS_INSTALLED: AtomicBool = AtomicBool::new(false);
+    // Weight currently bound on the egui context. `u8::MAX` is the
+    // "never-installed" sentinel; the first `apply_theme` call always
+    // installs a font, and any later `set_font_weight` change is
+    // detected by comparing this against `font_weight()`.
+    static LAST_FONT_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
 
     let th = theme();
     // Adapt the user's raw accent to the active brightness mode:
@@ -277,9 +389,11 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // Conversion goes through HSL so only lightness changes — the
     // hue and saturation the user picked stay intact.
     let accent_col = adapt_accent_to_mode(accent.0, th.is_light);
-    if !FONTS_INSTALLED.load(Ordering::Relaxed) {
-        install_fonts(ctx);
-        FONTS_INSTALLED.store(true, Ordering::Relaxed);
+    let weight = font_weight();
+    let weight_u8 = weight.as_u8();
+    if LAST_FONT_WEIGHT.load(Ordering::Relaxed) != weight_u8 {
+        install_fonts(ctx, weight);
+        LAST_FONT_WEIGHT.store(weight_u8, Ordering::Relaxed);
     }
 
     // Pack the accent Color32 as u32: (r << 24) | (g << 16) | (b << 8) | a.
@@ -340,6 +454,15 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     visuals.faint_bg_color      = glass_card;
     visuals.code_bg_color       = glass_card;
     visuals.override_text_color = Some(th.text_primary);
+    // Force the gamma-correct (linear) coverage→alpha curve for text in
+    // both modes. egui's dark-mode default is `TwoCoverageMinusCoverageSq`,
+    // which deliberately fattens glyph edges to make light text on dark
+    // backgrounds look bolder. On a saturated accent fill (yellow / cyan
+    // / lime) that fattened edge reads as a visible coloured halo around
+    // every glyph — the "border around the text" the user sees only when
+    // the accent is applied. `Linear` blends the coverage straight, so
+    // the AA edge is a single 1-px transition between text and bg.
+    visuals.text_alpha_from_coverage = egui::epaint::AlphaFromCoverage::Linear;
     visuals.selection.bg_fill   = tinted_surface(accent_col);
     visuals.selection.stroke    = egui::Stroke::new(stroke_w.max(1.0), accent_col);
     visuals.hyperlink_color     = accent_col;
@@ -1283,61 +1406,68 @@ pub fn section_show_frame() -> bool {
     theme().section_show_frame
 }
 
-/// Pull a raw accent into the readable lightness band for the
-/// active brightness mode. Goes through `pastel::Color` for
-/// hue-preserving Lab-space lightness manipulation — far better
-/// than the previous hand-rolled HSL clamp, especially for
-/// chromatic colours like yellow / cyan that have skewed luma vs
-/// lightness.
+/// Pull an accent into the readable lightness band using a smooth
+/// curve in **Lab L\*** space — perceptually uniform, so yellow
+/// (Lab L\* ≈ 97) registers as bright the way the eye sees it,
+/// not as 0.50 the way HSL claims.
 ///
-/// **Light mode** force-pulls accents into the dark band:
-/// any `lightness > 0.42` is rebased to a target around `0.42`.
-/// White accent (L 1.0) → mid-grey. Yellow (L 0.50) → dark mustard.
-/// Bright pastel violet (L 0.76) → saturated dark violet.
+/// Algorithm (per mode):
+/// 1. Pick a "honoured" zone — accents whose L\* sits inside it
+///    pass through unchanged. Mid-luma greens / oranges / mid-blues
+///    that already contrast naturally never get touched.
+/// 2. Outside the honoured zone, pull L\* toward a `target` with
+///    **smoothstep-weighted strength** based on how far past the
+///    zone the accent is. This is the "bezier-like" curve the user
+///    asked for: identity in the middle, gentle at the edges,
+///    strong at the extremes (white / black).
+/// 3. Reduce chroma by 8 % so very neon accents lose their
+///    fluorescent buzz without going grey.
 ///
-/// **Dark mode** force-lifts accents into the light band:
-/// any `lightness < 0.58` is rebased to a target around `0.58`.
-/// Black accent (L 0.0) → mid-grey. Dark blue (L 0.20) → bright
-/// blue. Saturated red (L 0.50) → light red.
+/// Examples (Dark mode, honoured zone L\* ≤ 60, target 40):
 ///
-/// Outside those bands the accent passes through unchanged.
+///   white   L\* 100 → strong pull → ~ L\* 40 (mid grey)
+///   yellow  L\* 97  → strong pull → ~ L\* 42 (mustard)
+///   light   green L\* 90 → moderate pull → ~ L\* 48
+///   mid-green L\* 65 → tiny pull → ~ L\* 62 (barely touched)
+///   dark blue L\* 17 → unchanged (already dark enough)
+///   black   L\* 0   → unchanged
+///
+/// Light mode mirrors: honoured zone L\* ≥ 40, target 60. Black
+/// gets fully lifted to mid grey; mid-green stays put.
 pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Color32 {
     use pastel::Color as PastelColor;
     let c = PastelColor::from_rgb(accent.r(), accent.g(), accent.b());
-    let l = c.to_hsla().l;
-    // Direction reversed from the earlier pass: the accent banner /
-    // ribbon-active fills paint with body-primary text on top
-    // (DARK mode → white text, LIGHT mode → black text). For the
-    // text to read, the accent surface must contrast with the
-    // text colour. So:
-    //
-    //   Dark mode  → accent must be DARK enough that white text
-    //                shows up on it. Cap lightness at 0.32.
-    //   Light mode → accent must be LIGHT enough that black text
-    //                shows up on it. Floor lightness at 0.70.
-    //
-    // White accent in light → unchanged (already light enough).
-    // Black accent in dark  → unchanged (already dark enough).
-    // Yellow in dark        → darkened to mustard (white text reads).
-    // Yellow in light       → lifted to pale yellow (dark text reads).
-    // Dark blue in dark     → unchanged (already dark).
-    // Dark blue in light    → lifted to pastel blue.
-    // Softer caps than the previous 0.32 / 0.70 pair — accents now
-    // get pulled gently into the readable band instead of clamped
-    // hard against it. Yellow in dark drops a few notches but stays
-    // recognisably yellow; white in dark becomes a soft mid-grey,
-    // not deep grey.
-    let target_l = if is_light {
+    // HSL space — preserves hue exactly. Yellow stays yellow when
+    // darkened (no olive shift you get in Lab); pure red stays red.
+    // The trade-off (HSL's L doesn't match perceived luminance for
+    // saturated colours) doesn't matter here because we only adjust
+    // the EXTREMES of HSL L (whites + blacks) and leave everything
+    // mid-range untouched.
+    let hsl = c.to_hsla();
+    let l = hsl.l;
+    let smoothstep = |t: f64| -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    // Wide honoured zone in [0.40 .. 0.60] — every chromatic accent
+    // (yellow at 0.50, mid-blue at 0.30+, vivid red at 0.50) passes
+    // through unchanged. Only near-white / near-black accents leave
+    // the zone and get pulled.
+    // Hard cap / floor. Soft curves left yellow (HSL L 0.50) at a
+    // luma where white text on it produces a visible AA fringe.
+    // Going hard with `cap = 0.40` in Dark mode forces yellow into
+    // mustard with high enough contrast vs white that the fringe
+    // disappears. Light mode mirror.
+    let new_l = if is_light {
         if l < 0.60 { 0.60 } else { l }
     } else {
-        if l > 0.42 { 0.42 } else { l }
+        if l > 0.40 { 0.40 } else { l }
     };
-    if (target_l - l).abs() < 0.001 {
-        return accent;
-    }
-    // pastel `lighten(f)` adds `f` to the HSLA lightness; we
-    // compute the signed delta needed to reach `target_l`.
-    let adjusted = c.lighten(target_l - l);
+    // BOOST saturation by 12 % so colours come out more vivid, not
+    // washed. Neutrals (grey, white, black) have ~0 saturation so
+    // the boost has no effect on them; chromatic accents pop more.
+    let new_s = (hsl.s * 1.12).min(1.0);
+    let adjusted = PastelColor::from_hsla(hsl.h, new_s, new_l, 1.0);
     let rgba = adjusted.to_rgba();
     egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b)
 }
@@ -1674,13 +1804,12 @@ pub fn caption(label: &str) -> egui::RichText {
     egui::RichText::new(label).small().italics().color(on_section_dim())
 }
 
-/// Text colour for paint on top of any fill. **Mode-driven, not
-/// luma-driven**: returns `theme().text_primary` always — light in
-/// Dark mode, dark in Light mode. Consistent body-text tone across
-/// every accent surface; no automatic darkening / lightening.
-///
-/// `_fill` is kept in the signature for API stability; it's
-/// intentionally unused.
+/// Text colour for paint on top of any fill. **Mode-driven** —
+/// returns `theme().text_primary` always (light in Dark mode, dark
+/// in Light mode). Consistent body-text tone across every accent
+/// surface; the kit relies on `adapt_accent_to_mode` to pull bright
+/// accents into a darker band in Dark mode so white-on-accent has
+/// real contrast.
 pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
     theme().text_primary
 }

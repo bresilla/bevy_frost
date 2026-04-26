@@ -78,6 +78,12 @@
             pkgs.mold
             pkgs.pkg-config
 
+            # Font tooling — `pyftsubset` (fontTools + brotli) is used to
+            # extract a single face from an Iosevka `.ttc` collection
+            # and trim it down to the Latin + symbol subset that ships
+            # embedded inside `frostcore` via `include_bytes!`.
+            (pkgs.python3.withPackages (ps: with ps; [ fonttools brotli ]))
+
             # GPU wrappers.
             nixGLAlias
             nixVulkanAlias

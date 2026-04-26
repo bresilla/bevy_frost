@@ -362,16 +362,18 @@ pub(crate) fn section_tracked<'i>(
                     } else {
                         text_x
                     };
+                    // Round both axes to integer pixels — egui's
+                    // text tessellator anti-aliases each glyph edge
+                    // by blending with the surface colour at the
+                    // glyph's sub-pixel offset. On bright accent
+                    // banners (yellow / cyan / orange) those blends
+                    // produce a coloured fringe that reads as a
+                    // pixelated dark border around white text. Pixel
+                    // alignment removes the fringe entirely.
                     let title_pos = egui::pos2(
-                        title_pos_x,
-                        title_strip_rect.center().y - title_size.y * 0.5,
+                        title_pos_x.round(),
+                        (title_strip_rect.center().y - title_size.y * 0.5).round(),
                     );
-                    // Single-paint title galley. The previous
-                    // double-paint "fake bold" trick (offset by
-                    // 0.6 px) produced a pixelated halo of mismatched
-                    // anti-aliasing on bright accent banners — visible
-                    // as a faint dark fringe around white text on
-                    // yellow / cyan accents. Removed.
                     ui.painter().galley(title_pos, title_galley, title_col);
 
                     // Floating right-edge icon. Sizes inverted from
@@ -423,10 +425,17 @@ pub(crate) fn section_tracked<'i>(
                                 // panes put the icon on the LEFT,
                                 // left-anchored panes (default) keep
                                 // it on the RIGHT.
+                                // Round to integer pixels for the
+                                // same reason title text gets snapped
+                                // — the Fluent icon glyph paints
+                                // through egui's text tessellator and
+                                // suffers the same sub-pixel fringe
+                                // on bright banners.
+                                let cy = (title_strip_rect.center().y - top_offset).round();
                                 let (icon_pos, icon_align, icon_rect) = if on_right_pane {
                                     let pos = egui::pos2(
-                                        title_strip_rect.min.x + 6.0,
-                                        title_strip_rect.center().y - top_offset,
+                                        (title_strip_rect.min.x + 6.0).round(),
+                                        cy,
                                     );
                                     let rect = egui::Rect::from_min_size(
                                         pos,
@@ -435,8 +444,8 @@ pub(crate) fn section_tracked<'i>(
                                     (pos, egui::Align2::LEFT_TOP, rect)
                                 } else {
                                     let pos = egui::pos2(
-                                        title_strip_rect.max.x - 6.0,
-                                        title_strip_rect.center().y - top_offset,
+                                        (title_strip_rect.max.x - 6.0).round(),
+                                        cy,
                                     );
                                     let rect = egui::Rect::from_min_size(
                                         egui::pos2(pos.x - size, pos.y),

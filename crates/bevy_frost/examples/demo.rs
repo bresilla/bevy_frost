@@ -2015,16 +2015,34 @@ fn theme_panel(
                 // Theme = aesthetic (PRO / GAME). Mode = brightness
                 // (Dark / Light). Two dropdowns, two ctx-keyed
                 // indices.
-                let theme_key = ui.id().with("frost_theme_idx");
-                let mode_key  = ui.id().with("frost_mode_idx");
-                let mut theme_idx: usize = ui.ctx().data(|d| d.get_temp(theme_key).unwrap_or(0));
-                let mut mode_idx:  usize = ui.ctx().data(|d| d.get_temp(mode_key).unwrap_or(0));
-                let prev_theme = theme_idx;
-                let prev_mode  = mode_idx;
+                let theme_key  = ui.id().with("frost_theme_idx");
+                let mode_key   = ui.id().with("frost_mode_idx");
+                let weight_key = ui.id().with("frost_weight_idx");
+                let mut theme_idx:  usize = ui.ctx().data(|d| d.get_temp(theme_key).unwrap_or(0));
+                let mut mode_idx:   usize = ui.ctx().data(|d| d.get_temp(mode_key).unwrap_or(0));
+                // Weight default 2 == Medium, matching `FontWeight::default()`
+                // in frostcore. Thin = 0, Light = 1, Medium = 2.
+                // Weight default 4 == Medium, matching `FontWeight::default()`.
+                let mut weight_idx: usize = ui.ctx().data(|d| d.get_temp(weight_key).unwrap_or(4));
+                let prev_theme  = theme_idx;
+                let prev_mode   = mode_idx;
+                let prev_weight = weight_idx;
                 let theme_changed =
                     dropdown(ui, "theme", &mut theme_idx, &["PRO", "GAME"], accent).changed();
                 let mode_changed =
                     dropdown(ui, "mode", &mut mode_idx, &["Dark", "Light"], accent).changed();
+                let weight_changed =
+                    dropdown(
+                        ui,
+                        "weight",
+                        &mut weight_idx,
+                        &[
+                            "Thin", "ExtraLight", "Light", "Regular",
+                            "Medium", "SemiBold", "Bold", "ExtraBold", "Heavy",
+                        ],
+                        accent,
+                    )
+                    .changed();
                 if theme_changed || mode_changed
                     || prev_theme != theme_idx
                     || prev_mode != mode_idx
@@ -2036,14 +2054,29 @@ fn theme_panel(
                         bevy_frost::style::theme_pro(mode)
                     };
                     set_theme(chosen);
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(theme_key, theme_idx);
-                        d.insert_temp(mode_key, mode_idx);
-                    });
                 }
+                if weight_changed || prev_weight != weight_idx {
+                    let w = match weight_idx {
+                        0 => bevy_frost::style::FontWeight::Thin,
+                        1 => bevy_frost::style::FontWeight::ExtraLight,
+                        2 => bevy_frost::style::FontWeight::Light,
+                        3 => bevy_frost::style::FontWeight::Regular,
+                        4 => bevy_frost::style::FontWeight::Medium,
+                        5 => bevy_frost::style::FontWeight::SemiBold,
+                        6 => bevy_frost::style::FontWeight::Bold,
+                        7 => bevy_frost::style::FontWeight::ExtraBold,
+                        _ => bevy_frost::style::FontWeight::Heavy,
+                    };
+                    bevy_frost::style::set_font_weight(w);
+                }
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(theme_key,  theme_idx);
+                    d.insert_temp(mode_key,   mode_idx);
+                    d.insert_temp(weight_key, weight_idx);
+                });
                 sub_caption(
                     ui,
-                    "Theme = aesthetic (PRO soft glass / GAME bracketed accent). Mode = brightness (Dark / Light).",
+                    "Theme = aesthetic (PRO / GAME). Mode = brightness (Dark / Light). Weight = body font weight (Thin / Light / Medium).",
                 );
             }),
             // Accent. Mutating `AccentColor` triggers the crate's `apply_theme`

@@ -826,17 +826,13 @@ pub fn floating_window_scoped(
             // PRO: accent tint; GAME: contrast with the panel fill
             // (luma-based, so a bright accent panel gets dark text).
             let title_col = crate::style::section_title_color(accent);
-            let pos = egui::pos2(tx, rect.center().y);
+            // Pixel-snap the paint position so glyph edges align
+            // with the screen grid — sub-pixel positions blend AA
+            // pixels with the bg, which on bright accents reads as
+            // a coloured halo around the text.
+            let pos = egui::pos2(tx.round(), rect.center().y.round());
             let font = egui::FontId::new(title_size, egui::FontFamily::Proportional);
-            for dx in [-0.5, 0.5] {
-                ui.painter().text(
-                    egui::pos2(pos.x + dx, pos.y),
-                    align,
-                    title.to_uppercase(),
-                    font.clone(),
-                    title_col,
-                );
-            }
+            ui.painter().text(pos, align, title.to_uppercase(), font, title_col);
             // Skip the title hairline entirely under themes that
             // don't want it (GAME: no horizontal rule under the
             // pane title; PRO keeps the subtle divider).
