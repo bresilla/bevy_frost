@@ -794,43 +794,25 @@ pub(crate) fn section_tracked<'i>(
         };
         let top_stroke = egui::Stroke::new(1.0, top_col);
         let bot_stroke = egui::Stroke::new(1.0, bot_col);
-        let painter = ui.painter();
-        // Top-left  ┌
-        painter.line_segment(
-            [egui::pos2(lx, ty), egui::pos2(lx + len, ty)],
-            top_stroke,
-        );
-        painter.line_segment(
-            [egui::pos2(lx, ty), egui::pos2(lx, ty + len)],
-            top_stroke,
-        );
-        // Top-right ┐
-        painter.line_segment(
-            [egui::pos2(rx - len, ty), egui::pos2(rx, ty)],
-            top_stroke,
-        );
-        painter.line_segment(
-            [egui::pos2(rx, ty), egui::pos2(rx, ty + len)],
-            top_stroke,
-        );
-        // Bottom-left └
-        painter.line_segment(
-            [egui::pos2(lx, by - len), egui::pos2(lx, by)],
-            bot_stroke,
-        );
-        painter.line_segment(
-            [egui::pos2(lx, by), egui::pos2(lx + len, by)],
-            bot_stroke,
-        );
-        // Bottom-right ┘
-        painter.line_segment(
-            [egui::pos2(rx - len, by), egui::pos2(rx, by)],
-            bot_stroke,
-        );
-        painter.line_segment(
-            [egui::pos2(rx, by - len), egui::pos2(rx, by)],
-            bot_stroke,
-        );
+        // Build the 8 line segments and submit in a single
+        // `Painter::extend` call. Per egui's painter docs,
+        // extend grows the shape `Vec` once; eight individual
+        // `line_segment` calls each push and may reallocate.
+        let shapes: [egui::Shape; 8] = [
+            // Top-left ┌
+            egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], top_stroke),
+            egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], top_stroke),
+            // Top-right ┐
+            egui::Shape::line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], top_stroke),
+            egui::Shape::line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], top_stroke),
+            // Bottom-left └
+            egui::Shape::line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], bot_stroke),
+            egui::Shape::line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], bot_stroke),
+            // Bottom-right ┘
+            egui::Shape::line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], bot_stroke),
+            egui::Shape::line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], bot_stroke),
+        ];
+        ui.painter().extend(shapes);
     }
 
     SectionTrack {

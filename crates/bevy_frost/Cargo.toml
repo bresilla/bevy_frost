@@ -49,6 +49,12 @@ bevy_egui = { workspace = true, features = [
 # core stays allocator-neutral.
 mimalloc = { workspace = true }
 
+[dev-dependencies]
+# `bevy_glacial` — used by the demo example only (camera /
+# scene helpers). Pulled from git so the workspace doesn't need a
+# local checkout.
+bevy_glacial = { git = "https://github.com/bresilla/bevy_glacial.git" }
+
 [[example]]
 name = "demo"
 path = "examples/demo.rs"

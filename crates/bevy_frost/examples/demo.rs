@@ -25,14 +25,13 @@
 //! or `make run` from the repo root once direnv has loaded the flake
 //! (wraps `cargo run --example demo` in `nixVulkan`).
 
-use bevy::asset::RenderAssetUsages;
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
-use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::{PresentMode, PrimaryWindow};
+use bevy::winit::WinitSettings;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_glacial::prelude::*;
 
 // Drop-in faster allocator. egui's tessellator hammers the global
 // allocator with `Vec::push` / `Vec::reserve`; mimalloc keeps small-
@@ -220,17 +219,44 @@ fn main() {
         }))
         .add_plugins(EguiPlugin::default())
         .add_plugins(FrostPlugin)
+        // bevy_glacial — the demo's camera, grid, selection ring,
+        // and gizmo helpers all come from this crate. Replaces
+        // the demo's previously hand-rolled `ChaseCamera`,
+        // `GroundGrid`, `update_grid`, `camera_control`,
+        // `camera_zoom`, and `apply_rig`.
+        .add_plugins(GlacialPlugins)
+        // Match the sky (fog) tone: deep dusk blue. `ClearColor`
+        // is what pixels hit when nothing else is rendered, so it
+        // sets the visible "sky" beyond the cloud shell.
+        .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
+        // Darker grid lines — slate-blue at lower alpha so the
+        // grid reads as "soft contour map" against the dusk sky
+        // instead of glowing white.
+        .insert_resource(GroundGrid {
+            visible: true,
+            color: Color::srgba(0.30, 0.38, 0.50, 0.42),
+        })
+        // Reactive runner — Bevy stops polling at full speed when
+        // nothing's changing. Frames fire on input events, window
+        // events, or whenever egui requests a redraw (which our
+        // animations do via `request_repaint_after`). Idle CPU
+        // drops to near zero; the GPU stays cool; battery life
+        // and thermal headroom both improve. When the user
+        // actually does something, the next frame fires
+        // immediately so input-to-paint latency stays at one
+        // frame. Best fit for an editor / tool app like this.
+        .insert_resource(WinitSettings::desktop_app())
         .add_systems(Startup, trim_egui_systems)
         .init_resource::<DemoState>()
-        .init_resource::<GroundGrid>()
         .init_resource::<SelectedSwatch>()
+        // `GroundGrid` resource is auto-inserted by
+        // `GroundGridPlugin`; camera control + grid follow
+        // systems likewise come from `GlacialPlugins`. Demo
+        // only keeps the cube-picking + swatch-selection bits.
         .add_systems(Startup, setup_scene)
         .add_systems(
             Update,
             (
-                camera_control,
-                camera_zoom,
-                update_grid,
                 pick_cube,
                 update_swatch_selection,
             )
@@ -859,39 +885,6 @@ const CLOUD_ALTITUDE_M: f32 = 4_000.0;
 
 // ── Grid LOD constants (copied from gearbox_viz::grid) ──────────────
 
-/// Cell size per level (metres). Decades apart.
-const LEVEL_STEPS: [f32; 4] = [1.0, 10.0, 100.0, 1_000.0];
-/// Half-extent of each level's square (metres).
-const LEVEL_HALF: [f32; 4] = [50.0, 500.0, 5_000.0, 50_000.0];
-/// Every Nth line is a major line (brighter alpha).
-const MAJOR_EVERY: i32 = 10;
-/// Major-line alpha boost (multiplied against the base colour alpha).
-const MAJOR_BOOST: f32 = 2.2;
-/// Grid rides this height above the tangent plane.
-const GRID_Y: f32 = 0.05;
-/// Gaussian fade params over `log10(cam_dist / step)`.
-const GAUSS_PEAK: f32 = 1.0;
-const GAUSS_WIDTH: f32 = 0.55;
-
-#[derive(Resource, Clone, Copy)]
-struct GroundGrid {
-    color: Color,
-}
-
-impl Default for GroundGrid {
-    fn default() -> Self {
-        Self {
-            color: Color::srgba(80.0 / 255.0, 70.0 / 255.0, 70.0 / 255.0, 0.35),
-        }
-    }
-}
-
-#[derive(Component)]
-struct LocalGrid {
-    level: u8,
-    material: Handle<StandardMaterial>,
-}
-
 /// Tag + swatch colour carried on each clickable cube — picked up
 /// by [`pick_cube`] when the user left-clicks one. `base_color` is
 /// the Bevy material colour we reinstate when deselected, so the
@@ -909,47 +902,16 @@ struct ColorCube {
 #[derive(Resource, Default)]
 struct SelectedSwatch(Option<Entity>);
 
-// ── Chase camera (simplified copy of gearbox_viz::camera) ───────────
-
-/// Orbit camera rig — pan / orbit / zoom like gearbox.
-#[derive(Component, Clone)]
-struct ChaseCamera {
-    focus: Vec3,
-    yaw: f32,
-    elevation: f32,
-    distance: f32,
-    min_distance: f32,
-    max_distance: f32,
-    pan_sensitivity: f32,
-    orbit_speed: f32,
-    zoom_step: f64,
-    zoom_smoothing: f64,
-    last_middle_click_secs: f32,
-}
-
-impl Default for ChaseCamera {
-    fn default() -> Self {
-        Self {
-            focus: Vec3::ZERO,
-            yaw: 0.0,
-            elevation: 25f32.to_radians(),
-            distance: 14.0,
-            min_distance: 3.0,
-            max_distance: 1_000.0,
-            pan_sensitivity: 0.0012,
-            orbit_speed: 0.005,
-            zoom_step: 0.05,
-            zoom_smoothing: 6.0,
-            last_middle_click_secs: -10.0,
-        }
-    }
-}
+// `ChaseCamera`, `GroundGrid`, `LocalGrid`, `apply_rig`,
+// `build_level_mesh`, `update_grid`, `camera_control`, and
+// `camera_zoom` — all hand-rolled in earlier versions of this demo —
+// have been replaced by the equivalents in `bevy_glacial`. The
+// `GlacialPlugins` plugin group registered above wires them up.
 
 fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    grid_cfg: Res<GroundGrid>,
 ) {
     // ── Planet sphere — huge, warm tan ground. y=-radius so tangent
     //    point (the local "floor") is at world y=0.
@@ -990,30 +952,9 @@ fn setup_scene(
         NotShadowCaster,
     ));
 
-    // ── LOD ground grid — four line-meshes (1 m / 10 m / 100 m /
-    //    1 km cells). Each level fades in when its cell size best
-    //    matches the current zoom and slides with the camera focus.
-    for level in 0..LEVEL_STEPS.len() {
-        let step = LEVEL_STEPS[level];
-        let half = LEVEL_HALF[level];
-        let mesh = meshes.add(build_level_mesh(&grid_cfg, step, half));
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            ..default()
-        });
-        commands.spawn((
-            Name::new(format!("LocalGrid[L{level}]")),
-            LocalGrid { level: level as u8, material: mat.clone() },
-            Transform::from_xyz(0.0, GRID_Y, 0.0),
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-            NotShadowCaster,
-            Visibility::Visible,
-        ));
-    }
+    // The LOD ground grid is spawned + driven by
+    // `bevy_glacial::GroundGridPlugin` (registered above via
+    // `GlacialPlugins`). No manual setup needed here.
 
     // ── Swatch cubes — 3 × 2 grid of 1×1×1 m cubes, each a
     //    different colour. Clicking one sets the app's `AccentColor`
@@ -1088,7 +1029,11 @@ fn setup_scene(
         ..default()
     });
     let fog = DistanceFog {
-        color: Color::srgb(0.55, 0.70, 0.86),
+        // Darker sky — pulled from the bright daylight blue
+        // (`0.55, 0.70, 0.86`) down into a deep dusk tone so the
+        // UI's accent / glass surfaces read more strongly against
+        // it.
+        color: Color::srgb(0.10, 0.13, 0.20),
         falloff: FogFalloff::Atmospheric {
             extinction: Vec3::new(0.00008, 0.00012, 0.00020),
             inscattering: Vec3::new(0.00010, 0.00015, 0.00025),
@@ -1113,214 +1058,13 @@ fn setup_scene(
     ));
 }
 
-// ─── Grid LOD mesh ──────────────────────────────────────────────────
-
-/// Build one LOD level's mesh — a `LineList` XZ grid with per-line
-/// radial alpha fade and a `MAJOR_EVERY` brightness boost on every
-/// tenth line. Matches gearbox's grid look 1:1.
-fn build_level_mesh(cfg: &GroundGrid, step: f32, half: f32) -> Mesh {
-    let s = cfg.color.to_srgba();
-    let base_rgba = [s.red, s.green, s.blue, s.alpha];
-
-    let n = (half / step) as i32;
-    let total_lines = (2 * n + 1) * 2;
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity((total_lines * 2) as usize);
-    let mut colors: Vec<[f32; 4]> = Vec::with_capacity((total_lines * 2) as usize);
-
-    let line_color = |i: i32| -> [f32; 4] {
-        let t = (i.abs() as f32) / (n as f32);
-        let edge_fade = {
-            let u = (1.0 - t).clamp(0.0, 1.0);
-            u * u * (3.0 - 2.0 * u) // smoothstep
-        };
-        let major = i.rem_euclid(MAJOR_EVERY) == 0;
-        let boost = if major { MAJOR_BOOST } else { 1.0 };
-        [
-            base_rgba[0],
-            base_rgba[1],
-            base_rgba[2],
-            (base_rgba[3] * edge_fade * boost).clamp(0.0, 1.0),
-        ]
-    };
-
-    for i in -n..=n {
-        let z = i as f32 * step;
-        let c = line_color(i);
-        positions.push([-half, 0.0, z]);
-        positions.push([half, 0.0, z]);
-        colors.push(c);
-        colors.push(c);
-    }
-    for i in -n..=n {
-        let x = i as f32 * step;
-        let c = line_color(i);
-        positions.push([x, 0.0, -half]);
-        positions.push([x, 0.0, half]);
-        colors.push(c);
-        colors.push(c);
-    }
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::LineList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh
-}
-
-fn level_fade(cam_dist: f32, step: f32) -> f32 {
-    let log_r = (cam_dist / step).max(1e-3).log10();
-    let z = (log_r - GAUSS_PEAK) / GAUSS_WIDTH;
-    (-0.5 * z * z).exp()
-}
-
-/// Slide every grid level with the chase-camera focus, snapped to
-/// the major step so the lines stay world-aligned, and write each
-/// level's Gaussian fade into its material alpha.
-fn update_grid(
-    cameras: Query<&ChaseCamera>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    cfg: Res<GroundGrid>,
-    mut grids: Query<(&LocalGrid, &mut Transform, &mut Visibility)>,
-) {
-    let Ok(cam) = cameras.single() else { return };
-    let cam_dist = cam.distance.max(0.1);
-
-    for (grid, mut tr, mut vis) in grids.iter_mut() {
-        let step = LEVEL_STEPS[grid.level as usize];
-        let snap_step = step * MAJOR_EVERY as f32;
-        tr.translation.x = (cam.focus.x / snap_step).round() * snap_step;
-        tr.translation.y = GRID_Y;
-        tr.translation.z = (cam.focus.z / snap_step).round() * snap_step;
-
-        let fade = level_fade(cam_dist, step);
-        let a = cfg.color.alpha() * fade;
-        *vis = if a > 0.005 { Visibility::Visible } else { Visibility::Hidden };
-        if let Some(m) = materials.get_mut(&grid.material) {
-            let srgba = cfg.color.to_srgba();
-            m.base_color = Color::srgba(srgba.red, srgba.green, srgba.blue, a);
-        }
-    }
-}
-
-// ─── Camera control systems ─────────────────────────────────────────
-
-fn apply_rig(cam: &ChaseCamera, tr: &mut Transform) {
-    let horizontal = cam.distance * cam.elevation.cos();
-    let vertical = cam.distance * cam.elevation.sin();
-    let offset = Vec3::new(
-        horizontal * cam.yaw.sin(),
-        vertical,
-        horizontal * cam.yaw.cos(),
-    );
-    let cam_world = cam.focus + offset;
-    *tr = Transform::from_translation(cam_world).looking_at(cam.focus, Vec3::Y);
-}
-
-fn cursor_ray_to_ground(camera: &Camera, cam_tr: &GlobalTransform, cursor: Vec2) -> Option<Vec3> {
-    let ray = camera.viewport_to_world(cam_tr, cursor).ok()?;
-    let origin = ray.origin;
-    let direction = *ray.direction;
-    if direction.y.abs() < 1e-6 {
-        return None;
-    }
-    let t = -origin.y / direction.y;
-    if t < 0.0 {
-        return None;
-    }
-    Some(origin + direction * t)
-}
-
-/// Middle-drag → pan; Left+Right-drag → orbit; double-middle-click →
-/// snap focus to cursor's world point. Same bindings as gearbox.
-fn camera_control(
-    time: Res<Time>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
-    primary_window: Query<&Window, With<PrimaryWindow>>,
-    bevy_cameras: Query<(&Camera, &GlobalTransform)>,
-    mut contexts: EguiContexts,
-    mut pan_anchor: Local<Option<Vec2>>,
-    mut orbit_anchor: Local<Option<Vec2>>,
-    mut cameras: Query<(&mut ChaseCamera, &mut Transform)>,
-) {
-    // Don't hijack mouse gestures when the pointer is over an egui
-    // panel / ribbon — lets panels scroll, sliders drag, buttons
-    // click without also panning the world.
-    if contexts.ctx_mut().map(|c| c.wants_pointer_input()).unwrap_or(false) {
-        *pan_anchor = None;
-        *orbit_anchor = None;
-        return;
-    }
-
-    let middle_pressed = mouse_buttons.pressed(MouseButton::Middle);
-    let left_pressed = mouse_buttons.pressed(MouseButton::Left);
-    let right_pressed = mouse_buttons.pressed(MouseButton::Right);
-    let both_lr = left_pressed && right_pressed;
-
-    if !middle_pressed {
-        *pan_anchor = None;
-    }
-    if !both_lr {
-        *orbit_anchor = None;
-    }
-
-    let cursor_position = primary_window.single().ok().and_then(|w| w.cursor_position());
-
-    let mut pan_delta = Vec2::ZERO;
-    if middle_pressed {
-        if let Some(pos) = cursor_position {
-            if let Some(anchor) = *pan_anchor {
-                pan_delta = pos - anchor;
-            }
-            *pan_anchor = Some(pos);
-        }
-    }
-    let mut orbit_delta = Vec2::ZERO;
-    if both_lr {
-        if let Some(pos) = cursor_position {
-            if orbit_anchor.is_none() {
-                *orbit_anchor = Some(pos);
-            }
-            if let Some(anchor) = *orbit_anchor {
-                orbit_delta = pos - anchor;
-            }
-            *orbit_anchor = Some(pos);
-        }
-    }
-
-    let now = time.elapsed_secs();
-
-    for (mut cam, mut tr) in &mut cameras {
-        if mouse_buttons.just_pressed(MouseButton::Middle) {
-            let is_double = now - cam.last_middle_click_secs < 0.35;
-            cam.last_middle_click_secs = now;
-            if is_double {
-                if let (Some(cursor), Ok((camera, cam_tr))) =
-                    (cursor_position, bevy_cameras.single())
-                {
-                    if let Some(hit) = cursor_ray_to_ground(camera, cam_tr, cursor) {
-                        cam.focus = hit;
-                    }
-                }
-            }
-        }
-
-        if pan_delta != Vec2::ZERO {
-            let pan_speed = cam.distance * cam.pan_sensitivity;
-            let forward = Vec3::new(cam.yaw.sin(), 0.0, cam.yaw.cos());
-            let right = Vec3::new(forward.z, 0.0, -forward.x);
-            cam.focus += (-right * pan_delta.x - forward * pan_delta.y) * pan_speed;
-        }
-        if orbit_delta != Vec2::ZERO {
-            cam.yaw -= orbit_delta.x * cam.orbit_speed;
-            cam.elevation += orbit_delta.y * cam.orbit_speed;
-            cam.elevation = cam.elevation.clamp(5f32.to_radians(), 89f32.to_radians());
-        }
-
-        apply_rig(&cam, &mut tr);
-    }
-}
+// Grid LOD mesh + chase-camera control are now provided by
+// `bevy_glacial::{GroundGridPlugin, ChaseCameraPlugin}` — wired in
+// via `GlacialPlugins` above. The hand-rolled equivalents that
+// used to live here (`build_level_mesh`, `level_fade`,
+// `update_grid`, `apply_rig`, `cursor_ray_to_ground`,
+// `camera_control`, `camera_zoom`) have been removed; the demo
+// only retains its own world-picking code.
 
 /// Left-click on a swatch cube → recolour the whole app. Uses a
 /// plain ray-AABB test (the swatches are axis-aligned 1 m cubes, no
@@ -1455,59 +1199,6 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
         }
     }
     Some(tmin.max(0.0))
-}
-
-/// Scroll-wheel zoom — logarithmic with exponential smoothing.
-fn camera_zoom(
-    time: Res<Time>,
-    mut contexts: EguiContexts,
-    mut wheel: MessageReader<MouseWheel>,
-    mut zoom_target: Local<Option<f64>>,
-    mut cameras: Query<(&mut ChaseCamera, &mut Transform)>,
-) {
-    // Don't consume the wheel if egui wants it (e.g. scrolling a
-    // panel list). Drain the reader so events don't queue up.
-    let over_ui = contexts
-        .ctx_mut()
-        .map(|c| c.wants_pointer_input())
-        .unwrap_or(false);
-    if over_ui {
-        wheel.read().for_each(drop);
-        return;
-    }
-
-    let mut scroll_delta = 0.0_f64;
-    for event in wheel.read() {
-        scroll_delta += match event.unit {
-            MouseScrollUnit::Line => event.y as f64,
-            MouseScrollUnit::Pixel => event.y as f64 / 32.0,
-        };
-    }
-
-    let Ok((mut cam, mut tr)) = cameras.single_mut() else { return };
-
-    let target = zoom_target.get_or_insert(cam.distance as f64);
-    let min = cam.min_distance as f64;
-    let max = cam.max_distance as f64;
-
-    if scroll_delta != 0.0 {
-        let log_target = target.max(0.1).log10();
-        let new_log = log_target - scroll_delta * cam.zoom_step;
-        *target = 10f64.powf(new_log).clamp(min, max);
-    }
-
-    let dt = time.delta_secs_f64();
-    let log_current = (cam.distance as f64).max(0.1).ln();
-    let log_target = target.max(0.1).ln();
-    let log_diff = log_target - log_current;
-    if log_diff.abs() > 1e-4 {
-        let new_log = log_current + log_diff * (cam.zoom_smoothing * dt).min(0.9);
-        cam.distance = new_log.exp() as f32;
-        apply_rig(&cam, &mut tr);
-    } else if log_diff.abs() > 1e-5 {
-        cam.distance = *target as f32;
-        apply_rig(&cam, &mut tr);
-    }
 }
 
 // ─── Ribbons — draggable menu-toggle buttons ────────────────────────

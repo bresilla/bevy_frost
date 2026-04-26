@@ -1133,6 +1133,21 @@ pub struct Theme {
     /// caution stripes have their own dedicated theme flags; this
     /// knob does NOT control them.
     pub animations_enabled: bool,
+    /// Multiplier applied to button-feedback animation durations
+    /// (press depress, click pulse, animated-button hover fill).
+    /// `1.0` = base timings (60 ms press in, 90 ms out, 140 ms click
+    /// pulse, 250 ms hover); `2.0` = twice as slow; `0.5` = twice
+    /// as fast. PRO ships `1.0` for snappy clicks; GAME ships
+    /// `2.0` for deliberate, lingering button feedback that fits
+    /// the slower cinematic motion language.
+    pub button_anim_scale: f32,
+    /// Multiplier on the per-section fade-in stagger when a pane
+    /// opens. Base values are `STAGGER = 0.18 s` between adjacent
+    /// sections and `FADE = 0.45 s` per-section opacity ramp; both
+    /// are scaled by this. PRO ships `0.5` (half — sections appear
+    /// quickly so opening a pane doesn't feel slow); GAME ships
+    /// `1.0` for the deliberate cinematic reveal.
+    pub pane_fade_scale: f32,
 
     // ── Text ──
     pub text_primary:   egui::Color32,
@@ -1418,8 +1433,13 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_body_indent: 8.0,
         // PRO — quick snappy fold / unfold so flipping sections
         // open while inspecting feels responsive.
-        section_animation_time: 0.15,
+        // 0.15 → 0.06 (~2.5× faster). PRO sections fold/unfold
+        // almost instantly — feedback is present but doesn't slow
+        // navigation when flipping through panels.
+        section_animation_time: 0.06,
         animations_enabled: true,
+        button_anim_scale: 1.0,
+        pane_fade_scale: 0.5,
         // Text — pulled from the SHARED light/dark tone constants so
         // every variant ends up with the same body-text colours. No
         // per-theme drift.
@@ -1561,6 +1581,12 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // as a deliberate "scene change" cue.
         section_animation_time: 0.35,
         animations_enabled: true,
+        // GAME button feedback runs 2× slower than PRO — clicks
+        // linger, depress takes a beat to settle, the discharge
+        // ring expands languidly. Matches the rest of the GAME
+        // motion language.
+        button_anim_scale: 2.0,
+        pane_fade_scale: 1.0,
         // Text — both Dark and Light branches now pull from the
         // shared tone constants. GAME used to ship custom blue-grey
         // tones for Dark; aligning with the canonical `TEXT_*` set

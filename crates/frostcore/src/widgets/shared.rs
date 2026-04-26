@@ -336,51 +336,59 @@ pub(super) fn tumble_text(
     let key_prev = resp_id.with("frost_tumble_prev");
     let key_starts = resp_id.with("frost_tumble_starts");
 
-    let prev: Option<String> = ctx.data(|d| d.get_temp(key_prev));
-    let mut starts: Vec<f64> = ctx
-        .data(|d| d.get_temp::<Vec<f64>>(key_starts))
-        .unwrap_or_default();
-    let cur_chars: Vec<char> = current.chars().collect();
-    starts.resize(cur_chars.len(), 0.0);
+    // Single combined ctx.data read — instead of two separate
+    // `ctx.data(...)` calls, batch into one closure.
+    let (prev, mut starts): (Option<String>, Vec<f64>) = ctx.data(|d| {
+        (
+            d.get_temp::<String>(key_prev),
+            d.get_temp::<Vec<f64>>(key_starts).unwrap_or_default(),
+        )
+    });
 
-    // Detect digit changes vs the previous frame's text.
+    // Char-count without an intermediate `Vec<char>` allocation.
+    let cur_count = current.chars().count();
+    starts.resize(cur_count, 0.0);
+
+    // Detect digit changes vs the previous frame's text by walking
+    // both char iterators in lock-step — no `Vec<char>` collected
+    // for either side.
     if let Some(prev_str) = &prev {
-        let prev_chars: Vec<char> = prev_str.chars().collect();
-        for (i, &c) in cur_chars.iter().enumerate() {
-            let prev_c = prev_chars.get(i).copied().unwrap_or('\0');
+        let mut prev_iter = prev_str.chars();
+        for (i, c) in current.chars().enumerate() {
+            let prev_c = prev_iter.next().unwrap_or('\0');
             if c != prev_c && c.is_ascii_digit() {
                 starts[i] = now;
             }
         }
     }
 
-    // Build the display string. Tumbling digits get a pseudo-random
-    // digit derived from `(id, i, frame_phase)`; everything else
-    // falls through.
+    // Build the display string in a single allocation sized to the
+    // input length. Tumbling digits get a pseudo-random digit
+    // derived from `(id, i, frame_phase)`; everything else passes
+    // through unchanged.
     let id_seed = (resp_id.value() as u64).wrapping_mul(0x9E37_79B9);
     let frame_phase = (now * 70.0) as u64;
     let mut still_tumbling = false;
-    let display: String = cur_chars
-        .iter()
-        .enumerate()
-        .map(|(i, &c)| {
-            if !c.is_ascii_digit() {
-                return c;
-            }
-            let elapsed = now - starts[i];
-            if elapsed < TUMBLE_DUR && elapsed > 0.0 {
-                still_tumbling = true;
-                let h = id_seed
-                    .wrapping_add((i as u64).wrapping_mul(0xBF58_476D))
-                    .wrapping_add(frame_phase.wrapping_mul(0x94D0_49BB));
-                let d = (h % 10) as u32;
-                char::from_digit(d, 10).unwrap_or(c)
-            } else {
-                c
-            }
-        })
-        .collect();
+    let mut display = String::with_capacity(current.len());
+    for (i, c) in current.chars().enumerate() {
+        if !c.is_ascii_digit() {
+            display.push(c);
+            continue;
+        }
+        let elapsed = now - starts[i];
+        if elapsed < TUMBLE_DUR && elapsed > 0.0 {
+            still_tumbling = true;
+            let h = id_seed
+                .wrapping_add((i as u64).wrapping_mul(0xBF58_476D))
+                .wrapping_add(frame_phase.wrapping_mul(0x94D0_49BB));
+            let d = (h % 10) as u32;
+            display.push(char::from_digit(d, 10).unwrap_or(c));
+        } else {
+            display.push(c);
+        }
+    }
 
+    // Single combined ctx.data write.
     ctx.data_mut(|d| {
         d.insert_temp(key_prev, current.to_string());
         d.insert_temp(key_starts, starts);
@@ -403,10 +411,12 @@ pub(super) fn press_depress_amount(
     pressed: bool,
     max_px: f32,
 ) -> f32 {
-    if !crate::style::theme().animations_enabled {
+    let th = crate::style::theme();
+    if !th.animations_enabled {
         return 0.0;
     }
-    let dur = if pressed { 0.06 } else { 0.09 };
+    let scale = th.button_anim_scale.max(0.01);
+    let dur = if pressed { 0.06 * scale } else { 0.09 * scale };
     let t = ctx.animate_bool_with_time(resp_id.with("frost_press"), pressed, dur);
     t * max_px
 }
@@ -424,7 +434,8 @@ pub(super) fn paint_click_pulse(
     accent: egui::Color32,
     radius: egui::CornerRadius,
 ) {
-    if !crate::style::theme().animations_enabled {
+    let th = crate::style::theme();
+    if !th.animations_enabled {
         return;
     }
     let click_id = resp.id.with("frost_click_at");
@@ -436,9 +447,9 @@ pub(super) fn paint_click_pulse(
     if let Some(t0) = click_at {
         let now = ctx.input(|i| i.time);
         let elapsed = (now - t0) as f32;
-        const PULSE_DUR: f32 = 0.14;
-        if elapsed < PULSE_DUR {
-            let progress = elapsed / PULSE_DUR;
+        let pulse_dur = 0.14 * th.button_anim_scale.max(0.01);
+        if elapsed < pulse_dur {
+            let progress = elapsed / pulse_dur;
             let inflate = egui::lerp(2.0..=8.0, progress);
             let alpha = ((1.0 - progress) * 0.6 * 255.0).round().clamp(0.0, 255.0) as u8;
             let pulse = egui::Color32::from_rgba_unmultiplied(

@@ -82,10 +82,11 @@ pub fn animated_button(
     // animations off, the hover progress jumps instantly between
     // 0 and 1 with no animation — same end colour, no transition.
     let hover_t = if th.animations_enabled {
+        let dur = 0.25 * th.button_anim_scale.max(0.01);
         ui.ctx().animate_bool_with_time(
             resp.id.with("frost_anim_btn_hover"),
             resp.hovered() || pressed,
-            0.25,
+            dur,
         )
     } else if resp.hovered() || pressed {
         1.0

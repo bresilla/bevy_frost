@@ -239,14 +239,21 @@ impl<'a> PaneBuilder<'a> {
         // Opacity ramps `0 → 1` through smoothstep over the fade
         // window. The body always allocates its full layout so the
         // pane height stays stable from t=0; only the alpha changes.
-        const STAGGER: f32 = 0.18;
-        const FADE: f32 = 0.45;
+        const STAGGER_BASE: f32 = 0.18;
+        const FADE_BASE: f32 = 0.45;
         // `animations_enabled` off → sections appear instantly at
-        // full opacity, no stagger, no fade.
-        let opacity = if crate::style::theme().animations_enabled {
+        // full opacity, no stagger, no fade. When on, both
+        // `STAGGER` and `FADE` are scaled by the active theme's
+        // `pane_fade_scale` — PRO halves them (snappy reveal),
+        // GAME keeps the original (deliberate stagger).
+        let th = crate::style::theme();
+        let opacity = if th.animations_enabled {
+            let scale = th.pane_fade_scale.max(0.01);
+            let stagger = STAGGER_BASE * scale;
+            let fade = FADE_BASE * scale;
             let section_idx = self.non_dragged_count as f32;
-            let start = section_idx * STAGGER;
-            let raw = ((self.pane_open_elapsed - start) / FADE).clamp(0.0, 1.0);
+            let start = section_idx * stagger;
+            let raw = ((self.pane_open_elapsed - start) / fade).clamp(0.0, 1.0);
             raw * raw * (3.0 - 2.0 * raw)
         } else {
             1.0
