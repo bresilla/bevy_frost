@@ -36,14 +36,29 @@ multi-line text editor for `egui`.
 
 ---
 
+## `crates/frostcore/src/features/flex/`
+
+Derived from **egui_flex** v0.6.0 — a flexbox-style layout
+container for `egui`.
+
+- Upstream: <https://github.com/lucasmerlin/hello_egui/tree/main/crates/egui_flex>
+- Author: Lucas Meurer
+  ([@lucasmerlin](https://github.com/lucasmerlin))
+- License: MIT
+- License file (verbatim copy):
+  - [`crates/frostcore/src/features/flex/LICENSE`](crates/frostcore/src/features/flex/LICENSE)
+
+---
+
 ## Why vendored instead of depending directly
 
-Both crates are excellent upstream, but we expect to modify them
-heavily for project-specific needs (per-node colour, custom
-syntax rules, editor behaviour changes, …) and have no intention
-of upstreaming those changes. Vendoring lets us iterate without
-forks / PR roundtrips and keeps every dependency visible in this
-repo's source tree.
+All three crates are excellent upstream, but we expect to modify
+them heavily for project-specific needs (per-node colour, custom
+syntax rules, editor behaviour changes, layout primitives that
+plug directly into the frost theme tokens, …) and have no
+intention of upstreaming those changes. Vendoring lets us iterate
+without forks / PR roundtrips and keeps every dependency visible
+in this repo's source tree.
 
 If you contribute a change to the vendored code that could
 benefit upstream too, please send it to the original repo first

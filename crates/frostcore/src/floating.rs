@@ -687,6 +687,36 @@ pub fn floating_window_scoped(
         _ => egui::vec2(side_inset, EDGE_GAP),
     };
 
+    // Open-animation: title strip appears immediately at full
+    // opacity, body unrolls downward from behind it. Implemented as
+    // a clip rect that grows below the title row over `t` —
+    // achieves the "curtain reveal" effect without resizing the
+    // window itself (which would shift the surrounding layout).
+    // Closing is instant: the host stops calling this function the
+    // moment the menu toggles shut, so the body just vanishes.
+    let anim_t: f32 = {
+        let frame_key = egui::Id::new(("frost_pane_anim_frame", id));
+        let state_key = egui::Id::new(("frost_pane_anim_state", id));
+        let frame_now = ctx.cumulative_pass_nr();
+        let last_frame: u64 = ctx.data(|d| d.get_temp(frame_key)).unwrap_or(0);
+        let mut state: f32 = ctx.data(|d| d.get_temp(state_key)).unwrap_or(1.0);
+        if last_frame + 1 < frame_now {
+            state = 0.0;
+        }
+        let animation_time = ctx.style().animation_time.max(0.001);
+        let dt = ctx.input(|i| i.unstable_dt).max(0.0);
+        state = (state + dt / animation_time).min(1.0);
+        ctx.data_mut(|d| {
+            d.insert_temp(state_key, state);
+            d.insert_temp(frame_key, frame_now);
+        });
+        if state < 1.0 {
+            ctx.request_repaint();
+        }
+        let s = state.clamp(0.0, 1.0);
+        s * s * (3.0 - 2.0 * s)
+    };
+
     // `pane_fill(accent)` resolves the theme's panel-fill mode —
     // PRO returns the dark `bg_panel`; GAME returns an
     // accent-derived dark colour so the pane visually carries the
@@ -793,6 +823,23 @@ pub fn floating_window_scoped(
             let body_left = ui.cursor().min.x;
             let body_w = ui.available_width();
             let body_h = (ui.max_rect().bottom() - body_top).max(0.0);
+
+            // Curtain-reveal animation: clamp the body's clip rect
+            // to a strip starting at `body_top` and growing
+            // downward as `anim_t` ramps 0 → 1. ONLY applied while
+            // the animation is in progress; once `anim_t == 1.0` we
+            // leave the parent ui's natural clip alone so nothing
+            // inside the body is accidentally trimmed.
+            let prev_clip = ui.clip_rect();
+            let animating = anim_t < 1.0;
+            if animating {
+                let reveal_h = body_h * anim_t;
+                let body_clip = egui::Rect::from_min_size(
+                    egui::pos2(body_left, body_top),
+                    egui::vec2(body_w, reveal_h),
+                );
+                ui.set_clip_rect(prev_clip.intersect(body_clip));
+            }
             let body_rect = egui::Rect::from_min_size(
                 egui::pos2(body_left, body_top),
                 egui::vec2(body_w, body_h),
@@ -835,6 +882,11 @@ pub fn floating_window_scoped(
                 }
             });
             pane.finalize();
+            // Restore the parent ui's clip — only meaningful when
+            // the animation overrode it this frame.
+            if animating {
+                ui.set_clip_rect(prev_clip);
+            }
         });
 
     let Some(inner) = inner else { return };

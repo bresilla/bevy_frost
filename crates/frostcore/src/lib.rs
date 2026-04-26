@@ -31,6 +31,7 @@
 pub mod code;
 pub mod command_palette;
 pub mod features;
+pub mod flex;
 pub mod floating;
 pub mod icons;
 pub mod maximize;

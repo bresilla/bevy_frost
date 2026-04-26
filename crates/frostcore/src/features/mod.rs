@@ -13,9 +13,14 @@
 //! * [`code_editor`] — syntax-highlighting text editor, originally
 //!   `egui_code_editor` 0.2.21.
 //!   Upstream: <https://github.com/p4ymak/egui_code_editor>.
+//! * [`flex`] — flexbox-style layout container, originally
+//!   `egui_flex` 0.6.0.
+//!   Upstream:
+//!   <https://github.com/lucasmerlin/hello_egui/tree/main/crates/egui_flex>.
 //!
-//! Neither vendor is meant to stay faithful to upstream. Feel free
-//! to edit in place.
+//! None of these vendors are meant to stay faithful to upstream.
+//! Feel free to edit in place.
 
 pub mod code_editor;
+pub mod flex;
 pub mod snarl;

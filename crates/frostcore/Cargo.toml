@@ -27,10 +27,15 @@ iconflow = { version = "1.0", default-features = false, features = ["pack-fluent
 bevy = { workspace = true, optional = true }
 
 [features]
-# Turn on the vendored sub-crates (`features/snarl`, `features/code_editor`).
-# Both default-on — most callers want them. Disabling cuts compile
-# time if you only need the widgets / ribbon / style primitives.
-default = ["snarl", "code-editor"]
+# Turn on the vendored sub-crates (`features/{snarl,code_editor,flex}`).
+# All three default-on — most callers want them. Disabling cuts
+# compile time if you only need the widgets / ribbon / style
+# primitives.
+default = ["snarl", "code-editor", "flex"]
+
+# Vendored egui_flex — flexbox-style layout container. See
+# `src/features/flex` + `ACKNOWLEDGEMENTS.md`.
+flex = []
 
 # Vendored egui-snarl — node-graph widget. See
 # `src/features/snarl` + `ACKNOWLEDGEMENTS.md`. The two legacy
