@@ -241,10 +241,16 @@ impl<'a> PaneBuilder<'a> {
         // pane height stays stable from t=0; only the alpha changes.
         const STAGGER: f32 = 0.18;
         const FADE: f32 = 0.45;
-        let section_idx = self.non_dragged_count as f32;
-        let start = section_idx * STAGGER;
-        let raw = ((self.pane_open_elapsed - start) / FADE).clamp(0.0, 1.0);
-        let opacity = raw * raw * (3.0 - 2.0 * raw);
+        // `animations_enabled` off → sections appear instantly at
+        // full opacity, no stagger, no fade.
+        let opacity = if crate::style::theme().animations_enabled {
+            let section_idx = self.non_dragged_count as f32;
+            let start = section_idx * STAGGER;
+            let raw = ((self.pane_open_elapsed - start) / FADE).clamp(0.0, 1.0);
+            raw * raw * (3.0 - 2.0 * raw)
+        } else {
+            1.0
+        };
         let prev_opacity = self.ui.opacity();
         if opacity < 1.0 {
             self.ui.multiply_opacity(opacity);
@@ -858,7 +864,26 @@ pub fn floating_window_scoped(
             // `set_title_weight`. Falls back to `Proportional` until
             // `ctx.set_fonts` has actually taken effect.
             let font = egui::FontId::new(title_size, crate::style::title_font_family());
-            ui.painter().text(pos, align, title.to_uppercase(), font, title_col);
+            // GAME motion #17 — scramble-decode. Pane title decodes
+            // from random glyphs every time the pane opens (the
+            // session counter bumps when the pane reappears after
+            // being hidden, salting the scramble id so a fresh
+            // cycle plays). Gated on `theme().scramble_titles` so
+            // PRO panes paint the title cleanly.
+            let title_uc = title.to_uppercase();
+            let displayed = if crate::style::theme().scramble_titles {
+                let session_id = egui::Id::new(("frost_pane_title_session", id));
+                let session = crate::style::appearance_session(ui.ctx(), session_id);
+                let scramble_id = session_id.with(session);
+                // Pane title is fully visible once the pane is open
+                // (no per-section fade), so `active = true` — the
+                // scramble cycle plays immediately when the pane
+                // appears.
+                crate::style::scramble_text(ui.ctx(), scramble_id, &title_uc, true)
+            } else {
+                title_uc
+            };
+            ui.painter().text(pos, align, displayed, font, title_col);
 
             // GAME motion #9 — 1 Hz telemetry pip. Tiny 4×4 px square
             // anchored at the OPPOSITE end of the title text. Flips

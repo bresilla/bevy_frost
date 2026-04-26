@@ -306,11 +306,11 @@ pub(super) fn smoothed_fraction(
     target: f32,
     time_const: f32,
 ) -> f32 {
-    ctx.animate_value_with_time(
-        resp_id.with("frost_bar_catchup"),
-        target.clamp(0.0, 1.0),
-        time_const,
-    )
+    let target = target.clamp(0.0, 1.0);
+    if !crate::style::theme().animations_enabled {
+        return target;
+    }
+    ctx.animate_value_with_time(resp_id.with("frost_bar_catchup"), target, time_const)
 }
 
 /// GAME motion #14 — numeric roll-tumble. Returns a display string
@@ -328,6 +328,9 @@ pub(super) fn tumble_text(
     resp_id: egui::Id,
     current: &str,
 ) -> String {
+    if !crate::style::theme().animations_enabled {
+        return current.to_string();
+    }
     const TUMBLE_DUR: f64 = 0.28;
     let now = ctx.input(|i| i.time);
     let key_prev = resp_id.with("frost_tumble_prev");
@@ -400,6 +403,9 @@ pub(super) fn press_depress_amount(
     pressed: bool,
     max_px: f32,
 ) -> f32 {
+    if !crate::style::theme().animations_enabled {
+        return 0.0;
+    }
     let dur = if pressed { 0.06 } else { 0.09 };
     let t = ctx.animate_bool_with_time(resp_id.with("frost_press"), pressed, dur);
     t * max_px
@@ -418,6 +424,9 @@ pub(super) fn paint_click_pulse(
     accent: egui::Color32,
     radius: egui::CornerRadius,
 ) {
+    if !crate::style::theme().animations_enabled {
+        return;
+    }
     let click_id = resp.id.with("frost_click_at");
     if resp.clicked() {
         let now = ctx.input(|i| i.time);

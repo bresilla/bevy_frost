@@ -344,7 +344,32 @@ pub(crate) fn section_tracked<'i>(
                         }
                     }
 
-                    job.append(&title.to_uppercase(), 0.0, default_format.clone());
+                    // GAME motion #17 — scramble-decode every time
+                    // the section reappears (pane open). Session
+                    // counter bumps on each visibility gap, salting
+                    // the scramble id so a fresh cycle plays.
+                    // Gated on `theme().scramble_titles`.
+                    let title_uc = title.to_uppercase();
+                    let displayed = if crate::style::theme().scramble_titles {
+                        let session_id = ui.id().with(("frost_section_title_session", id_salt));
+                        let session = crate::style::appearance_session(ui.ctx(), session_id);
+                        let scramble_id = session_id.with(session);
+                        // Gate the scramble cycle on the host ui's
+                        // current opacity — sections fade in with a
+                        // per-section stagger from `PaneBuilder`,
+                        // so during the fade `ui.opacity() < 1`.
+                        // Until the section is essentially fully
+                        // visible (≥ 0.95) the scramble shows
+                        // random glyphs without committing to a
+                        // cycle; once it crosses the threshold the
+                        // cycle starts fresh and locks left-to-
+                        // right exactly when the user can see it.
+                        let active = ui.opacity() >= 0.95;
+                        crate::style::scramble_text(ui.ctx(), scramble_id, &title_uc, active)
+                    } else {
+                        title_uc
+                    };
+                    job.append(&displayed, 0.0, default_format.clone());
 
                     if any_brackets {
                         let bracket_format = egui::TextFormat {
@@ -415,18 +440,19 @@ pub(crate) fn section_tracked<'i>(
                                 // state still centres the small icon
                                 // on the strip.
                                 let folded_size = base_size * 0.85;
-                                // +10 % over the previous 2.4× — the
-                                // icon reads more "sticker on top"
-                                // when unfolded.
-                                let unfolded_size = base_size * 2.64;
+                                // Successive +5 % growths, every one
+                                // applied ONLY to the bottom edge —
+                                // top sticker overflow stays pinned
+                                // through each bump. `UNFOLDED_TOP`
+                                // shrinks by half the size delta on
+                                // each round so `cy` slides down to
+                                // keep the top edge constant.
+                                //   2.64    → 2.772    (+5 %)  TOP 32    → 30.68
+                                //   2.772   → 2.9106   (+5 %)  TOP 30.68 → 29.294
+                                let unfolded_size = base_size * 2.9106;
                                 let t = smoothstep(captured_openness);
                                 let size = egui::lerp(folded_size..=unfolded_size, t);
-                                // Pushed up from 25 → 36 so the icon
-                                // overflows ABOVE the container's top
-                                // edge instead of starting where the
-                                // container starts. Reads as a sticker
-                                // pinned above the section header.
-                                const UNFOLDED_TOP: f32 = 36.0;
+                                const UNFOLDED_TOP: f32 = 29.294;
                                 let folded_top = folded_size * 0.5;
                                 let top_offset = egui::lerp(folded_top..=UNFOLDED_TOP, t);
                                 // Mirror the icon side: right-anchored

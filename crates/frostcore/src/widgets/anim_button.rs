@@ -78,12 +78,20 @@ pub fn animated_button(
     // source CSS `0.5s ease-in-out` so the fill snaps in before
     // the user can pull off. Press contributes too so the fill
     // settles fully while held, mirroring `wide_button`'s tint
-    // collapsing onto `tint_press`.
-    let hover_t = ui.ctx().animate_bool_with_time(
-        resp.id.with("frost_anim_btn_hover"),
-        resp.hovered() || pressed,
-        0.25,
-    );
+    // collapsing onto `tint_press`. When the active theme has
+    // animations off, the hover progress jumps instantly between
+    // 0 and 1 with no animation — same end colour, no transition.
+    let hover_t = if th.animations_enabled {
+        ui.ctx().animate_bool_with_time(
+            resp.id.with("frost_anim_btn_hover"),
+            resp.hovered() || pressed,
+            0.25,
+        )
+    } else if resp.hovered() || pressed {
+        1.0
+    } else {
+        0.0
+    };
 
     // Press depress — shared helper. Paints into the depressed
     // rect just like `wide_button`, so a held animated button

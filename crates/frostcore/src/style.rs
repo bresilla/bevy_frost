@@ -789,6 +789,134 @@ pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
 
 pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
 
+/// Tracks how many "appearance sessions" an `id` has had — the
+/// counter increments every time the id is missing from a frame
+/// and then re-appears (e.g. a pane closes and reopens). Use this
+/// counter as a salt on per-id animation ids so each fresh
+/// appearance gets a clean animation cycle instead of replaying
+/// the previous session's locked-in state.
+pub fn appearance_session(ctx: &egui::Context, id: egui::Id) -> u64 {
+    let key_seen = id.with("frost_last_seen_pass");
+    let key_sess = id.with("frost_session_count");
+    let now = ctx.cumulative_pass_nr();
+    let last: Option<u64> = ctx.data(|d| d.get_temp(key_seen));
+    let mut sess: u64 = ctx.data(|d| d.get_temp(key_sess)).unwrap_or(0);
+    let bumped = match last {
+        Some(p) if p + 1 == now => false,
+        _ => true,
+    };
+    if bumped {
+        sess = sess.wrapping_add(1);
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(key_seen, now);
+        d.insert_temp(key_sess, sess);
+    });
+    sess
+}
+
+const SCRAMBLE_CHARS: &[char] = &[
+    '!', '<', '>', '-', '_', '/', '[', ']', '{', '}', '=', '+', '*', '^', '?', '#',
+];
+
+/// GAME motion #17 — scramble-decode. Returns a display string in
+/// which any character that *just appeared* (or changed) cycles
+/// through `SCRAMBLE_CHARS` for a brief staggered duration before
+/// locking on its final character. Locks LEFT-TO-RIGHT — character
+/// `i` is fully settled by `t = base + i × STAGGER`, so a label
+/// "decodes" from the left edge inward.
+///
+/// `active` gates the cycle: when **false** the function paints
+/// fresh random glyphs every frame WITHOUT updating the
+/// prev-text/start-time state. When `active` flips to **true**, the
+/// stored prev is stale, the cycle starts from scratch on that
+/// frame, and the scramble plays from the user's perspective. Use
+/// this to wait until the host element has finished its fade-in
+/// (e.g. `ui.opacity() >= 0.95`) so the scramble doesn't burn off
+/// while the title is still invisible.
+///
+/// Calls `request_repaint` while any character is still scrambling
+/// (or while gated, so the random glyphs keep cycling).
+pub fn scramble_text(
+    ctx: &egui::Context,
+    id: egui::Id,
+    current: &str,
+    active: bool,
+) -> String {
+    /// Staggered delay between adjacent characters' lock times.
+    const STAGGER: f64 = 0.07;
+    /// Minimum scramble duration for the leftmost character.
+    const MIN_DUR: f64 = 0.42;
+
+    let now = ctx.input(|i| i.time);
+    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9);
+    let frame_phase = (now * 70.0) as u64;
+
+    // Gated path — paint random glyphs continuously, never touch
+    // the prev/start state. When `active` flips true the stored
+    // prev (None or stale) doesn't match `current`, so the active
+    // path will reset start_time and begin a fresh cycle.
+    if !active {
+        ctx.request_repaint();
+        return current
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.is_whitespace() {
+                    return c;
+                }
+                let h = id_seed
+                    .wrapping_add((i as u64).wrapping_mul(0xBF58_476D))
+                    .wrapping_add(frame_phase.wrapping_mul(0x94D0_49BB));
+                SCRAMBLE_CHARS[(h as usize) % SCRAMBLE_CHARS.len()]
+            })
+            .collect();
+    }
+
+    let key_start = id.with("frost_scramble_start");
+    let key_prev = id.with("frost_scramble_prev");
+    let prev: Option<String> = ctx.data(|d| d.get_temp(key_prev));
+    let mut start: f64 = ctx
+        .data(|d| d.get_temp(key_start))
+        .unwrap_or(now);
+    // Restart scramble whenever the text changes (or on first sight,
+    // including the frame `active` first flips to true).
+    if prev.as_deref() != Some(current) {
+        start = now;
+        ctx.data_mut(|d| {
+            d.insert_temp(key_prev, current.to_string());
+            d.insert_temp(key_start, start);
+        });
+    }
+
+    let elapsed = now - start;
+    let mut still_scrambling = false;
+    let display: String = current
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if c.is_whitespace() {
+                return c;
+            }
+            let lock_time = MIN_DUR + (i as f64) * STAGGER;
+            if elapsed < lock_time {
+                still_scrambling = true;
+                let h = id_seed
+                    .wrapping_add((i as u64).wrapping_mul(0xBF58_476D))
+                    .wrapping_add(frame_phase.wrapping_mul(0x94D0_49BB));
+                SCRAMBLE_CHARS[(h as usize) % SCRAMBLE_CHARS.len()]
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    if still_scrambling {
+        ctx.request_repaint();
+    }
+    display
+}
+
 // ─── Design-system tokens ────────────────────────────────────────────
 //
 // Every panel should lay out against THESE instead of ad-hoc `add_space`
@@ -957,6 +1085,17 @@ pub struct Theme {
     /// fold / unfold; GAME favours a deliberate softer ease so the
     /// banner expansion reads as "scene transition".
     pub section_animation_time: f32,
+    /// **NO ANIMATION** kill-switch. When `false`, every motion
+    /// helper in the kit short-circuits to its end state — press
+    /// depress, click pulse, bargraph catch-up, numeric tumble,
+    /// section fade-in stagger, animated-button hover fills, all
+    /// off. Defaults to `true` on both PRO and GAME presets; flip
+    /// to `false` (e.g. `Theme { animations_enabled: false,
+    /// ..theme_pro(Mode::Dark) }`) for an instant-feedback variant.
+    /// Scramble-decode + corner-bracket pulse + telemetry pip +
+    /// caution stripes have their own dedicated theme flags; this
+    /// knob does NOT control them.
+    pub animations_enabled: bool,
 
     // ── Text ──
     pub text_primary:   egui::Color32,
@@ -1180,6 +1319,10 @@ pub struct Theme {
     /// accent + dark-neutral diagonals frame the title with the same
     /// "do-not-cross" cue police tape uses).
     pub pane_title_stripes: bool,
+    /// Whether pane / section titles "decode" through the
+    /// [`scramble_text`] symbol cycle on every appearance. PRO
+    /// `false` (clean text). GAME `true` (tactical decode feel).
+    pub scramble_titles: bool,
 
     // ── Tree / list visuals ──
     /// Width of the indent-guide line painted at each depth level
@@ -1239,6 +1382,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         // PRO — quick snappy fold / unfold so flipping sections
         // open while inspecting feels responsive.
         section_animation_time: 0.15,
+        animations_enabled: true,
         // Text — pulled from the SHARED light/dark tone constants so
         // every variant ends up with the same body-text colours. No
         // per-theme drift.
@@ -1316,6 +1460,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         pane_shadow_y:     8,
         pane_show_title_divider: true,
         pane_title_stripes: false,
+        scramble_titles: false,
         tree_guide_width: 1.0,
         snarl_pin_width:  1.0,
         ghost_fill_alpha:   28,
@@ -1378,6 +1523,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // GAME — slower fold / unfold so the banner expansion reads
         // as a deliberate "scene change" cue.
         section_animation_time: 0.35,
+        animations_enabled: true,
         // Text — both Dark and Light branches now pull from the
         // shared tone constants. GAME used to ship custom blue-grey
         // tones for Dark; aligning with the canonical `TEXT_*` set
@@ -1395,10 +1541,10 @@ pub const fn theme_game(mode: Mode) -> Theme {
         title_color_mode: TextColorMode::Accent,
         title_softness: 0.0,
         ribbon_button_accent_fill: true,
-        // Bumped from 6 → 12 so the gap between sections is genuinely
-        // visible — at 6 px it was being eaten by section padding /
-        // anti-aliasing fuzz at typical DPIs.
-        section_gap: 12.0,
+        // Inter-section gap. Originally 12 px → 7.2 → 4.0 (further
+        // tightened). Just enough to read as a separation; the
+        // sections now stack densely so a pane fits more content.
+        section_gap: 4.0,
         // Corner ticks sit 2 px inside the section's painted edge —
         // gives every bracket some breathing room from the edge
         // (which the user explicitly asked for) AND guarantees the
@@ -1429,7 +1575,10 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_title_size: 11.5,
         body_accent_darken: 0.18,
         section_icon_at_end: true,
-        section_icon_size: 24.0,
+        // Trimmed 24 → 20 — less dominant on the title strip while
+        // still readable when the section unfolds (the unfolded
+        // multiplier in `widgets/foldable.rs` lifts it back up).
+        section_icon_size: 20.0,
         section_body_top_pad: 16.0,
         row_separator_dash: Some((4.0, 3.0)),
         // Trailing dashed rule after the title is OFF — user
@@ -1488,6 +1637,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         pane_shadow_y:     0,
         pane_show_title_divider: false,
         pane_title_stripes: true,
+        scramble_titles: true,
         tree_guide_width: 0.0,
         snarl_pin_width:  0.0,
         ghost_fill_alpha:   90,
