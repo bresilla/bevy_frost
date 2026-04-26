@@ -318,6 +318,12 @@ impl FontWeight {
 /// pushes the font onto the egui context.
 static ACTIVE_FONT_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
 
+/// Active title-font weight (pane title + section header). Defaults
+/// to [`FontWeight::Heavy`] so titles read clearly against any
+/// accent fill without relying on per-glyph outlines or shadow
+/// tricks. Same sentinel scheme as the body weight.
+static ACTIVE_TITLE_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
+
 /// Replace the active body-font weight. Takes effect on the next
 /// `apply_theme` call — `apply_theme` notices the change and
 /// re-issues `ctx.set_fonts` once.
@@ -333,32 +339,97 @@ pub fn font_weight() -> FontWeight {
     if v == u8::MAX { FontWeight::default() } else { FontWeight::from_u8(v) }
 }
 
-/// Replace egui's stock body fonts with the chosen Iosevka weight
-/// **and** register every iconflow Fluent UI font variant as a named
-/// family. After this call, widgets can paint Fluent icons via
-/// `crate::icons::icon_text(name, size, color)` or look up the
-/// glyph + family with `crate::icons::icon(name)`.
-fn install_fonts(ctx: &egui::Context, weight: FontWeight) {
+/// Replace the active title-font weight (pane title + section
+/// header). Takes effect on the next `apply_theme` call.
+pub fn set_title_weight(w: FontWeight) {
+    ACTIVE_TITLE_WEIGHT.store(w.as_u8(), Ordering::Relaxed);
+}
+
+/// Read the currently-selected title-font weight. Default is
+/// [`FontWeight::Heavy`].
+pub fn title_weight() -> FontWeight {
+    let v = ACTIVE_TITLE_WEIGHT.load(Ordering::Relaxed);
+    if v == u8::MAX { FontWeight::Heavy } else { FontWeight::from_u8(v) }
+}
+
+/// Named font family the title-paint sites (`floating::pane_title`,
+/// `widgets::foldable::section_header`) ask for. The body family
+/// stays as `FontFamily::Proportional` so every other widget keeps
+/// the body weight without changes.
+pub const TITLE_FAMILY_NAME: &str = "frost-title";
+
+/// `true` once `install_fonts` has pushed a `FontDefinitions` that
+/// binds [`TITLE_FAMILY_NAME`] AND egui has begun the next pass
+/// (i.e. `set_fonts` actually took effect). Title paint sites read
+/// this to decide whether to ask for the named family or fall back
+/// to `Proportional` — looking up an unbound `FontFamily::Name` is
+/// a hard panic in epaint.
+pub static TITLE_FONT_READY: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Resolve the [`egui::FontFamily`] the title sites should use this
+/// frame. Returns the named family once the title font is bound;
+/// falls back to `Proportional` until then so frame 0 doesn't panic.
+pub fn title_font_family() -> egui::FontFamily {
+    if TITLE_FONT_READY.load(Ordering::Acquire) {
+        egui::FontFamily::Name(TITLE_FAMILY_NAME.into())
+    } else {
+        egui::FontFamily::Proportional
+    }
+}
+
+/// Push a `FontDefinitions` that binds:
+///
+/// * The selected body weight as **face 0** of `Proportional` and
+///   `Monospace` — every native egui widget (Label, Button, …)
+///   picks it up automatically.
+/// * The selected title weight under [`TITLE_FAMILY_NAME`] as
+///   `FontFamily::Name(...)` so the pane / section title sites can
+///   paint with a heavier face independently of the body.
+/// * Every iconflow Fluent UI variant under its own named family
+///   (`crate::icons::install_iconflow_fonts`).
+///
+/// Called from `apply_theme` whenever either weight changes; the
+/// dedup atomic in `apply_theme` keeps the cost to a single
+/// `ctx.set_fonts` per change.
+fn install_fonts(ctx: &egui::Context, body: FontWeight, title: FontWeight) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
-        weight.name().into(),
-        std::sync::Arc::new(egui::FontData::from_static(weight.ttf())),
+        body.name().into(),
+        std::sync::Arc::new(egui::FontData::from_static(body.ttf())),
     );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         fonts
             .families
             .entry(family)
             .or_default()
-            .insert(0, weight.name().into());
+            .insert(0, body.name().into());
     }
+    // Title family — only adds a second `FontData` if the title
+    // weight differs from the body weight. egui de-dups by key so
+    // re-using the body's `font_data` entry for both registrations
+    // would also work, but inserting a separate entry keeps the
+    // ownership semantics clean and matches what FontDefinitions
+    // expects.
+    if title != body {
+        fonts.font_data.insert(
+            title.name().into(),
+            std::sync::Arc::new(egui::FontData::from_static(title.ttf())),
+        );
+    }
+    fonts
+        .families
+        .entry(egui::FontFamily::Name(TITLE_FAMILY_NAME.into()))
+        .or_default()
+        .insert(0, title.name().into());
+
     crate::icons::install_iconflow_fonts(&mut fonts);
     ctx.set_fonts(fonts);
-    // Mark Fluent fonts ready so `paint_icon` / `paint_section_icon`
-    // can stop bailing out — set AFTER `ctx.set_fonts` so any
-    // concurrent paint sees the flag only when egui actually has the
-    // family bound.
+    // Set the ready flags AFTER `ctx.set_fonts` so any concurrent
+    // paint sees the flag only once egui has the family bound.
     crate::icons::ICONFLOW_FONTS_READY
         .store(true, std::sync::atomic::Ordering::Release);
+    TITLE_FONT_READY.store(true, std::sync::atomic::Ordering::Release);
 }
 
 /// Apply the frost theme to the given egui context. Pure egui —
@@ -376,11 +447,13 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     static LAST_ACCENT: AtomicU32 = AtomicU32::new(u32::MAX);
     static LAST_OPACITY: AtomicU8 = AtomicU8::new(0);
     static LAST_THEME_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
-    // Weight currently bound on the egui context. `u8::MAX` is the
-    // "never-installed" sentinel; the first `apply_theme` call always
-    // installs a font, and any later `set_font_weight` change is
-    // detected by comparing this against `font_weight()`.
-    static LAST_FONT_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
+    // Body + title weights currently bound on the egui context.
+    // `u8::MAX` is the "never-installed" sentinel; the first
+    // `apply_theme` call always installs fonts, and any later
+    // `set_font_weight` / `set_title_weight` change is detected by
+    // comparing these against the live atomics.
+    static LAST_BODY_WEIGHT:  AtomicU8 = AtomicU8::new(u8::MAX);
+    static LAST_TITLE_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
 
     let th = theme();
     // Adapt the user's raw accent to the active brightness mode:
@@ -389,11 +462,16 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // Conversion goes through HSL so only lightness changes — the
     // hue and saturation the user picked stay intact.
     let accent_col = adapt_accent_to_mode(accent.0, th.is_light);
-    let weight = font_weight();
-    let weight_u8 = weight.as_u8();
-    if LAST_FONT_WEIGHT.load(Ordering::Relaxed) != weight_u8 {
-        install_fonts(ctx, weight);
-        LAST_FONT_WEIGHT.store(weight_u8, Ordering::Relaxed);
+    let body_w  = font_weight();
+    let title_w = title_weight();
+    let body_u8  = body_w.as_u8();
+    let title_u8 = title_w.as_u8();
+    if LAST_BODY_WEIGHT.load(Ordering::Relaxed) != body_u8
+        || LAST_TITLE_WEIGHT.load(Ordering::Relaxed) != title_u8
+    {
+        install_fonts(ctx, body_w, title_w);
+        LAST_BODY_WEIGHT.store(body_u8, Ordering::Relaxed);
+        LAST_TITLE_WEIGHT.store(title_u8, Ordering::Relaxed);
     }
 
     // Pack the accent Color32 as u32: (r << 24) | (g << 16) | (b << 8) | a.
@@ -995,6 +1073,12 @@ pub struct Theme {
     /// Whether the pane title strip paints a 1 px hairline divider
     /// under the title. PRO true, GAME false.
     pub pane_show_title_divider: bool,
+    /// Whether the pane title strip paints a diagonal "caution-tape"
+    /// stripe pattern (alternating accent + panel-neutral) behind the
+    /// title text. PRO `false` (clean strip). GAME `true` (the bright
+    /// accent + dark-neutral diagonals frame the title with the same
+    /// "do-not-cross" cue police tape uses).
+    pub pane_title_stripes: bool,
 
     // ── Tree / list visuals ──
     /// Width of the indent-guide line painted at each depth level
@@ -1019,9 +1103,14 @@ pub struct Theme {
 /// light variants pick the same body-text tones.
 pub const PRO_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xF5, 0xF7);
 pub const PRO_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
-pub const PRO_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF6, 0xF8, 0xFA);
-pub const PRO_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xEC, 0xEC, 0xEF);
-pub const PRO_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFA, 0xFC);
+// Raised + input tiers tightened — the previous values (`F6F8FA`
+// raised, `FAFAFC` input) sat ~5 units off the white panel, so
+// dropdowns and button surfaces were effectively invisible. Mirrors
+// the Dark tier deltas (panel ± ~12 units) inverted toward darker
+// grey.
+pub const PRO_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF1, 0xF3, 0xF6);
+pub const PRO_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEC);
+pub const PRO_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xEF, 0xF1, 0xF4);
 pub const PRO_LIGHT_BORDER_SUBTLE:  egui::Color32 = egui::Color32::from_rgb(0xD1, 0xD9, 0xE0);
 pub const PRO_LIGHT_BORDER_INNER:   egui::Color32 = egui::Color32::from_rgb(0xC5, 0xCC, 0xD3);
 
@@ -1084,7 +1173,11 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         border_alpha:       if dark { 230 } else { 140 },
         border_accent_tint: 0.06,
         border_width:       1.0,
-        row_separator_alpha: if dark { 96 } else { 64 },
+        // Light needs a stronger alpha than Dark — α 64 of an already
+        // pale `PRO_LIGHT_BORDER_SUBTLE` over a near-white panel
+        // collapses the separator into invisibility. Bumping to 110
+        // gives the same visual weight Dark has at 96.
+        row_separator_alpha: if dark { 96 } else { 110 },
         glass_card_factor:  0.76,
         glass_group_factor: 0.57,
         glass_accent_tint:  0.03,
@@ -1102,6 +1195,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         pane_shadow_blur:  24,
         pane_shadow_y:     8,
         pane_show_title_divider: true,
+        pane_title_stripes: false,
         tree_guide_width: 1.0,
         snarl_pin_width:  1.0,
         ghost_fill_alpha:   28,
@@ -1114,9 +1208,13 @@ pub const fn theme_pro(mode: Mode) -> Theme {
 /// constants, not per-theme overrides.
 pub const GAME_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF0, 0xF1, 0xF5);
 pub const GAME_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFD);
-pub const GAME_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
+// Raised + input tightened (same reasoning as PRO Light). Raised
+// flipped from `FFFFFF` (which was actually *brighter* than the
+// panel — wrong direction for a Light theme) to a tone visibly
+// darker than the panel. Input also pulled away from the panel.
+pub const GAME_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF1, 0xF3, 0xF7);
 pub const GAME_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEE);
-pub const GAME_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xFC, 0xFC, 0xFE);
+pub const GAME_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xEE, 0xF0, 0xF5);
 
 /// Built-in GAME profile — square corners, accent-tinted panels,
 /// bracket-decorated titles on a solid accent banner, dashed row
@@ -1251,12 +1349,17 @@ pub const fn theme_game(mode: Mode) -> Theme {
         row_alternation: false,
         row_alt_lift: 0.0,
         button_full_accent_on_press: true,
-        button_tint_rest:  0.0,
+        // Was 0.0 — flat with the panel, invisible at rest. Bump to
+        // 0.12 so the rest tier picks up `surface_lift_target` and
+        // the button reads as visibly raised (Dark) / sunken (Light)
+        // against the GAME accent panel.
+        button_tint_rest:  0.12,
         button_tint_hover: 0.18,
         button_tint_press: 0.40,
         pane_shadow_blur:  0,
         pane_shadow_y:     0,
         pane_show_title_divider: false,
+        pane_title_stripes: true,
         tree_guide_width: 0.0,
         snarl_pin_width:  0.0,
         ghost_fill_alpha:   90,
@@ -1316,6 +1419,74 @@ pub fn set_theme(t: Theme) {
 /// single relaxed atomic.
 pub fn theme() -> Theme {
     *theme_lock().read().unwrap()
+}
+
+/// Paint a "do-not-cross" diagonal stripe pattern over `rect` —
+/// alternating slabs of `accent` and the active theme's neutral
+/// `bg_panel` colour. Used by the GAME pane title strip
+/// ([`Theme::pane_title_stripes`]); enabled themes opt in by
+/// setting that flag.
+///
+/// The painter's clip-rect is set to `rect` so the slanted
+/// parallelograms can extend past the rect edges without overflowing
+/// the strip — the GPU clips them to the strip's exact bounds.
+pub fn paint_caution_stripes(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    accent: egui::Color32,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    // Stripes paint as accent @ α 51 (≈ 80 % transparent). No base
+    // fill is laid down — the underlying pane / panel surface shows
+    // through both the painted slabs (lightly veiled in accent) and
+    // the gaps (untouched). The alternation reads as
+    // "accent-tinted band / pane band", same colour family on both
+    // sides, no harsh second colour.
+    let solid = egui::Color32::from_rgba_unmultiplied(
+        accent.r(),
+        accent.g(),
+        accent.b(),
+        255,
+    );
+    let translucent = egui::Color32::from_rgba_unmultiplied(
+        accent.r(),
+        accent.g(),
+        accent.b(),
+        51,
+    );
+
+    // Width of a single diagonal slab. Pattern period = STRIPE_W*2
+    // (one solid + one translucent).
+    const STRIPE_W: f32 = 12.0;
+
+    let clipped = painter.clone().with_clip_rect(rect);
+
+    let h = rect.height();
+    // Every slab paints; even indices use full-opacity accent, odd
+    // indices use 80%-transparent accent. Both colours are the
+    // same accent so the banner reads as one hue family with two
+    // brightness tiers, the dimmer tier letting the pane below
+    // bleed through.
+    let mut x = -h;
+    let mut idx = 0;
+    while x < rect.width() {
+        let x0 = rect.min.x + x;
+        let x1 = x0 + STRIPE_W;
+        let p0 = egui::pos2(x0, rect.min.y);
+        let p1 = egui::pos2(x1, rect.min.y);
+        let p2 = egui::pos2(x1 + h, rect.max.y);
+        let p3 = egui::pos2(x0 + h, rect.max.y);
+        let fill = if idx % 2 == 0 { solid } else { translucent };
+        clipped.add(egui::Shape::convex_polygon(
+            vec![p0, p1, p2, p3],
+            fill,
+            egui::Stroke::NONE,
+        ));
+        x += STRIPE_W;
+        idx += 1;
+    }
 }
 
 /// Resolve the active theme's [`ColorMode`] for a fill against the
@@ -1474,7 +1645,7 @@ pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Colo
 
 /// Linear RGB blend of two colours by `t` in `[0, 1]`. Internal
 /// helper for theme-aware fill resolvers.
-fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let f = t.clamp(0.0, 1.0);
     let lerp = |x: u8, y: u8| ((x as f32) * (1.0 - f) + (y as f32) * f).round() as u8;
     egui::Color32::from_rgb(
@@ -1553,7 +1724,33 @@ pub fn subsection_fill(accent: egui::Color32) -> egui::Color32 {
 /// which inverted the elevation direction in light mode and made
 /// raised surfaces look sunken — fixed.)
 fn raise_target(_lerp_target: egui::Color32) -> egui::Color32 {
-    egui::Color32::WHITE
+    // Mode-aware: on Dark themes the panel is dark, so "raised"
+    // surfaces lift TOWARD WHITE (visibly brighter). On Light themes
+    // the panel is white-ish, so "raised" surfaces lift TOWARD BLACK
+    // (visibly darker — a subtle shadow tier). Hardcoding WHITE
+    // inverted the elevation direction in Light mode and made
+    // dropdowns / inputs paint BRIGHTER than the panel they sit on,
+    // i.e. invisible.
+    if theme().is_light {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    }
+}
+
+/// Direction a body widget (button, dropdown trigger, …) should
+/// lerp from its surface fill to read as "raised" against the
+/// panel. On Dark themes that's the user-picked accent (already
+/// bright after `adapt_accent_to_mode`). On Light themes it's a
+/// dimmed accent dragged 65 % toward black, so the lerp goes
+/// visibly DARKER than the white-ish panel regardless of how
+/// bright the user's raw accent was.
+pub fn surface_lift_target(accent: egui::Color32) -> egui::Color32 {
+    if theme().is_light {
+        lerp_rgb(accent, egui::Color32::BLACK, 0.65)
+    } else {
+        accent
+    }
 }
 
 /// Background fill for an alternating row. Returns `None` when the

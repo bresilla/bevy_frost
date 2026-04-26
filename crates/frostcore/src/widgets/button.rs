@@ -162,7 +162,14 @@ fn paint_accent_bg(
         } else {
             crate::style::pane_fill(accent)
         };
-        let solid = lerp_color(base, body_acc, tint);
+        // Lift target is mode-aware: Dark lerps toward the bright
+        // accent (button reads LIGHTER than panel); Light lerps
+        // toward a darkened accent (button reads DARKER than the
+        // white-ish panel). Without this, Light buttons would lerp
+        // toward the same bright accent as Dark and fail to drop
+        // below the panel's brightness.
+        let target = crate::style::surface_lift_target(body_acc);
+        let solid = lerp_color(base, target, tint);
         egui::Color32::from_rgba_unmultiplied(
             solid.r(),
             solid.g(),

@@ -95,8 +95,15 @@ pub fn dropdown_control(
         // Trigger base = `track_fill(accent)` — same colour family
         // as the search field / DragValue inputs, so dropdowns
         // visually belong to the same input cluster regardless of
-        // theme.
-        let solid = lerp_color(crate::style::track_fill(accent), accent, tint);
+        // theme. Lift target follows `surface_lift_target` so the
+        // lerp goes BRIGHTER than the panel on Dark themes and
+        // DARKER than the panel on Light themes, regardless of the
+        // raw accent's brightness.
+        let solid = lerp_color(
+            crate::style::track_fill(accent),
+            crate::style::surface_lift_target(accent),
+            tint,
+        );
         let bg = egui::Color32::from_rgba_unmultiplied(
             solid.r(),
             solid.g(),

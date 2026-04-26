@@ -74,15 +74,21 @@ pub(crate) fn ribbon_button_fg(
     glyph: super::assembly::RibbonGlyph,
 ) -> egui::Color32 {
     if crate::style::theme().ribbon_button_accent_fill {
-        // GAME ladder — pick contrast text against the EXACT fill the
-        // accent path painted, so the glyph sits cleanly against the
-        // dim / accent / brightened tier.
-        let fill = if is_active {
-            lerp_rgb(accent, egui::Color32::WHITE, 0.28)
-        } else if hovered {
-            accent
+        // GAME ladder — pick contrast text against the EXACT fill
+        // `paint_ribbon_button` produced, so the glyph sits cleanly
+        // against the active / hover / idle tier. Mirrors the same
+        // mode-aware lerp targets the paint uses.
+        let (hover_target, idle_target) = if crate::style::theme().is_light {
+            (egui::Color32::BLACK, egui::Color32::WHITE)
         } else {
-            lerp_rgb(accent, egui::Color32::BLACK, 0.30)
+            (egui::Color32::WHITE, egui::Color32::BLACK)
+        };
+        let fill = if is_active {
+            accent
+        } else if hovered {
+            lerp_rgb(accent, hover_target, 0.28)
+        } else {
+            lerp_rgb(accent, idle_target, 0.30)
         };
         return crate::style::contrast_text_for(fill);
     }
@@ -138,15 +144,33 @@ pub(crate) fn paint_ribbon_button(
     let radius = egui::CornerRadius::same(theme.radius_md);
 
     if theme.ribbon_button_accent_fill {
-        // Just filled, three accent tiers, no stroke / halo / border.
-        // The active state's brightness lift is the entire selection
-        // cue — no extra outline.
-        let fill = if is_active {
-            lerp_rgb(accent, egui::Color32::WHITE, 0.28)
-        } else if hovered {
-            accent
+        // Three filled tiers, no stroke / halo / border. Active uses
+        // FULL accent so the selected ribbon button reads as the same
+        // colour family as the open pane's container-title banner —
+        // both surfaces signal "this is the active feature" with the
+        // identical accent fill.
+        //
+        // Hover and idle MIRROR between Dark and Light:
+        // - Dark: panel is dark, hover lifts toward WHITE (visibly
+        //   brighter), idle pulls toward BLACK (slightly darker than
+        //   the panel's accent tier — recessed).
+        // - Light: panel is bright accent, hover pulls toward BLACK
+        //   (visibly darker — pop), idle lifts toward WHITE (faded
+        //   into the bright panel — recessed).
+        // Same relative hierarchy in both modes, just inverted target
+        // colours so the brightness deltas read correctly against
+        // each panel's luma.
+        let (hover_target, idle_target) = if theme.is_light {
+            (egui::Color32::BLACK, egui::Color32::WHITE)
         } else {
-            lerp_rgb(accent, egui::Color32::BLACK, 0.30)
+            (egui::Color32::WHITE, egui::Color32::BLACK)
+        };
+        let fill = if is_active {
+            accent
+        } else if hovered {
+            lerp_rgb(accent, hover_target, 0.28)
+        } else {
+            lerp_rgb(accent, idle_target, 0.30)
         };
         painter.rect(
             rect,

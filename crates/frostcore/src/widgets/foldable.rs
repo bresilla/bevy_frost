@@ -253,8 +253,13 @@ pub(crate) fn section_tracked<'i>(
                     let bracket_visible = theme_now.section_title_brackets
                         && captured_openness < 0.05;
                     let any_brackets = theme_now.section_title_brackets;
+                    // Title family is the named "frost-title" face —
+                    // defaults to Heavy, switchable independently of
+                    // the body weight via `set_title_weight`. Falls
+                    // back to `Proportional` until egui has finished
+                    // binding the named family.
                     let default_font =
-                        egui::FontId::new(title_size_pt, egui::FontFamily::Proportional);
+                        egui::FontId::new(title_size_pt, crate::style::title_font_family());
                     let default_format = egui::TextFormat {
                         font_id: default_font.clone(),
                         color: title_col,

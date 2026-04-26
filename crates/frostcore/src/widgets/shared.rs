@@ -241,11 +241,22 @@ fn paint_hairline(ui: &mut egui::Ui) {
     ui.add_space(1.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
-    let base = if th.border_subtle == egui::Color32::TRANSPARENT {
+    // Pull the separator base toward black on Light themes, toward
+    // white on Dark themes, so the painted hairline always sits on
+    // the OPPOSITE luma side of the panel. Without this, Light
+    // themes paint a mid-grey at low alpha over a near-white panel,
+    // which alpha-blends to almost-white = invisible.
+    let raw_base = if th.border_subtle == egui::Color32::TRANSPARENT {
         BORDER_SUBTLE
     } else {
         th.border_subtle
     };
+    let target = if th.is_light {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    };
+    let base = crate::style::lerp_rgb(raw_base, target, 0.50);
     let color = egui::Color32::from_rgba_unmultiplied(
         base.r(),
         base.g(),

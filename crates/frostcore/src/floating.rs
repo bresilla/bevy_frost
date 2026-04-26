@@ -817,21 +817,46 @@ pub fn floating_window_scoped(
                     crate::style::pane_fill(accent),
                 );
             }
+            // GAME themes paint "do-not-cross" diagonal stripes
+            // (accent + panel-neutral) behind the title text — see
+            // `Theme::pane_title_stripes`. Painted AFTER the pane
+            // fill above so the stripes sit on top of the card, and
+            // BEFORE the title text so the glyphs land on top of the
+            // banded background.
+            let stripes_on = crate::style::theme().pane_title_stripes;
+            if stripes_on {
+                crate::style::paint_caution_stripes(ui.painter(), rect, accent);
+            }
             let (align, tx) = if on_right_side {
                 (egui::Align2::RIGHT_CENTER, rect.max.x - TITLE_INSET)
             } else {
                 (egui::Align2::LEFT_CENTER, rect.min.x + TITLE_INSET)
             };
-            // Pane title colour follows the section title rule —
-            // PRO: accent tint; GAME: contrast with the panel fill
-            // (luma-based, so a bright accent panel gets dark text).
-            let title_col = crate::style::section_title_color(accent);
+            // With caution stripes painted under the title, the
+            // text colour switches to a hard black/white pick on
+            // theme brightness — matches the "police tape" ask, and
+            // reads cleanly against both the accent and the neutral
+            // bands. Without stripes the title follows the regular
+            // `section_title_color` rule (PRO accent tint, etc.).
+            let title_col = if stripes_on {
+                if crate::style::theme().is_light {
+                    egui::Color32::BLACK
+                } else {
+                    egui::Color32::WHITE
+                }
+            } else {
+                crate::style::section_title_color(accent)
+            };
             // Pixel-snap the paint position so glyph edges align
             // with the screen grid — sub-pixel positions blend AA
             // pixels with the bg, which on bright accents reads as
             // a coloured halo around the text.
             let pos = egui::pos2(tx.round(), rect.center().y.round());
-            let font = egui::FontId::new(title_size, egui::FontFamily::Proportional);
+            // Title family is the named "frost-title" face — defaults
+            // to Heavy, picked independently of the body weight via
+            // `set_title_weight`. Falls back to `Proportional` until
+            // `ctx.set_fonts` has actually taken effect.
+            let font = egui::FontId::new(title_size, crate::style::title_font_family());
             ui.painter().text(pos, align, title.to_uppercase(), font, title_col);
             // Skip the title hairline entirely under themes that
             // don't want it (GAME: no horizontal rule under the
