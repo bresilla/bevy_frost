@@ -30,3 +30,31 @@ bevy_egui = { version = "0.39", default-features = false }
 # member can say `frostcore = { workspace = true }` without repeating
 # the path.
 frostcore = { path = "crates/frostcore", version = "0.0.1" }
+
+# `mimalloc` — drop-in global allocator. egui's tessellator + shape
+# `Vec`s thrash the system allocator under heavy heap pressure;
+# Microsoft's `mimalloc` keeps fragmentation low and small-alloc
+# throughput high. egui issue #5587 documented going from
+# ~120 ms/frame to ~13 ms/frame purely by swapping allocator on
+# native targets. Wired up in `bevy_frost`'s demo via
+# `#[global_allocator]`.
+mimalloc = { version = "0.1", default-features = false }
+
+# ── Build profile tuning ────────────────────────────────────────────
+#
+# Per Bevy's "Optimisations" cheat-sheet: dev builds are 10–50× slower
+# than release on hot ECS / tessellator paths because Bevy's deps
+# compile at the workspace's dev `opt-level` (= 0 by default). We
+# bump every dependency to `opt-level = 3` while keeping our own
+# crates at `0` for fast incremental rebuilds. The single most-
+# common reason "Bevy feels slow" in dev mode.
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

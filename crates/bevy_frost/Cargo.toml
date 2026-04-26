@@ -43,6 +43,12 @@ bevy_egui = { workspace = true, features = [
     "render",
 ] }
 
+# Faster allocator for the example/demo binary — see the
+# `mimalloc` workspace dep doc for rationale. Pulled into
+# `bevy_frost` directly (not `frostcore`) so the framework-agnostic
+# core stays allocator-neutral.
+mimalloc = { workspace = true }
+
 [[example]]
 name = "demo"
 path = "examples/demo.rs"

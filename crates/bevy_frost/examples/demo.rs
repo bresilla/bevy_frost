@@ -31,8 +31,18 @@ use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver
 use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{PresentMode, PrimaryWindow};
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+
+// Drop-in faster allocator. egui's tessellator hammers the global
+// allocator with `Vec::push` / `Vec::reserve`; mimalloc keeps small-
+// allocation throughput much higher under heavy UI heap pressure.
+// Cited measurements (egui#5587): ~120 ms/frame → ~13 ms/frame in
+// degenerate cases. Native-only — wasm uses the system allocator
+// regardless.
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use bevy_frost::prelude::*;
 use bevy_frost::code::{frost_code_editor, Syntax};
 use bevy_frost::snarl::{
@@ -196,12 +206,21 @@ fn main() {
             primary_window: Some(Window {
                 title: "bevy_frost demo".into(),
                 resolution: (1280u32, 800u32).into(),
+                // `Mailbox` swap-chain — vsync still on (no
+                // tearing) but the GPU always presents the
+                // newest frame instead of stalling on a queue.
+                // Saves up to one full frame of input lag vs
+                // the default `AutoVsync` (FIFO). Switch to
+                // `AutoNoVsync` for the lowest possible latency
+                // at the cost of tearing.
+                present_mode: PresentMode::Mailbox,
                 ..default()
             }),
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
         .add_plugins(FrostPlugin)
+        .add_systems(Startup, trim_egui_systems)
         .init_resource::<DemoState>()
         .init_resource::<GroundGrid>()
         .init_resource::<SelectedSwatch>()
@@ -219,6 +238,33 @@ fn main() {
         )
         .add_systems(EguiPrimaryContextPass, (draw_ribbons, draw_panels).chain())
         .run();
+}
+
+/// Trim bevy_egui's per-frame work for our use case — single
+/// primary context, no file drag-and-drop, no non-window pointer
+/// devices. Each disabled subsystem skips a `PreUpdate` translation
+/// pass from Bevy events into egui events.
+fn trim_egui_systems(
+    mut globals: ResMut<bevy_egui::EguiGlobalSettings>,
+    mut contexts: Query<&mut bevy_egui::EguiContextSettings>,
+) {
+    // We only ever spawn the primary context — no off-screen render
+    // targets, no secondary windows. Drops the per-frame system
+    // that polls non-window contexts for focus updates.
+    globals.enable_focused_non_window_context_updates = false;
+    for mut s in &mut contexts {
+        // Drop input subsystems we don't use:
+        //   - file DnD (no drop targets in this app)
+        //   - pointer events from non-window devices (we only have
+        //     the primary cursor)
+        //   - touch on non-window devices
+        s.input_system_settings
+            .run_write_file_dnd_messages_system = false;
+        s.input_system_settings
+            .run_write_non_window_pointer_moved_messages_system = false;
+        s.input_system_settings
+            .run_write_non_window_touch_messages_system = false;
+    }
 }
 
 // ─── Demo state — the values the widgets actually bind to ───────────
