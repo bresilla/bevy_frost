@@ -139,9 +139,19 @@ pub fn subsection(
 
                     state.show_body_unindented(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
+                        // Symmetric inset — left gutter via
+                        // `add_space`, right gutter via clamping the
+                        // vertical's max width to `parent_w - 2 *
+                        // SUBSECTION_BODY_INDENT`. Without the right
+                        // clamp, the body ran all the way to the
+                        // subsection frame's edge while the left had
+                        // a visible indent.
+                        let parent_w = ui.available_width();
+                        let inner_w = (parent_w - SUBSECTION_BODY_INDENT * 2.0).max(0.0);
                         ui.horizontal(|ui| {
                             ui.add_space(SUBSECTION_BODY_INDENT);
                             ui.vertical(|ui| {
+                                ui.set_max_width(inner_w);
                                 body(ui);
                             });
                         });

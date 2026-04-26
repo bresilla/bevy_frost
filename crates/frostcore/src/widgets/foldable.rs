@@ -595,9 +595,18 @@ pub(crate) fn section_tracked<'i>(
                         // unstriped).
                         let indent = crate::style::theme().section_body_indent;
                         if indent > 0.0 {
+                            // Symmetric inset — the body lives in a
+                            // vertical clamped to `parent_w - 2 *
+                            // indent`, so content doesn't run all the
+                            // way to the right edge while the left
+                            // side has the indent gutter. Mirror look
+                            // matches PRO's container framing.
+                            let parent_w = ui.available_width();
+                            let inner_w = (parent_w - indent * 2.0).max(0.0);
                             ui.horizontal(|ui| {
                                 ui.add_space(indent);
                                 ui.vertical(|ui| {
+                                    ui.set_max_width(inner_w);
                                     ui.spacing_mut().item_spacing.y = 0.0;
                                     // Begin AFTER the indent wrap so the
                                     // owner_ui captured matches the ui
