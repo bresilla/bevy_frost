@@ -15,7 +15,9 @@
 use egui;
 
 use super::layout::stacked_pane_labelled;
-use super::shared::{flush_pending_separator, paint_value_bar, widget_separator};
+use super::shared::{
+    flush_pending_separator, paint_value_bar, smoothed_fraction, tumble_text, widget_separator,
+};
 use crate::style::contrast_text_for;
 
 const BAR_H: f32 = 18.0;
@@ -76,11 +78,18 @@ pub fn progressbar_control(
     );
 
     if ui.is_rect_visible(rect) {
+        // GAME motion #13 — bar fraction is smoothed toward the
+        // target so the fill chases the value over ~0.45 s.
+        let smoothed = smoothed_fraction(ui.ctx(), resp.id, fraction, 0.45);
+        // GAME motion #14 — digits in the inline readout tumble
+        // through 0–9 for ~280 ms when they change. Non-digit
+        // chars (% . space) pass through untouched.
+        let display = tumble_text(ui.ctx(), resp.id, inner_text);
         paint_value_bar(
             ui,
             rect,
-            fraction.clamp(0.0, 1.0),
-            inner_text,
+            smoothed,
+            &display,
             egui::FontId::new(VALUE_FONT, egui::FontFamily::Monospace),
             accent,
             crate::style::on_track(),

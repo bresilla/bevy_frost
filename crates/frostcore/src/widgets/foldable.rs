@@ -723,32 +723,31 @@ pub(crate) fn section_tracked<'i>(
         let rx = snap_high(r.max.x);
         let by = snap_high(r.max.y);
         let len = tick_len;
-        // Top corners sit on the accent title banner (when filled)
-        // → contrast text. Bottom corners sit on the section card
-        // body → accent colour. Alpha is full (255) in Light mode
-        // so the accent reads strongly on the pale panel; Dark mode
-        // keeps the original 220 so the strokes stay just-shy of
-        // shouting on a dark surface.
-        let base_tick_alpha: u8 = if crate::style::theme().is_light { 255 } else { 220 };
+        // Bracket colour — `high_contrast_accent` pulls the accent
+        // hard toward the opposite luma extreme of the active
+        // panel (≈white on Dark, ≈black on Light), so the bottom
+        // ticks (which sit on the section body, not the bright
+        // banner) stay clearly visible regardless of how close the
+        // raw accent's luma is to the panel's. Hue + saturation
+        // preserved through HSL.
+        let bracket_accent = crate::style::high_contrast_accent(accent);
+        let base_tick_alpha: u8 = 255;
         // GAME motion #10 — bracket breathing pulse. Modulate the
-        // tick alpha on a slow 3.4 s sine wave between 55 % and
-        // 100 % of the base. Stroke width unchanged; only alpha
-        // breathes, so the corner brackets read as a tactical
-        // "system armed, waiting" heartbeat. Continuous repaint is
-        // requested below so the loop keeps ticking between input
-        // events.
+        // tick alpha on a slow 3.4 s sine wave. Range narrowed
+        // from `0.55..1.00` to `0.78..1.00` so the trough doesn't
+        // fade the bottom brackets out at the dimmest beat.
         let time = ui.ctx().input(|i| i.time) as f32;
         let breath = {
             const PERIOD: f32 = 3.4;
             let phase = (time * std::f32::consts::TAU / PERIOD).cos();
-            0.55 + 0.225 * (1.0 - phase)
+            0.78 + 0.11 * (1.0 - phase)
         };
         let tick_alpha = ((base_tick_alpha as f32) * breath).round() as u8;
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         let accent_col = egui::Color32::from_rgba_unmultiplied(
-            accent.r(),
-            accent.g(),
-            accent.b(),
+            bracket_accent.r(),
+            bracket_accent.g(),
+            bracket_accent.b(),
             tick_alpha,
         );
         let contrast_col = crate::style::contrast_text_for(accent);

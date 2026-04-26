@@ -295,6 +295,99 @@ pub(super) fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Co
     )
 }
 
+/// GAME motion #13 — bargraph catch-up. Smooths a fill-fraction
+/// target into a value that lerps toward it over `time_const`
+/// seconds via egui's `animate_value_with_time`. Numeric labels can
+/// keep updating instantly; the bar visually "chases" the number,
+/// reading as instrumentation responding to a real signal.
+pub(super) fn smoothed_fraction(
+    ctx: &egui::Context,
+    resp_id: egui::Id,
+    target: f32,
+    time_const: f32,
+) -> f32 {
+    ctx.animate_value_with_time(
+        resp_id.with("frost_bar_catchup"),
+        target.clamp(0.0, 1.0),
+        time_const,
+    )
+}
+
+/// GAME motion #14 — numeric roll-tumble. Returns a display string
+/// where digits that *changed* since the last call cycle through
+/// `0–9` for ~280 ms before settling on the new digit; unchanged
+/// digits stay rock-steady (the contrast is what sells the effect).
+/// Non-digit characters (`%`, `.`, ` `, ...) pass through untouched.
+///
+/// Stored state (`prev` text + per-char tumble start times) lives
+/// in egui ctx data keyed by `resp_id`. Calls `request_repaint`
+/// while any digit is still tumbling so the random-cycle reads as
+/// motion, not a single-frame flash.
+pub(super) fn tumble_text(
+    ctx: &egui::Context,
+    resp_id: egui::Id,
+    current: &str,
+) -> String {
+    const TUMBLE_DUR: f64 = 0.28;
+    let now = ctx.input(|i| i.time);
+    let key_prev = resp_id.with("frost_tumble_prev");
+    let key_starts = resp_id.with("frost_tumble_starts");
+
+    let prev: Option<String> = ctx.data(|d| d.get_temp(key_prev));
+    let mut starts: Vec<f64> = ctx
+        .data(|d| d.get_temp::<Vec<f64>>(key_starts))
+        .unwrap_or_default();
+    let cur_chars: Vec<char> = current.chars().collect();
+    starts.resize(cur_chars.len(), 0.0);
+
+    // Detect digit changes vs the previous frame's text.
+    if let Some(prev_str) = &prev {
+        let prev_chars: Vec<char> = prev_str.chars().collect();
+        for (i, &c) in cur_chars.iter().enumerate() {
+            let prev_c = prev_chars.get(i).copied().unwrap_or('\0');
+            if c != prev_c && c.is_ascii_digit() {
+                starts[i] = now;
+            }
+        }
+    }
+
+    // Build the display string. Tumbling digits get a pseudo-random
+    // digit derived from `(id, i, frame_phase)`; everything else
+    // falls through.
+    let id_seed = (resp_id.value() as u64).wrapping_mul(0x9E37_79B9);
+    let frame_phase = (now * 70.0) as u64;
+    let mut still_tumbling = false;
+    let display: String = cur_chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            if !c.is_ascii_digit() {
+                return c;
+            }
+            let elapsed = now - starts[i];
+            if elapsed < TUMBLE_DUR && elapsed > 0.0 {
+                still_tumbling = true;
+                let h = id_seed
+                    .wrapping_add((i as u64).wrapping_mul(0xBF58_476D))
+                    .wrapping_add(frame_phase.wrapping_mul(0x94D0_49BB));
+                let d = (h % 10) as u32;
+                char::from_digit(d, 10).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    ctx.data_mut(|d| {
+        d.insert_temp(key_prev, current.to_string());
+        d.insert_temp(key_starts, starts);
+    });
+    if still_tumbling {
+        ctx.request_repaint();
+    }
+    display
+}
+
 /// Asymmetric press-depress amount in logical points. Animates 0 →
 /// `max_px` while the response is held (60 ms), and back over 90 ms
 /// on release. Shared by [`super::button::wide_button`] /

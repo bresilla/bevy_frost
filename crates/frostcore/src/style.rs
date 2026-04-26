@@ -760,6 +760,33 @@ pub fn body_accent(accent: egui::Color32) -> egui::Color32 {
     }
 }
 
+/// Hi-contrast accent for *visual anchors* — corner ticks, focus
+/// reticles, status pips. The user-picked accent gets pulled hard
+/// toward the opposite luma extreme of the active panel so the
+/// anchor stays vivid even on themes where the accent already
+/// matches the surface luma. Saturation is boosted ~15 % so the
+/// result reads as a SATURATED-then-lifted/dropped colour, not a
+/// desaturated grey.
+///
+/// Implementation goes through HSL via `pastel`: only lightness +
+/// saturation are touched, so the user's hue is preserved exactly
+/// (yellow stays yellow, red stays red, etc.).
+pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
+    use pastel::Color as PastelColor;
+    let c = PastelColor::from_rgb(accent.r(), accent.g(), accent.b());
+    let hsl = c.to_hsla();
+    // Target lightness — 0.88 on Dark themes (almost white), 0.18
+    // on Light themes (almost black). We pull 70 % of the way from
+    // the accent's current L toward the target so chromatic
+    // accents (yellow, lime) keep some hue character.
+    let target_l = if theme().is_light { 0.18 } else { 0.88 };
+    let new_l = hsl.l + (target_l - hsl.l) * 0.70;
+    let new_s = (hsl.s * 1.15).min(1.0);
+    let adjusted = PastelColor::from_hsla(hsl.h, new_s, new_l, 1.0);
+    let rgba = adjusted.to_rgba();
+    egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b)
+}
+
 pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
 
 // ─── Design-system tokens ────────────────────────────────────────────

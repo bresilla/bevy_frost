@@ -868,7 +868,7 @@ pub fn floating_window_scoped(
             // the kit. Gated on `pane_title_stripes` so it ships with
             // the GAME aesthetic but stays off PRO.
             if crate::style::theme().pane_title_stripes {
-                const PIP_SIZE: f32 = 4.0;
+                const PIP_SIZE: f32 = 6.0;
                 const PIP_INSET: f32 = TITLE_INSET;
                 let time = ui.ctx().input(|i| i.time) as f32;
                 let on = time.fract() < 0.08;
