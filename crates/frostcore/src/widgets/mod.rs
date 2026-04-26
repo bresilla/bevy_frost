@@ -29,6 +29,7 @@
 //! no plugin install; add [`crate::ThemePlugin`] so they pick up
 //! the accent colour and call it a day.
 
+pub mod anim_button;
 pub mod button;
 pub mod caption;
 pub mod chip;
@@ -51,6 +52,7 @@ pub mod subsection;
 pub mod toggle;
 pub mod tree;
 
+pub use anim_button::{animated_button, FillStyle};
 pub use button::{card_button, wide_button};
 pub use caption::{keybinding_row, sub_caption};
 pub use chip::{chip, chip_colored};

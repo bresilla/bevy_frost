@@ -234,11 +234,23 @@ pub(super) fn clear_pending_separator(ui: &mut egui::Ui) {
 /// in `border_subtle` with that alpha.
 fn paint_hairline(ui: &mut egui::Ui) {
     let th = crate::style::theme();
-    if th.row_separator_alpha == 0 {
-        ui.add_space(3.0);
+    // Guard: never paint a hairline at the TOP of a ui. If the
+    // cursor sits at (or essentially at) the ui's max_rect top, no
+    // widget has been allocated yet — meaning this would be the
+    // first item in the container, and no leading separator should
+    // appear. Prevents any pending-marker leak between sibling
+    // containers from drawing a stray top rule.
+    if ui.cursor().min.y - ui.max_rect().min.y < 0.5 {
         return;
     }
-    ui.add_space(1.0);
+    if th.row_separator_alpha == 0 {
+        ui.add_space(4.5);
+        return;
+    }
+    // Vertical padding around the hairline bumped from 1 px to
+    // 1.5 px each side (+50 %). Row stacks now breathe more around
+    // every divider.
+    ui.add_space(1.5);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
     // Use the kit-wide [`crate::style::outline_base`] helper —
@@ -267,7 +279,7 @@ fn paint_hairline(ui: &mut egui::Ui) {
         ui.painter()
             .line_segment([rect.left_center(), rect.right_center()], stroke);
     }
-    ui.add_space(1.0);
+    ui.add_space(1.5);
 }
 
 /// Linear colour interpolation across RGBA channels. `t` is clamped
@@ -281,6 +293,67 @@ pub(super) fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Co
         mix(a.b(), b.b()),
         mix(a.a(), b.a()),
     )
+}
+
+/// Asymmetric press-depress amount in logical points. Animates 0 →
+/// `max_px` while the response is held (60 ms), and back over 90 ms
+/// on release. Shared by [`super::button::wide_button`] /
+/// [`super::button::card_button`] (via `paint_accent_bg`) and
+/// [`super::anim_button::animated_button`] so every frost button
+/// shrinks identically when clicked.
+pub(super) fn press_depress_amount(
+    ctx: &egui::Context,
+    resp_id: egui::Id,
+    pressed: bool,
+    max_px: f32,
+) -> f32 {
+    let dur = if pressed { 0.06 } else { 0.09 };
+    let t = ctx.animate_bool_with_time(resp_id.with("frost_press"), pressed, dur);
+    t * max_px
+}
+
+/// Concentric click-pulse — on `clicked()`, stash the click time in
+/// ctx data; for the next 140 ms, paint a stroke-only rect that
+/// inflates from `+2 px` to `+8 px` while alpha fades 0.6 → 0.
+/// Reads as the button "firing off." Shared between every frost
+/// button widget so the click feedback is identical.
+pub(super) fn paint_click_pulse(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    resp: &egui::Response,
+    rect: egui::Rect,
+    accent: egui::Color32,
+    radius: egui::CornerRadius,
+) {
+    let click_id = resp.id.with("frost_click_at");
+    if resp.clicked() {
+        let now = ctx.input(|i| i.time);
+        ctx.data_mut(|d| d.insert_temp(click_id, now));
+    }
+    let click_at: Option<f64> = ctx.data(|d| d.get_temp(click_id));
+    if let Some(t0) = click_at {
+        let now = ctx.input(|i| i.time);
+        let elapsed = (now - t0) as f32;
+        const PULSE_DUR: f32 = 0.14;
+        if elapsed < PULSE_DUR {
+            let progress = elapsed / PULSE_DUR;
+            let inflate = egui::lerp(2.0..=8.0, progress);
+            let alpha = ((1.0 - progress) * 0.6 * 255.0).round().clamp(0.0, 255.0) as u8;
+            let pulse = egui::Color32::from_rgba_unmultiplied(
+                accent.r(),
+                accent.g(),
+                accent.b(),
+                alpha,
+            );
+            painter.rect_stroke(
+                rect.expand(inflate),
+                radius,
+                egui::Stroke::new(1.0, pulse),
+                egui::StrokeKind::Outside,
+            );
+            ctx.request_repaint();
+        }
+    }
 }
 
 /// Paint a track + accent-filled portion with a centred value

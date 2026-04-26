@@ -1428,15 +1428,17 @@ pub const fn theme_game(mode: Mode) -> Theme {
             egui::Color32::from_rgb(0x6B, 0x70, 0x78)
         },
         border_inner:       egui::Color32::from_rgb(0x1F, 0x26, 0x38),
-        // GAME Dark gets visible borders (α 110, 1 px) — the user
-        // wants more structure in that variant. Light keeps its
-        // borderless flat-panel look (α 0, width 0).
-        border_alpha:       if dark { 110 } else { 0 },
+        // GAME Dark borders — alpha + stroke width both reduced
+        // ~37 % from the previous (α 110, w 1.0): the user wanted a
+        // 30 % thickness drop on GAME, plus another 10 % on Dark
+        // (`0.7 × 0.9 ≈ 0.63`). Light still has no border at all.
+        border_alpha:       if dark { 70 } else { 0 },
         border_accent_tint: 0.0,
-        border_width:       if dark { 1.0 } else { 0.0 },
-        // GAME Dark separators bumped 35 → 80 for the same reason.
-        // Light unchanged.
-        row_separator_alpha: if dark { 80 } else { 80 },
+        border_width:       if dark { 0.63 } else { 0.0 },
+        // GAME row separators — same 30 % cut on Light, additional
+        // 10 % on Dark. Pushed further down on Dark so the dashed
+        // hairlines just whisper between rows.
+        row_separator_alpha: if dark { 50 } else { 56 },
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,

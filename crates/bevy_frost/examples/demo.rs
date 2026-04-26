@@ -1681,7 +1681,13 @@ fn draw_panels(
 
 fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
     let accent = pane.accent();
-    let order = pane.section_order(["demo_flags", "demo_numbers", "demo_bars", "demo_buttons"]);
+    let order = pane.section_order([
+        "demo_flags",
+        "demo_numbers",
+        "demo_bars",
+        "demo_buttons",
+        "demo_anim_buttons",
+    ]);
     for id in &order {
         match id.as_str() {
             "demo_flags" => pane.section_with("demo_flags", "Flags", true, Some("flag"), |ui| {
@@ -1716,6 +1722,33 @@ fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
                     accent,
                 );
             }),
+            "demo_anim_buttons" => pane.section_with(
+                "demo_anim_buttons",
+                "Animated",
+                false,
+                Some("animation"),
+                |ui| {
+                    // 12 hover-fill animation styles. Hover each for
+                    // 0.5 s and the dark fill slides / grows /
+                    // converges in. CSS-translated from the popular
+                    // hover-button collection — every variant uses
+                    // the same accent + the same widget allocator.
+                    use frostcore::widgets::FillStyle;
+                    animated_button(ui, "Slide left", accent, FillStyle::SlideLeft);
+                    animated_button(ui, "Parallelogram", accent, FillStyle::Parallelogram);
+                    animated_button(ui, "Parallelogram meet", accent, FillStyle::ParallelogramMeet);
+                    animated_button(ui, "Bowtie", accent, FillStyle::Bowtie);
+                    animated_button(ui, "Bands meet", accent, FillStyle::BandsMeet);
+                    animated_button(ui, "Corner squares", accent, FillStyle::CornerSquares);
+                    animated_button(ui, "Diagonal triangles", accent, FillStyle::DiagonalTriangles);
+                    animated_button(ui, "Circle grow", accent, FillStyle::CircleGrow);
+                    animated_button(ui, "Equalizer", accent, FillStyle::Equalizer);
+                    animated_button(ui, "Horizontal slide", accent, FillStyle::HorizontalSlide);
+                    animated_button(ui, "Horizontal delayed", accent, FillStyle::HorizontalSlideDelayed);
+                    animated_button(ui, "Vertical delayed", accent, FillStyle::VerticalSlideDelayed);
+                    animated_button(ui, "Criss cross", accent, FillStyle::CrissCross);
+                },
+            ),
             _ => {}
         }
     }
