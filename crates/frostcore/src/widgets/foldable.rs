@@ -415,15 +415,18 @@ pub(crate) fn section_tracked<'i>(
                                 // state still centres the small icon
                                 // on the strip.
                                 let folded_size = base_size * 0.85;
-                                // Shrunk ~8 % from the previous 2.6×.
-                                // Top is pinned (UNFOLDED_TOP) so the
-                                // size reduction only retracts the
-                                // BOTTOM edge upward, leaving the
-                                // upward overflow intact.
-                                let unfolded_size = base_size * 2.4;
+                                // +10 % over the previous 2.4× — the
+                                // icon reads more "sticker on top"
+                                // when unfolded.
+                                let unfolded_size = base_size * 2.64;
                                 let t = smoothstep(captured_openness);
                                 let size = egui::lerp(folded_size..=unfolded_size, t);
-                                const UNFOLDED_TOP: f32 = 25.0;
+                                // Pushed up from 25 → 36 so the icon
+                                // overflows ABOVE the container's top
+                                // edge instead of starting where the
+                                // container starts. Reads as a sticker
+                                // pinned above the section header.
+                                const UNFOLDED_TOP: f32 = 36.0;
                                 let folded_top = folded_size * 0.5;
                                 let top_offset = egui::lerp(folded_top..=UNFOLDED_TOP, t);
                                 // Mirror the icon side: right-anchored
@@ -726,7 +729,22 @@ pub(crate) fn section_tracked<'i>(
         // so the accent reads strongly on the pale panel; Dark mode
         // keeps the original 220 so the strokes stay just-shy of
         // shouting on a dark surface.
-        let tick_alpha = if crate::style::theme().is_light { 255 } else { 220 };
+        let base_tick_alpha: u8 = if crate::style::theme().is_light { 255 } else { 220 };
+        // GAME motion #10 — bracket breathing pulse. Modulate the
+        // tick alpha on a slow 3.4 s sine wave between 55 % and
+        // 100 % of the base. Stroke width unchanged; only alpha
+        // breathes, so the corner brackets read as a tactical
+        // "system armed, waiting" heartbeat. Continuous repaint is
+        // requested below so the loop keeps ticking between input
+        // events.
+        let time = ui.ctx().input(|i| i.time) as f32;
+        let breath = {
+            const PERIOD: f32 = 3.4;
+            let phase = (time * std::f32::consts::TAU / PERIOD).cos();
+            0.55 + 0.225 * (1.0 - phase)
+        };
+        let tick_alpha = ((base_tick_alpha as f32) * breath).round() as u8;
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         let accent_col = egui::Color32::from_rgba_unmultiplied(
             accent.r(),
             accent.g(),

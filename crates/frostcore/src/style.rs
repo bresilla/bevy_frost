@@ -638,13 +638,36 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     style.spacing.icon_width        = 14.0;
     style.spacing.icon_spacing      = 6.0;
 
-    // Scrollbar tinting — flip to `foreground_color` mode so the
-    // handle picks up each state's `fg_stroke.color` instead of its
-    // `bg_fill`. That lets us paint scrollbars in accent variants
-    // (rest / hover / drag) without touching every OTHER widget's
-    // `bg_fill` (which would re-tint buttons, inputs, frames, etc.
-    // at the same time).
-    style.spacing.scroll.foreground_color = true;
+    // Scrollbar — always a thin line. The bar barely thickens on
+    // hover (2 → 3 px); the visible cue is the handle's opacity
+    // jumping from soft to full instead of the whole bar swelling.
+    // Track has zero opacity in every state, so what the user sees
+    // is just the handle line (no gutter painted around it).
+    //
+    // Handle corner radius flows from `widgets.X.corner_radius` =
+    // `theme.radius_widget` — PRO 2 px (very small chamfer), GAME 0
+    // (square). Both match the kit's overall corner language.
+    //
+    // `foreground_color = true` makes the handle pull from each
+    // state's `fg_stroke.color` (accent variants we set below)
+    // instead of `bg_fill`, so scrollbars tint per-accent without
+    // dragging every other widget bg with them.
+    style.spacing.scroll = egui::style::ScrollStyle {
+        floating: true,
+        bar_width: 3.0,
+        floating_width: 2.0,
+        floating_allocated_width: 3.0,
+        handle_min_length: 16.0,
+        bar_inner_margin: 2.0,
+        bar_outer_margin: 0.0,
+        foreground_color: true,
+        dormant_background_opacity:  0.0,
+        active_background_opacity:   0.0,
+        interact_background_opacity: 0.0,
+        dormant_handle_opacity:  0.55,
+        active_handle_opacity:   0.85,
+        interact_handle_opacity: 1.00,
+    };
     // Rest: a dimmed-accent track handle that still belongs to the
     // accent family. Hover: full ACCENT_HOVER. Drag: ACCENT_PRESSED.
     // `fg_stroke` is also used for fine foreground elements
@@ -1229,7 +1252,9 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         // dark-grey outline on a white panel at the same alpha.
         // Tuned further down on Dark so widget borders barely
         // whisper instead of competing with the surface tier.
-        border_alpha:       if dark { 70 } else { 160 },
+        // PRO Light dialed down 160 → 100 so the borders sit lighter
+        // on the white panels. Dark unchanged.
+        border_alpha:       if dark { 70 } else { 100 },
         border_accent_tint: 0.06,
         border_width:       1.0,
         // Light needs a stronger alpha than Dark — α 64 of an already
@@ -1239,7 +1264,8 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         // Same Dark < Light asymmetry as `border_alpha`. Dark gets
         // pulled even further down so row separators sit just shy of
         // disappearing — present as rhythm, not as a drawn line.
-        row_separator_alpha: if dark { 35 } else { 80 },
+        // PRO Light dialed down 80 → 50; Dark unchanged.
+        row_separator_alpha: if dark { 35 } else { 50 },
         // Was 0.76 / 0.57 — too transparent to keep the panel/section
         // tier delta visible. Bumped so sections paint opaque enough
         // for the new bg_panel → bg_raised delta to actually read.
@@ -1402,15 +1428,15 @@ pub const fn theme_game(mode: Mode) -> Theme {
             egui::Color32::from_rgb(0x6B, 0x70, 0x78)
         },
         border_inner:       egui::Color32::from_rgb(0x1F, 0x26, 0x38),
-        border_alpha:       0,
+        // GAME Dark gets visible borders (α 110, 1 px) — the user
+        // wants more structure in that variant. Light keeps its
+        // borderless flat-panel look (α 0, width 0).
+        border_alpha:       if dark { 110 } else { 0 },
         border_accent_tint: 0.0,
-        border_width:       0.0,
-        // Light needs a stronger separator alpha to compensate for
-        // the lower contrast against a pale panel.
-        // Same Dark < Light asymmetry as PRO. GAME's dashed pattern
-        // accentuates each segment, so Dark can stay very low and
-        // still read as a rhythm.
-        row_separator_alpha: if dark { 35 } else { 80 },
+        border_width:       if dark { 1.0 } else { 0.0 },
+        // GAME Dark separators bumped 35 → 80 for the same reason.
+        // Light unchanged.
+        row_separator_alpha: if dark { 80 } else { 80 },
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,

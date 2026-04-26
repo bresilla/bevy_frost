@@ -144,6 +144,18 @@ fn paint_accent_bg(
     // button stays one step below the title banner's brightness.
     let body_acc = crate::style::body_accent(accent);
 
+    // GAME motion #5 — press depress. Pressed → shrink rect by up to
+    // 2 px each side; release → restore. Asymmetric timing (60 ms
+    // in, 90 ms out) reads as a deliberate "click registered" rather
+    // than a springy bounce. `animate_bool_with_time` accepts the
+    // duration per-call so we conditional-swap the in/out times.
+    let press_dur = if pressed { 0.06 } else { 0.09 };
+    let press_t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("frost_press"), pressed, press_dur);
+    let depress_px = press_t * 2.0;
+    let painted_rect = rect.shrink(depress_px);
+
     let bg = if pressed && th.button_full_accent_on_press {
         body_acc
     } else {
@@ -178,13 +190,51 @@ fn paint_accent_bg(
         )
     };
     let border_col = if resp.hovered() { accent } else { widget_border(accent) };
-    ui.painter_at(rect).rect(
-        rect,
+    let painter_clip = ui.painter_at(rect.expand(8.0));
+    painter_clip.rect(
+        painted_rect,
         egui::CornerRadius::same(th.radius_widget),
         bg,
         egui::Stroke::new(th.border_width, border_col),
         egui::StrokeKind::Inside,
     );
+
+    // GAME motion #6 — concentric click pulse. On `clicked()`, stash
+    // the click time in ctx data; for the next 140 ms, paint a
+    // stroke-only rect that inflates from `+2 px` to `+8 px` while
+    // its alpha fades from 0.6 → 0. Reads as the button "firing
+    // off" something — a discharge moment that confirms the action
+    // landed.
+    let click_id = resp.id.with("frost_click_at");
+    if resp.clicked() {
+        let now = ui.ctx().input(|i| i.time);
+        ui.ctx().data_mut(|d| d.insert_temp(click_id, now));
+    }
+    let click_at: Option<f64> = ui.ctx().data(|d| d.get_temp(click_id));
+    if let Some(t0) = click_at {
+        let now = ui.ctx().input(|i| i.time);
+        let elapsed = (now - t0) as f32;
+        const PULSE_DUR: f32 = 0.14;
+        if elapsed < PULSE_DUR {
+            let progress = elapsed / PULSE_DUR;
+            let inflate = egui::lerp(2.0..=8.0, progress);
+            let alpha = ((1.0 - progress) * 0.6 * 255.0).round().clamp(0.0, 255.0) as u8;
+            let pulse_color = egui::Color32::from_rgba_unmultiplied(
+                accent.r(),
+                accent.g(),
+                accent.b(),
+                alpha,
+            );
+            painter_clip.rect_stroke(
+                painted_rect.expand(inflate),
+                egui::CornerRadius::same(th.radius_widget),
+                egui::Stroke::new(1.0, pulse_color),
+                egui::StrokeKind::Outside,
+            );
+            ui.ctx().request_repaint();
+        }
+    }
+
     bg
 }
 

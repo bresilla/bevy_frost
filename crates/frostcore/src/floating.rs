@@ -859,6 +859,48 @@ pub fn floating_window_scoped(
             // `ctx.set_fonts` has actually taken effect.
             let font = egui::FontId::new(title_size, crate::style::title_font_family());
             ui.painter().text(pos, align, title.to_uppercase(), font, title_col);
+
+            // GAME motion #9 — 1 Hz telemetry pip. Tiny 4×4 px square
+            // anchored at the OPPOSITE end of the title text. Flips
+            // full-bright for ~80 ms once per second, otherwise sits
+            // at α 30 %. Reads as a tactical heartbeat / status
+            // indicator — the single most "control-panel" trick in
+            // the kit. Gated on `pane_title_stripes` so it ships with
+            // the GAME aesthetic but stays off PRO.
+            if crate::style::theme().pane_title_stripes {
+                const PIP_SIZE: f32 = 4.0;
+                const PIP_INSET: f32 = TITLE_INSET;
+                let time = ui.ctx().input(|i| i.time) as f32;
+                let on = time.fract() < 0.08;
+                let alpha = if on { 255 } else { 76 };
+                let pip_color = egui::Color32::from_rgba_unmultiplied(
+                    title_col.r(),
+                    title_col.g(),
+                    title_col.b(),
+                    alpha,
+                );
+                // Title is RIGHT-aligned on right-anchored panes and
+                // LEFT-aligned otherwise — put the pip on the
+                // opposite end so it never crowds the text.
+                let pip_x = if on_right_side {
+                    rect.min.x + PIP_INSET
+                } else {
+                    rect.max.x - PIP_INSET - PIP_SIZE
+                };
+                let pip_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        pip_x.round(),
+                        (rect.center().y - PIP_SIZE * 0.5).round(),
+                    ),
+                    egui::vec2(PIP_SIZE, PIP_SIZE),
+                );
+                ui.painter().rect_filled(
+                    pip_rect,
+                    egui::CornerRadius::ZERO,
+                    pip_color,
+                );
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+            }
             // Skip the title hairline entirely under themes that
             // don't want it (GAME: no horizontal rule under the
             // pane title; PRO keeps the subtle divider).
