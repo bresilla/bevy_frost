@@ -163,24 +163,6 @@ impl Pane2 {
                 .show(ui, |ui| {
                     ui.set_min_size(pane_size - vec2(4.0, 4.0));
                     ui.set_max_size(pane_size - vec2(4.0, 4.0));
-
-                    // GAME / `pane_title_stripes` themes paint the
-                    // animated caution stripes ACROSS THE ENTIRE pane
-                    // interior — title strip and body alike — so the
-                    // pane reads as a single striped warning panel
-                    // even before any sections render. This matches
-                    // the user's "GAME panes shouldn't look fully
-                    // transparent" feedback while keeping `paint_caution_stripes`'s
-                    // animation + repaint loop intact.
-                    if theme.pane_title_stripes {
-                        let interior = ui.max_rect();
-                        style::paint_caution_stripes(
-                            ui.painter(),
-                            interior,
-                            self.accent,
-                        );
-                    }
-
                     self.lay_out_flex(ui, body);
                 });
             });
@@ -360,17 +342,20 @@ fn paint_pane_title(
     let stripes_on = theme.pane_title_stripes;
 
     // ── 1. Background ──
-    // The whole-pane stripe painter (in `Pane2::show`) already covers
-    // the title strip area when `stripes_on` is true. PRO themes that
-    // turn `pane_fill_visible` off but don't enable stripes still
-    // need an explicit fill on the title strip itself — same recipe
-    // `floating.rs::paint_title` uses.
+    // PRO themes with the outer pane frame invisible (`!pane_fill_visible`)
+    // and no stripes get an explicit fill on the title strip so it
+    // still reads as a panel header. GAME (`stripes_on`) gets the
+    // animated caution-stripe banner painted ONLY over the title
+    // strip — body never gets the stripes.
     if !theme.pane_fill_visible && !stripes_on {
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::same(theme.radius_lg),
             style::pane_fill(accent),
         );
+    }
+    if stripes_on {
+        style::paint_caution_stripes(ui.painter(), rect, accent);
     }
 
     // ── 2. Title text colour + content ──
@@ -406,21 +391,10 @@ fn paint_pane_title(
     //     "start" edge (TOP for top-to-bottom, BOTTOM for
     //     bottom-to-top). Pip at the opposite end.
     let _ = on_right_anchor;
-    eprintln!(
-        "[PANE2] anchor={:?} strip_rect=({:.0},{:.0})..({:.0},{:.0}) sz=({:.0}x{:.0})",
-        anchor,
-        rect.min.x, rect.min.y,
-        rect.max.x, rect.max.y,
-        rect.width(), rect.height(),
-    );
     if is_horizontal_title {
         let pos = egui::pos2(
             (rect.min.x + TITLE_INSET).round(),
             rect.center().y.round(),
-        );
-        eprintln!(
-            "[PANE2]   horizontal title text pos=({:.0},{:.0}) align=LEFT_CENTER text={:?}",
-            pos.x, pos.y, displayed,
         );
         ui.painter()
             .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
@@ -435,7 +409,7 @@ fn paint_pane_title(
         //   -π/2: from (pos.x, pos.y - g.x) to (pos.x + g.y, pos.y).
         //         Pin pos.y = max.y - TITLE_INSET (first letter near
         //         bottom); centre across narrow axis → pos.x = cx - g.y/2.
-        let galley = ui.painter().layout_no_wrap(displayed.clone(), font, text_col);
+        let galley = ui.painter().layout_no_wrap(displayed, font, text_col);
         let g = galley.size();
         let cx = rect.center().x;
         let top_to_bottom = matches!(anchor, PaneAnchor::TopRail(_));
@@ -450,10 +424,6 @@ fn paint_pane_title(
                 -std::f32::consts::FRAC_PI_2,
             )
         };
-        eprintln!(
-            "[PANE2]   vertical title text pos=({:.0},{:.0}) angle={:.2} galley=({:.0}x{:.0}) text={:?}",
-            pos.x, pos.y, angle, g.x, g.y, displayed,
-        );
         let mut shape = egui::epaint::TextShape::new(pos, galley, text_col);
         shape.angle = angle;
         ui.painter().add(shape);
