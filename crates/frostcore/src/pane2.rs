@@ -44,18 +44,23 @@ pub enum RailZone {
 }
 
 impl PaneAnchor {
-    /// `true` if this rail's pane has a vertical title strip
-    /// (left/right rail) — i.e. the **pane** itself is "tall".
+    /// `true` if this rail's pane is taller than it is wide
+    /// (Left/Right rail panes). Drives the flex direction.
     pub fn is_vertical_pane(self) -> bool {
         matches!(self, PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_))
     }
 
-    /// Always `false` in Phase 1 — title strip sits at the start of
-    /// the flex (top of a vertical pane, left side of a horizontal
-    /// pane). Phase 4+ may flip per-anchor for more variety; for now
-    /// every pane reads "title-then-body" so the layout is uniform.
+    /// `true` if the title strip sits on the END side of the pane
+    /// — i.e. on the rail-anchor side when the rail is on the right
+    /// or bottom. RightRail panes carry their title on the RIGHT
+    /// (END of horizontal flex); BottomRail panes on the BOTTOM
+    /// (END of vertical flex). LeftRail / TopRail keep the title at
+    /// the START.
     fn title_at_end(self) -> bool {
-        false
+        matches!(
+            self,
+            PaneAnchor::RightRail(_) | PaneAnchor::BottomRail(_)
+        )
     }
 }
 
@@ -71,11 +76,10 @@ pub const PANE_HORIZONTAL_SIZE: Vec2 = vec2(560.0, 220.0);
 /// 4 orientations read at matching weight.
 pub const TITLE_STRIP_THICKNESS: f32 = 25.0;
 
-/// Inset from each screen edge that excludes the ribbon strip:
-/// `EDGE_GAP + SIDE_BTN_SIZE + RAIL_PANEL_GAP`. Same recipe the
-/// existing `floating::floating_window_scoped` uses, lifted into a
-/// single named constant so all 4 rails clear their ribbon
-/// uniformly.
+/// Inset from each screen edge: `EDGE_GAP + SIDE_BTN_SIZE +
+/// RAIL_PANEL_GAP`. Matches the original
+/// `floating::floating_window_scoped` exactly so panes from new
+/// and old code stacks land at identical positions.
 pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP
     + crate::ribbon::SIDE_BTN_SIZE
     + RAIL_PANEL_GAP;
@@ -123,12 +127,22 @@ impl Pane2 {
         } else {
             PANE_HORIZONTAL_SIZE
         };
-        let screen = ctx.screen_rect();
+        // `content_rect` excludes any reserved areas (statusbar /
+        // menubar / docked panels). Matches what the original
+        // `floating::floating_window_scoped` reads for its anchor
+        // math, so panes land exactly where ribbon buttons expect.
+        let screen = ctx.content_rect();
         let pos = compute_pane_pos(self.anchor, screen, pane_size);
 
         let area_id = self.id.with("pane2_area");
         egui::Area::new(area_id)
-            .order(egui::Order::Foreground)
+            // `Order::Middle` (not Foreground) — same layer egui's
+            // ribbon buttons live on. Foreground would render the
+            // pane above the buttons even when their rects don't
+            // overlap, producing the visual stacking that read as
+            // "pane goes above the rails". Original `floating.rs`
+            // uses Order::Middle for the same reason.
+            .order(egui::Order::Middle)
             .fixed_pos(pos)
             .show(ctx, |ui| {
                 let theme = style::theme();
@@ -188,24 +202,24 @@ impl Pane2 {
         let inner = pane_size - vec2(4.0, 4.0);
 
         let (flex, title_min_size) = if anchor.is_vertical_pane() {
-            // Vertical pane (Left/Right rail): horizontal title bar
-            // at the TOP, body fills the rest below it → flex
-            // direction = column. Title is wide and short, text
-            // reads upright (no rotation).
+            // Vertical pane (Left/Right rail): vertical title strip
+            // on the rail-anchor side (LEFT for LeftRail, RIGHT for
+            // RightRail). Flex direction = row → title is one
+            // narrow column, body fills the rest beside it.
             //
-            // Cross axis = X. Title must claim the FULL inner width
-            // (otherwise paint-only items intrinsically size to 0
-            // and `align_items=Stretch` has nothing to stretch
-            // against). Main axis = Y → basis 25 height.
-            (Flex::vertical(), vec2(inner.x, TITLE_STRIP_THICKNESS))
-        } else {
-            // Horizontal pane (Top/Bottom rail): vertical title
-            // strip on the LEFT, body fills the rest to its right
-            // → flex direction = row. Title is tall and thin.
-            //
-            // Cross axis = Y. Title must claim the FULL inner
-            // height. Main axis = X → basis 25 width.
+            // Cross axis = Y. Title min_size must claim the full
+            // inner height so paint-only items don't collapse to 0.
+            // Main axis = X → basis 25 width.
             (Flex::horizontal(), vec2(TITLE_STRIP_THICKNESS, inner.y))
+        } else {
+            // Horizontal pane (Top/Bottom rail): horizontal title
+            // bar on the rail-anchor side (TOP for TopRail, BOTTOM
+            // for BottomRail). Flex direction = column → title is
+            // one short row, body fills the rest below/above it.
+            //
+            // Cross axis = X. Title claims the full inner width.
+            // Main axis = Y → basis 25 height.
+            (Flex::vertical(), vec2(inner.x, TITLE_STRIP_THICKNESS))
         };
 
         flex
@@ -259,52 +273,63 @@ impl Pane2 {
 // ─── Anchor → screen position ──────────────────────────────────────
 
 fn compute_pane_pos(anchor: PaneAnchor, screen: Rect, pane: Vec2) -> egui::Pos2 {
-    // Inner box that excludes the ribbon strip on every screen edge —
-    // panes never overlap a ribbon button. Even when only one rail
-    // is in use, the symmetric inset keeps zone centring honest
-    // (the centre of the available area, not of the raw screen).
-    let inset = RAIL_INSET;
-    let inner = Rect::from_min_max(
-        pos2(screen.min.x + inset, screen.min.y + inset),
-        pos2(screen.max.x - inset, screen.max.y - inset),
-    );
+    // Two insets:
+    //   * `inset_near = RAIL_INSET (46)` — the original 4 px gap
+    //     to the rail button strip. Used on TOP, LEFT, and the
+    //     perpendicular-far edges of every pane.
+    //   * `inset_far = RAIL_INSET + SIDE_BTN_SIZE/2` — extra
+    //     breathing room on the PANE'S OWN ANCHOR side when that
+    //     side is RIGHT (RightRail panes) or BOTTOM (BottomRail
+    //     panes). Vertical-rail End-zone panes (LE / RE) still
+    //     reach the bottom with the standard 4 px gap; only the
+    //     bottom-anchored panes get the extra inset.
+    let inset_near = RAIL_INSET;
+    // `SIDE_BTN_SIZE/2` (half the button) + `2 * SIDE_BTN_GAP`
+    // (twice the inter-button spacing) — user-tuned for the
+    // bottom/right anchor breathing room.
+    let inset_far =
+        RAIL_INSET + crate::ribbon::SIDE_BTN_SIZE * 0.5 + 2.0 * crate::ribbon::SIDE_BTN_GAP;
+
+    // Range along the perpendicular axis of each rail. Vertical
+    // rails (Left/Right) lay panes out along Y from
+    // `near` (top edge) to `screen.max.y - near` (bottom edge);
+    // horizontal rails along X with the same recipe.
+    let v_top = screen.min.y + inset_near;
+    let v_bottom = screen.max.y - inset_near;
+    let h_left = screen.min.x + inset_near;
+    let h_right = screen.max.x - inset_near;
+
     match anchor {
         PaneAnchor::LeftRail(zone) => {
-            let x = inner.min.x;
-            let y = vertical_zone_y(zone, inner, pane.y);
+            let x = screen.min.x + inset_near;       // anchor: LEFT (near)
+            let y = zone_along(zone, v_top, v_bottom, pane.y);
             pos2(x, y)
         }
         PaneAnchor::RightRail(zone) => {
-            let x = inner.max.x - pane.x;
-            let y = vertical_zone_y(zone, inner, pane.y);
+            let x = screen.max.x - inset_far - pane.x; // anchor: RIGHT (far)
+            let y = zone_along(zone, v_top, v_bottom, pane.y);
             pos2(x, y)
         }
         PaneAnchor::TopRail(zone) => {
-            let y = inner.min.y;
-            let x = horizontal_zone_x(zone, inner, pane.x);
+            let y = screen.min.y + inset_near;       // anchor: TOP (near)
+            let x = zone_along(zone, h_left, h_right, pane.x);
             pos2(x, y)
         }
         PaneAnchor::BottomRail(zone) => {
-            let y = inner.max.y - pane.y;
-            let x = horizontal_zone_x(zone, inner, pane.x);
+            let y = screen.max.y - inset_far - pane.y; // anchor: BOTTOM (far)
+            let x = zone_along(zone, h_left, h_right, pane.x);
             pos2(x, y)
         }
     }
 }
 
-fn vertical_zone_y(zone: RailZone, inner: Rect, pane_h: f32) -> f32 {
+/// Place a pane along its rail's perpendicular axis given the
+/// available range `[range_min, range_max]` and pane extent.
+fn zone_along(zone: RailZone, range_min: f32, range_max: f32, pane_extent: f32) -> f32 {
     match zone {
-        RailZone::Start => inner.min.y,
-        RailZone::Middle => inner.min.y + (inner.height() - pane_h) * 0.5,
-        RailZone::End => inner.max.y - pane_h,
-    }
-}
-
-fn horizontal_zone_x(zone: RailZone, inner: Rect, pane_w: f32) -> f32 {
-    match zone {
-        RailZone::Start => inner.min.x,
-        RailZone::Middle => inner.min.x + (inner.width() - pane_w) * 0.5,
-        RailZone::End => inner.max.x - pane_w,
+        RailZone::Start => range_min,
+        RailZone::Middle => range_min + (range_max - range_min - pane_extent) * 0.5,
+        RailZone::End => range_max - pane_extent,
     }
 }
 
@@ -375,23 +400,15 @@ fn paint_pane_title(
         title_uc
     };
 
-    // Convenience flags — the 4 anchors collapse into 2 axes.
-    let on_right_anchor = matches!(anchor, PaneAnchor::RightRail(_));
-    let is_horizontal_title = matches!(
-        anchor,
-        PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_)
-    );
+    // Title strip is HORIZONTAL on Top/Bottom rail panes (text
+    // upright, reads left-to-right) and VERTICAL on Left/Right
+    // rail panes (text rotated, reads along the strip).
+    let is_horizontal_strip = !anchor.is_vertical_pane();
 
     // ── 3. Title text paint ──
-    // Text starts at the BEGINNING of the strip in the reading
-    // direction; the blinking pip (GAME only) lives at the END.
-    //   • Horizontal title bar → first letter at LEFT edge
-    //     (reading starts on the left). Pip at right edge.
-    //   • Vertical title strip → first letter at the strip's
-    //     "start" edge (TOP for top-to-bottom, BOTTOM for
-    //     bottom-to-top). Pip at the opposite end.
-    let _ = on_right_anchor;
-    if is_horizontal_title {
+    if is_horizontal_strip {
+        // Horizontal title bar (Top/Bottom rail panes). Text at
+        // LEFT edge of strip, vertically centred. Pip at RIGHT.
         let pos = egui::pos2(
             (rect.min.x + TITLE_INSET).round(),
             rect.center().y.round(),
@@ -399,26 +416,32 @@ fn paint_pane_title(
         ui.painter()
             .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
     } else {
-        // Vertical title strip on the LEFT. Pin the FIRST letter at
-        // the strip's start edge (top for `+π/2`, bottom for
-        // `-π/2`) and centre the text on the strip's narrow axis.
-        // After rotation, the unrotated galley (g.x × g.y) becomes:
-        //   +π/2: from (pos.x - g.y, pos.y) to (pos.x, pos.y + g.x).
-        //         Pin pos.y = min.y + TITLE_INSET (first letter near
-        //         top); centre across narrow axis → pos.x = cx + g.y/2.
-        //   -π/2: from (pos.x, pos.y - g.x) to (pos.x + g.y, pos.y).
-        //         Pin pos.y = max.y - TITLE_INSET (first letter near
-        //         bottom); centre across narrow axis → pos.x = cx - g.y/2.
+        // Vertical title strip (Left/Right rail panes). Reading
+        // direction follows the rail:
+        //   • LeftRail (strip on LEFT)  → text reads BOTTOM-TO-TOP
+        //                                 (`-π/2`); first letter
+        //                                 at the strip's BOTTOM.
+        //   • RightRail (strip on RIGHT) → text reads TOP-TO-BOTTOM
+        //                                  (`+π/2`); first letter
+        //                                  at the strip's TOP.
+        // Across the narrow axis, the rotated galley is centred on
+        // the strip's centre X.
         let galley = ui.painter().layout_no_wrap(displayed, font, text_col);
         let g = galley.size();
         let cx = rect.center().x;
-        let top_to_bottom = matches!(anchor, PaneAnchor::TopRail(_));
-        let (pos, angle) = if top_to_bottom {
+        let on_right = matches!(anchor, PaneAnchor::RightRail(_));
+        let (pos, angle) = if on_right {
+            // RightRail → +π/2: text bbox extends LEFT of pos by
+            // g.y; first letter at top → pos.y = min.y + INSET;
+            // centre across narrow axis → pos.x = cx + g.y/2.
             (
                 egui::pos2((cx + g.y * 0.5).round(), (rect.min.y + TITLE_INSET).round()),
                 std::f32::consts::FRAC_PI_2,
             )
         } else {
+            // LeftRail → -π/2: text bbox extends RIGHT of pos by
+            // g.y; first letter at bottom → pos.y = max.y - INSET;
+            // centre across narrow axis → pos.x = cx - g.y/2.
             (
                 egui::pos2((cx - g.y * 0.5).round(), (rect.max.y - TITLE_INSET).round()),
                 -std::f32::consts::FRAC_PI_2,
@@ -438,20 +461,21 @@ fn paint_pane_title(
         let pip_color = Color32::from_rgba_unmultiplied(
             text_col.r(), text_col.g(), text_col.b(), alpha,
         );
-        let pip_rect = if is_horizontal_title {
-            // Horizontal strip → pip at the END (right edge), text
-            // is at the BEGINNING (left edge).
+        let pip_rect = if is_horizontal_strip {
+            // Horizontal strip (Top/Bottom rail) → pip at the END
+            // (right edge), text is at the BEGINNING (left edge).
             let pip_x = rect.max.x - PIP_INSET - PIP_SIZE;
             Rect::from_min_size(
                 pos2(pip_x.round(), (rect.center().y - PIP_SIZE * 0.5).round()),
                 egui::vec2(PIP_SIZE, PIP_SIZE),
             )
         } else {
-            // Vertical strip → pip at the OPPOSITE vertical end
-            // from the text. TopRail (top-to-bottom text) → pip at
-            // bottom; BottomRail (bottom-to-top text) → pip at top.
-            let top_to_bottom = matches!(anchor, PaneAnchor::TopRail(_));
-            let pip_y = if top_to_bottom {
+            // Vertical strip (Left/Right rail) → pip at the OPPOSITE
+            // end of the text reading direction. RightRail (text
+            // top-to-bottom) → pip at bottom; LeftRail (text
+            // bottom-to-top) → pip at top.
+            let on_right = matches!(anchor, PaneAnchor::RightRail(_));
+            let pip_y = if on_right {
                 rect.max.y - PIP_INSET - PIP_SIZE
             } else {
                 rect.min.y + PIP_INSET
@@ -468,14 +492,23 @@ fn paint_pane_title(
     // ── 5. Divider hairline on the body-facing edge ──
     if theme.pane_show_title_divider {
         let stroke = egui::Stroke::new(theme.border_width, style::widget_border(accent));
-        if is_horizontal_title {
-            // Horizontal title bar at top of pane → divider sits at
-            // the BOTTOM of the strip.
-            ui.painter().hline(rect.min.x..=rect.max.x, rect.max.y - 0.5, stroke);
-        } else {
-            // Vertical title strip on left of pane → divider on the
-            // RIGHT edge of the strip.
-            ui.painter().vline(rect.max.x - 0.5, rect.min.y..=rect.max.y, stroke);
+        match anchor {
+            PaneAnchor::TopRail(_) => {
+                // Title at TOP → divider on the strip's BOTTOM edge.
+                ui.painter().hline(rect.min.x..=rect.max.x, rect.max.y - 0.5, stroke);
+            }
+            PaneAnchor::BottomRail(_) => {
+                // Title at BOTTOM → divider on the strip's TOP edge.
+                ui.painter().hline(rect.min.x..=rect.max.x, rect.min.y + 0.5, stroke);
+            }
+            PaneAnchor::LeftRail(_) => {
+                // Title on LEFT → divider on the strip's RIGHT edge.
+                ui.painter().vline(rect.max.x - 0.5, rect.min.y..=rect.max.y, stroke);
+            }
+            PaneAnchor::RightRail(_) => {
+                // Title on RIGHT → divider on the strip's LEFT edge.
+                ui.painter().vline(rect.min.x + 0.5, rect.min.y..=rect.max.y, stroke);
+            }
         }
     }
 }
