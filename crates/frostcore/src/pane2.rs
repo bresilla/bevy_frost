@@ -52,16 +52,18 @@ impl PaneAnchor {
 
     /// Which side of the pane the title strip sits on.
     /// Middle-zone panes use the rail-anchor side (the original
-    /// convention). Corner-zone (Start/End) panes flip per the
-    /// user's pair spec (LS=h-top, TS=v-left, RE=h-bottom, BE=v-right,
-    /// LE=h-bottom, BS=v-left). TE and RS are already on their
-    /// rail-anchor side, which the spec preserves.
+    /// convention). All corner-zone (Start/End) panes flip:
+    /// vertical-pane corners get a horizontal title; horizontal-pane
+    /// corners get a vertical title — the perpendicular orientation
+    /// from the rail-anchor default.
     fn title_side(self) -> TitleSide {
         match self {
             PaneAnchor::LeftRail(RailZone::Start)   => TitleSide::Top,
             PaneAnchor::LeftRail(RailZone::End)     => TitleSide::Bottom,
+            PaneAnchor::RightRail(RailZone::Start)  => TitleSide::Top,
             PaneAnchor::RightRail(RailZone::End)    => TitleSide::Bottom,
             PaneAnchor::TopRail(RailZone::Start)    => TitleSide::Left,
+            PaneAnchor::TopRail(RailZone::End)      => TitleSide::Right,
             PaneAnchor::BottomRail(RailZone::Start) => TitleSide::Left,
             PaneAnchor::BottomRail(RailZone::End)   => TitleSide::Right,
             PaneAnchor::LeftRail(_)                 => TitleSide::Left,
@@ -69,6 +71,21 @@ impl PaneAnchor {
             PaneAnchor::TopRail(_)                  => TitleSide::Top,
             PaneAnchor::BottomRail(_)               => TitleSide::Bottom,
         }
+    }
+
+    /// `true` → reverse the title text's reading-start so the FIRST
+    /// letter sits next to the pane's own button on the rail.
+    /// After flipping TE/RS to perpendicular title strips, the
+    /// "reversed" set is TS, RS, RE, BE — each one's button sits
+    /// at the strip's natural FAR edge.
+    fn title_reversed(self) -> bool {
+        matches!(
+            self,
+            PaneAnchor::TopRail(RailZone::Start)
+                | PaneAnchor::RightRail(RailZone::Start)
+                | PaneAnchor::RightRail(RailZone::End)
+                | PaneAnchor::BottomRail(RailZone::End)
+        )
     }
 }
 
@@ -286,73 +303,90 @@ impl Pane2 {
 
 // ─── Anchor → screen position ──────────────────────────────────────
 
-fn compute_pane_pos(anchor: PaneAnchor, screen: Rect, pane: Vec2) -> egui::Pos2 {
-    // Two insets:
-    //   • `near = RAIL_INSET (46)` — the original 4 px gap to the
-    //     rail's button strip. Used by every pane on the TOP and
-    //     LEFT edges. Also used by **corner-zone End/Start panes**
-    //     when they reach the BOTTOM or RIGHT — user explicitly
-    //     listed TE, RE, BE, BS, LE as panes that shouldn't be
-    //     pushed.
-    //   • `far = RAIL_INSET + SIDE_BTN_SIZE/2 + 2*SIDE_BTN_GAP` —
-    //     extra breathing room. Used by **Middle-zone panes** that
-    //     reach the BOTTOM or RIGHT (LM, RM, BM) and by Start-zone
-    //     RIGHT-edge panes (RS).
-    let near = RAIL_INSET;
-    let far = RAIL_INSET + crate::ribbon::SIDE_BTN_SIZE * 0.5 + 2.0 * crate::ribbon::SIDE_BTN_GAP;
-
-    // Helpers — `start_*` always uses near (top/left of screen).
-    let left = screen.min.x + near;
-    let top = screen.min.y + near;
-
-    // Right and bottom can be near (no push) OR far (with push)
-    // depending on the anchor.
-    let right_near = screen.max.x - near;
-    let right_far  = screen.max.x - far;
-    let bottom_near = screen.max.y - near;
-    let bottom_far  = screen.max.y - far;
-
+/// For a given anchor, decides which screen-edge inset (`near` =
+/// flush with the rail, `far` = extra breathing room) to use for
+/// the pane's right and bottom edges. Encodes the user's per-pane
+/// rule in a single tuple per anchor:
+///
+/// * **`use_far_x = true`** — push the pane's right edge inward by
+///   the extra `far - near` (= `SIDE_BTN_SIZE/2 + 2 * SIDE_BTN_GAP`).
+/// * **`use_far_y = true`** — push the bottom edge inward.
+///
+/// Top / Left edges always use `near` (panes hug their own rail's
+/// button strip). The two helpers feed the generic axis math
+/// below; they're the *only* per-anchor table we need.
+fn far_flags(anchor: PaneAnchor) -> (bool, bool) {
     match anchor {
-        // ── LEFT rail: x always near (left edge). y per zone. ──
-        PaneAnchor::LeftRail(RailZone::Start) =>
-            pos2(left, top),
-        PaneAnchor::LeftRail(RailZone::Middle) =>
-            // Middle panes get pushed → centre between top-near and
-            // bottom-far so LM sits a touch above true centre,
-            // matching how RM / BM behave.
-            pos2(left, ((top + bottom_far) - pane.y) * 0.5),
-        PaneAnchor::LeftRail(RailZone::End) =>
-            // LE pushed UP.
-            pos2(left, bottom_far - pane.y),
+        // LeftRail:
+        //   LS: hugs the top-left corner — no far edge to push.
+        //   LM: centred → use far_bottom so the centre nudges up
+        //       and matches RM / BM's vertical centre.
+        //   LE: bottom is adjacent to BS button (DIFFERENT rail)
+        //       → push UP.
+        PaneAnchor::LeftRail(RailZone::Start)  => (false, false),
+        PaneAnchor::LeftRail(RailZone::Middle) => (false, true),
+        PaneAnchor::LeftRail(RailZone::End)    => (false, true),
 
-        // ── RIGHT rail: y per zone. x near for End, far otherwise. ──
-        PaneAnchor::RightRail(RailZone::Start) =>
-            pos2(right_far - pane.x, top),
-        PaneAnchor::RightRail(RailZone::Middle) =>
-            pos2(right_far - pane.x, ((top + bottom_far) - pane.y) * 0.5),
-        PaneAnchor::RightRail(RailZone::End) =>
-            // RE pushed UP only (x stays at near).
-            pos2(right_near - pane.x, bottom_far - pane.y),
+        // RightRail: RM is centred → use far_x for the centring
+        // shift. RS now stays flush right (TE is the one that
+        // pushes LEFT in their corner pair). RE keeps right at
+        // near (own-rail flush) but pushes y for the bottom rail.
+        PaneAnchor::RightRail(RailZone::Start)  => (false, false),
+        PaneAnchor::RightRail(RailZone::Middle) => (true, true),
+        PaneAnchor::RightRail(RailZone::End)    => (false, true),
 
-        // ── TOP rail: y always near (top edge). x per zone. ──
-        PaneAnchor::TopRail(RailZone::Start) =>
-            pos2(left, top),
-        PaneAnchor::TopRail(RailZone::Middle) =>
-            pos2(((left + right_far) - pane.x) * 0.5, top),
-        PaneAnchor::TopRail(RailZone::End) =>
-            // TE NOT pushed.
-            pos2(right_near - pane.x, top),
+        // TopRail: y is always at top (no far). TM centres with
+        // far_x. TE now pushes LEFT (its right edge meets the
+        // RS button, different rail). TS hugs the corner.
+        PaneAnchor::TopRail(RailZone::Start)  => (false, false),
+        PaneAnchor::TopRail(RailZone::Middle) => (true, false),
+        PaneAnchor::TopRail(RailZone::End)    => (true, false),
 
-        // ── BOTTOM rail: x per zone. y near for Start/End, far for Middle. ──
-        PaneAnchor::BottomRail(RailZone::Start) =>
-            // BS NOT pushed.
-            pos2(left, bottom_near - pane.y),
-        PaneAnchor::BottomRail(RailZone::Middle) =>
-            pos2(((left + right_far) - pane.x) * 0.5, bottom_far - pane.y),
-        PaneAnchor::BottomRail(RailZone::End) =>
-            // BE pushed LEFT only (y stays at near).
-            pos2(right_far - pane.x, bottom_near - pane.y),
+        // BottomRail: y always anchored to bottom. Middle gets
+        // far_y for the same centring nudge as the verticals' Ms.
+        // BS stays at near (its own-rail flush). BE pushes LEFT
+        // because its right edge meets RE button (different rail).
+        PaneAnchor::BottomRail(RailZone::Start)  => (false, false),
+        PaneAnchor::BottomRail(RailZone::Middle) => (true, true),
+        PaneAnchor::BottomRail(RailZone::End)    => (true, false),
     }
+}
+
+fn compute_pane_pos(anchor: PaneAnchor, screen: Rect, pane: Vec2) -> egui::Pos2 {
+    let near = RAIL_INSET;
+    let far = RAIL_INSET + crate::ribbon::SIDE_BTN_SIZE * 0.5
+        + 2.0 * crate::ribbon::SIDE_BTN_GAP;
+    let (use_far_x, use_far_y) = far_flags(anchor);
+
+    // Resolve the four screen edges. Top/left always near; right/
+    // bottom flip per `far_flags`.
+    let x_min = screen.min.x + near;
+    let y_min = screen.min.y + near;
+    let x_max = screen.max.x - if use_far_x { far } else { near };
+    let y_max = screen.max.y - if use_far_y { far } else { near };
+
+    // Generic axis math — same for every anchor. Side rail (Left/
+    // Right) panes pin x to one edge and place y by zone; horizontal
+    // rail (Top/Bottom) panes pin y and place x by zone.
+    let x = match anchor {
+        PaneAnchor::LeftRail(_) => x_min,
+        PaneAnchor::RightRail(_) => x_max - pane.x,
+        PaneAnchor::TopRail(z) | PaneAnchor::BottomRail(z) => match z {
+            RailZone::Start  => x_min,
+            RailZone::Middle => (x_min + x_max - pane.x) * 0.5,
+            RailZone::End    => x_max - pane.x,
+        },
+    };
+    let y = match anchor {
+        PaneAnchor::TopRail(_) => y_min,
+        PaneAnchor::BottomRail(_) => y_max - pane.y,
+        PaneAnchor::LeftRail(z) | PaneAnchor::RightRail(z) => match z {
+            RailZone::Start  => y_min,
+            RailZone::Middle => (y_min + y_max - pane.y) * 0.5,
+            RailZone::End    => y_max - pane.y,
+        },
+    };
+    pos2(x, y)
 }
 
 // ─── Title painting ─────────────────────────────────────────────────
@@ -424,29 +458,46 @@ fn paint_pane_title(
 
     let title_side = anchor.title_side();
     let is_horizontal_strip = title_side.is_horizontal_strip();
+    let reversed = anchor.title_reversed();
 
     // ── 3. Title text paint ──
     if is_horizontal_strip {
-        // Horizontal title bar (TitleSide::Top or Bottom). Text at
-        // LEFT edge of strip, vertically centred. Pip at RIGHT.
-        let pos = egui::pos2(
-            (rect.min.x + TITLE_INSET).round(),
-            rect.center().y.round(),
-        );
-        ui.painter()
-            .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
+        // Horizontal title bar (TitleSide::Top or Bottom). Default
+        // text starts at LEFT; reversed (TE / RE) starts at RIGHT
+        // so the first letter is closest to the pane's own button.
+        if reversed {
+            let pos = egui::pos2(
+                (rect.max.x - TITLE_INSET).round(),
+                rect.center().y.round(),
+            );
+            ui.painter()
+                .text(pos, egui::Align2::RIGHT_CENTER, displayed, font, text_col);
+        } else {
+            let pos = egui::pos2(
+                (rect.min.x + TITLE_INSET).round(),
+                rect.center().y.round(),
+            );
+            ui.painter()
+                .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
+        }
     } else {
         // Vertical title strip (TitleSide::Left or Right). Reading
-        // direction follows which side the strip is on:
-        //   • Left  → text reads BOTTOM-TO-TOP (`-π/2`); first
-        //             letter at the strip's BOTTOM.
-        //   • Right → text reads TOP-TO-BOTTOM (`+π/2`); first
-        //             letter at the strip's TOP.
+        // direction follows which side the strip is on (and `reversed`
+        // flips it for TS / BE):
+        //   • Left,  not reversed → bottom-to-top (`-π/2`), first
+        //                            letter at strip BOTTOM.
+        //   • Left,  reversed     → top-to-bottom (`+π/2`), first
+        //                            letter at strip TOP (TS).
+        //   • Right, not reversed → top-to-bottom (`+π/2`), first
+        //                            letter at strip TOP.
+        //   • Right, reversed     → bottom-to-top (`-π/2`), first
+        //                            letter at strip BOTTOM (BE).
         let galley = ui.painter().layout_no_wrap(displayed, font, text_col);
         let g = galley.size();
         let cx = rect.center().x;
-        let on_right = title_side == TitleSide::Right;
-        let (pos, angle) = if on_right {
+        let on_right_side = title_side == TitleSide::Right;
+        let top_to_bottom = on_right_side ^ reversed; // ⊕: same direction unless reversed
+        let (pos, angle) = if top_to_bottom {
             (
                 egui::pos2((cx + g.y * 0.5).round(), (rect.min.y + TITLE_INSET).round()),
                 std::f32::consts::FRAC_PI_2,
@@ -472,21 +523,24 @@ fn paint_pane_title(
             text_col.r(), text_col.g(), text_col.b(), alpha,
         );
         let pip_rect = if is_horizontal_strip {
-            // Horizontal strip → pip at the right edge (text on left).
-            let pip_x = rect.max.x - PIP_INSET - PIP_SIZE;
+            // Horizontal strip → pip at the END opposite the text.
+            let pip_x = if reversed {
+                rect.min.x + PIP_INSET // text on right → pip on left
+            } else {
+                rect.max.x - PIP_INSET - PIP_SIZE // text on left → pip on right
+            };
             Rect::from_min_size(
                 pos2(pip_x.round(), (rect.center().y - PIP_SIZE * 0.5).round()),
                 egui::vec2(PIP_SIZE, PIP_SIZE),
             )
         } else {
             // Vertical strip → pip opposite the reading-start.
-            // Right side (top-to-bottom) → pip at bottom.
-            // Left side (bottom-to-top) → pip at top.
-            let on_right = title_side == TitleSide::Right;
-            let pip_y = if on_right {
-                rect.max.y - PIP_INSET - PIP_SIZE
+            let on_right_side = title_side == TitleSide::Right;
+            let top_to_bottom = on_right_side ^ reversed;
+            let pip_y = if top_to_bottom {
+                rect.max.y - PIP_INSET - PIP_SIZE // text starts at top → pip at bottom
             } else {
-                rect.min.y + PIP_INSET
+                rect.min.y + PIP_INSET // text starts at bottom → pip at top
             };
             Rect::from_min_size(
                 pos2((rect.center().x - PIP_SIZE * 0.5).round(), pip_y.round()),
