@@ -131,11 +131,12 @@ impl Pane2 {
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ctx, |ui| {
-                // Outer Frame — pane fill + border + corner radius
-                // straight from the active theme. The Frame paints
-                // BEHIND the flex container, so the body sees only
-                // the inner Ui's rect (post-margin, pre-stroke).
                 let theme = style::theme();
+                // Outer pane fill — matches `floating.rs::floating_window_scoped`:
+                // PRO uses the glass-tinted panel colour; GAME (`pane_fill_visible
+                // = false`) leaves it transparent. The same shadow params come
+                // from the theme so PRO panes drop a soft shadow and GAME's
+                // can flatten if it wants.
                 let fill = if theme.pane_fill_visible {
                     style::glass_fill(
                         style::pane_fill(self.accent),
@@ -145,16 +146,43 @@ impl Pane2 {
                 } else {
                     Color32::TRANSPARENT
                 };
-                egui::Frame::new()
-                    .fill(fill)
-                    .stroke(Stroke::new(theme.border_width, style::widget_border(self.accent)))
-                    .corner_radius(egui::CornerRadius::same(theme.radius_lg))
-                    .inner_margin(egui::Margin::same(2))
-                    .show(ui, |ui| {
-                        ui.set_min_size(pane_size - vec2(4.0, 4.0));
-                        ui.set_max_size(pane_size - vec2(4.0, 4.0));
-                        self.lay_out_flex(ui, body);
-                    });
+                let shadow = egui::epaint::Shadow {
+                    offset: [0, theme.pane_shadow_y],
+                    blur: theme.pane_shadow_blur,
+                    spread: 0,
+                    color: Color32::from_black_alpha(115),
+                };
+                egui::Frame {
+                    inner_margin: egui::Margin::same(2),
+                    outer_margin: egui::Margin::ZERO,
+                    fill,
+                    stroke: Stroke::new(theme.border_width, style::widget_border(self.accent)),
+                    corner_radius: egui::CornerRadius::same(theme.radius_lg),
+                    shadow,
+                }
+                .show(ui, |ui| {
+                    ui.set_min_size(pane_size - vec2(4.0, 4.0));
+                    ui.set_max_size(pane_size - vec2(4.0, 4.0));
+
+                    // GAME / `pane_title_stripes` themes paint the
+                    // animated caution stripes ACROSS THE ENTIRE pane
+                    // interior — title strip and body alike — so the
+                    // pane reads as a single striped warning panel
+                    // even before any sections render. This matches
+                    // the user's "GAME panes shouldn't look fully
+                    // transparent" feedback while keeping `paint_caution_stripes`'s
+                    // animation + repaint loop intact.
+                    if theme.pane_title_stripes {
+                        let interior = ui.max_rect();
+                        style::paint_caution_stripes(
+                            ui.painter(),
+                            interior,
+                            self.accent,
+                        );
+                    }
+
+                    self.lay_out_flex(ui, body);
+                });
             });
     }
 
@@ -166,46 +194,81 @@ impl Pane2 {
     fn lay_out_flex(self, ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
         let Pane2 { id, title, anchor, accent } = self;
 
-        let flex = if anchor.is_vertical_pane() {
+        // Inner Ui size — Frame's `inner_margin = 2` shrinks each
+        // axis by 4. Used to size the flex container AND the
+        // title strip's `min_size` cross-axis so paint-only items
+        // don't collapse to 0 on the cross axis.
+        let pane_size = if anchor.is_vertical_pane() {
+            PANE_VERTICAL_SIZE
+        } else {
+            PANE_HORIZONTAL_SIZE
+        };
+        let inner = pane_size - vec2(4.0, 4.0);
+
+        let (flex, title_min_size) = if anchor.is_vertical_pane() {
             // Vertical pane (Left/Right rail): horizontal title bar
             // at the TOP, body fills the rest below it → flex
             // direction = column. Title is wide and short, text
             // reads upright (no rotation).
-            Flex::vertical()
+            //
+            // Cross axis = X. Title must claim the FULL inner width
+            // (otherwise paint-only items intrinsically size to 0
+            // and `align_items=Stretch` has nothing to stretch
+            // against). Main axis = Y → basis 25 height.
+            (Flex::vertical(), vec2(inner.x, TITLE_STRIP_THICKNESS))
         } else {
             // Horizontal pane (Top/Bottom rail): vertical title
             // strip on the LEFT, body fills the rest to its right
-            // → flex direction = row. Title is tall and thin, text
-            // reads rotated.
-            Flex::horizontal()
+            // → flex direction = row. Title is tall and thin.
+            //
+            // Cross axis = Y. Title must claim the FULL inner
+            // height. Main axis = X → basis 25 width.
+            (Flex::horizontal(), vec2(TITLE_STRIP_THICKNESS, inner.y))
         };
 
         flex
             .gap(Vec2::ZERO)
             .align_items(FlexAlign::Stretch)
-            .w_full()
-            .h_full()
+            .size(inner)
             .id_salt(id.with("pane2_flex"))
             .show(ui, |flex| {
                 let title_text = title.clone();
                 let title_paint = move |ui: &mut egui::Ui| {
+                    // Allocate the full slot so the inner Ui
+                    // reports a real `min_rect` to flex (not 0×0).
+                    // Without this, the flex's intrinsic-size pass
+                    // collapses paint-only items on the cross axis.
+                    let avail = ui.available_size_before_wrap();
+                    let (alloc_rect, _) =
+                        ui.allocate_exact_size(avail, egui::Sense::hover());
                     paint_pane_title(
                         ui,
-                        ui.max_rect(),
+                        alloc_rect,
                         id,
                         &title_text,
                         anchor,
                         accent,
                     );
                 };
-                let body_paint = move |ui: &mut egui::Ui| body(ui);
+                let body_paint = move |ui: &mut egui::Ui| {
+                    let avail = ui.available_size_before_wrap();
+                    let (_alloc_rect, _) =
+                        ui.allocate_exact_size(avail, egui::Sense::hover());
+                    body(ui);
+                };
 
                 if anchor.title_at_end() {
-                    flex.add_ui(item().grow(1.0), body_paint);
-                    flex.add_ui(item().basis(TITLE_STRIP_THICKNESS), title_paint);
+                    flex.add_ui(item().grow(1.0).min_size(inner), body_paint);
+                    flex.add_ui(
+                        item().basis(TITLE_STRIP_THICKNESS).min_size(title_min_size),
+                        title_paint,
+                    );
                 } else {
-                    flex.add_ui(item().basis(TITLE_STRIP_THICKNESS), title_paint);
-                    flex.add_ui(item().grow(1.0), body_paint);
+                    flex.add_ui(
+                        item().basis(TITLE_STRIP_THICKNESS).min_size(title_min_size),
+                        title_paint,
+                    );
+                    flex.add_ui(item().grow(1.0).min_size(inner), body_paint);
                 }
             });
     }
@@ -265,15 +328,23 @@ fn horizontal_zone_x(zone: RailZone, inner: Rect, pane_w: f32) -> f32 {
 
 // ─── Title painting ─────────────────────────────────────────────────
 
-/// Paint the title strip background + text inside `rect`. Theme
-/// aware:
+/// Paint the title strip background + text inside `rect`,
+/// matching the visual recipe from `floating.rs::paint_title` so
+/// PRO and GAME read identically across the old and new pane
+/// stacks. Six pieces:
 ///
-/// * `theme.pane_title_stripes` ON (GAME): caution-stripe banner
-///   via [`crate::style::paint_caution_stripes`].
-/// * OFF (PRO): solid accent fill.
+/// 1. Background: theme-driven panel fill (PRO) or animated
+///    caution stripes (GAME).
+/// 2. Title text: scramble-decoded when `scramble_titles` is on,
+///    aligned to the anchor side (left for LeftRail/TopRail,
+///    right/bottom for RightRail/BottomRail), rotated for
+///    horizontal panes.
+/// 3. Blinking pip at the OPPOSITE end of the strip (GAME only).
+/// 4. Divider hairline on the body-facing edge of the strip
+///    (`pane_show_title_divider`).
 ///
-/// Text rotation depends on the rail: vertical strips rotate text
-/// `±π/2`; horizontal strips paint text upright.
+/// Constants `TITLE_INSET = 8`, `title_size = 15 × 1.15`,
+/// `PIP_SIZE = 6` are the same numbers `floating.rs` uses.
 fn paint_pane_title(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -282,19 +353,33 @@ fn paint_pane_title(
     anchor: PaneAnchor,
     accent: Color32,
 ) {
+    const TITLE_INSET: f32 = 8.0;
+    const PIP_SIZE: f32 = 6.0;
+    let title_size = 15.0 * 1.15;
     let theme = style::theme();
+    let stripes_on = theme.pane_title_stripes;
 
-    // Background — caution stripes (GAME) or solid accent (PRO).
-    if theme.pane_title_stripes {
-        style::paint_caution_stripes(ui.painter(), rect, accent);
-    } else {
-        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, accent);
+    // ── 1. Background ──
+    // The whole-pane stripe painter (in `Pane2::show`) already covers
+    // the title strip area when `stripes_on` is true. PRO themes that
+    // turn `pane_fill_visible` off but don't enable stripes still
+    // need an explicit fill on the title strip itself — same recipe
+    // `floating.rs::paint_title` uses.
+    if !theme.pane_fill_visible && !stripes_on {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(theme.radius_lg),
+            style::pane_fill(accent),
+        );
     }
 
-    // Foreground text colour: contrast against the accent banner.
-    let text_col = style::contrast_text_for(accent);
-
-    // Optional GAME scramble-decode reveal.
+    // ── 2. Title text colour + content ──
+    let text_col = if stripes_on {
+        if theme.is_light { Color32::BLACK } else { Color32::WHITE }
+    } else {
+        style::section_title_color(accent)
+    };
+    let font = egui::FontId::new(title_size, style::title_font_family());
     let title_uc = title.to_uppercase();
     let displayed = if theme.scramble_titles {
         let session_id = id.with("pane2_title_session");
@@ -305,72 +390,123 @@ fn paint_pane_title(
         title_uc
     };
 
-    let font = egui::FontId::new(theme.section_title_size + 1.0, style::title_font_family());
-    let format = egui::TextFormat {
-        font_id: font,
-        color: text_col,
-        extra_letter_spacing: theme.section_title_letter_spacing,
-        ..Default::default()
-    };
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.append(&displayed, 0.0, format);
-    let galley = ui.painter().layout_job(job);
+    // Convenience flags — the 4 anchors collapse into 2 axes.
+    let on_right_anchor = matches!(anchor, PaneAnchor::RightRail(_));
+    let is_horizontal_title = matches!(
+        anchor,
+        PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_)
+    );
 
-    match anchor {
-        // Vertical pane (Left/Right rail) → horizontal title bar at
-        // the top, upright text centred in the strip.
-        PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_) => {
-            let pos = rect.center() - galley.size() * 0.5;
-            ui.painter().galley(pos, galley, text_col);
-        }
-
-        // Top-rail pane → vertical title strip on the LEFT, text
-        // reads TOP-TO-BOTTOM (`+π/2`). Eye flows from the rail
-        // (above the pane) down into the title.
-        PaneAnchor::TopRail(_) => {
-            paint_rotated_centred(ui, rect, galley, text_col, std::f32::consts::FRAC_PI_2);
-        }
-
-        // Bottom-rail pane → vertical title strip on the LEFT, text
-        // reads BOTTOM-TO-TOP (`-π/2`). Eye flows from the rail
-        // (below the pane) up into the title.
-        PaneAnchor::BottomRail(_) => {
-            paint_rotated_centred(ui, rect, galley, text_col, -std::f32::consts::FRAC_PI_2);
-        }
+    // ── 3. Title text paint ──
+    // Text starts at the BEGINNING of the strip in the reading
+    // direction; the blinking pip (GAME only) lives at the END.
+    //   • Horizontal title bar → first letter at LEFT edge
+    //     (reading starts on the left). Pip at right edge.
+    //   • Vertical title strip → first letter at the strip's
+    //     "start" edge (TOP for top-to-bottom, BOTTOM for
+    //     bottom-to-top). Pip at the opposite end.
+    let _ = on_right_anchor;
+    eprintln!(
+        "[PANE2] anchor={:?} strip_rect=({:.0},{:.0})..({:.0},{:.0}) sz=({:.0}x{:.0})",
+        anchor,
+        rect.min.x, rect.min.y,
+        rect.max.x, rect.max.y,
+        rect.width(), rect.height(),
+    );
+    if is_horizontal_title {
+        let pos = egui::pos2(
+            (rect.min.x + TITLE_INSET).round(),
+            rect.center().y.round(),
+        );
+        eprintln!(
+            "[PANE2]   horizontal title text pos=({:.0},{:.0}) align=LEFT_CENTER text={:?}",
+            pos.x, pos.y, displayed,
+        );
+        ui.painter()
+            .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
+    } else {
+        // Vertical title strip on the LEFT. Pin the FIRST letter at
+        // the strip's start edge (top for `+π/2`, bottom for
+        // `-π/2`) and centre the text on the strip's narrow axis.
+        // After rotation, the unrotated galley (g.x × g.y) becomes:
+        //   +π/2: from (pos.x - g.y, pos.y) to (pos.x, pos.y + g.x).
+        //         Pin pos.y = min.y + TITLE_INSET (first letter near
+        //         top); centre across narrow axis → pos.x = cx + g.y/2.
+        //   -π/2: from (pos.x, pos.y - g.x) to (pos.x + g.y, pos.y).
+        //         Pin pos.y = max.y - TITLE_INSET (first letter near
+        //         bottom); centre across narrow axis → pos.x = cx - g.y/2.
+        let galley = ui.painter().layout_no_wrap(displayed.clone(), font, text_col);
+        let g = galley.size();
+        let cx = rect.center().x;
+        let top_to_bottom = matches!(anchor, PaneAnchor::TopRail(_));
+        let (pos, angle) = if top_to_bottom {
+            (
+                egui::pos2((cx + g.y * 0.5).round(), (rect.min.y + TITLE_INSET).round()),
+                std::f32::consts::FRAC_PI_2,
+            )
+        } else {
+            (
+                egui::pos2((cx - g.y * 0.5).round(), (rect.max.y - TITLE_INSET).round()),
+                -std::f32::consts::FRAC_PI_2,
+            )
+        };
+        eprintln!(
+            "[PANE2]   vertical title text pos=({:.0},{:.0}) angle={:.2} galley=({:.0}x{:.0}) text={:?}",
+            pos.x, pos.y, angle, g.x, g.y, displayed,
+        );
+        let mut shape = egui::epaint::TextShape::new(pos, galley, text_col);
+        shape.angle = angle;
+        ui.painter().add(shape);
     }
 
+    // ── 4. Blinking pip at the OPPOSITE strip end (GAME only) ──
+    if stripes_on {
+        const PIP_INSET: f32 = TITLE_INSET;
+        let time = ui.ctx().input(|i| i.time) as f32;
+        let on = time.fract() < 0.08;
+        let alpha = if on { 255 } else { 76 };
+        let pip_color = Color32::from_rgba_unmultiplied(
+            text_col.r(), text_col.g(), text_col.b(), alpha,
+        );
+        let pip_rect = if is_horizontal_title {
+            // Horizontal strip → pip at the END (right edge), text
+            // is at the BEGINNING (left edge).
+            let pip_x = rect.max.x - PIP_INSET - PIP_SIZE;
+            Rect::from_min_size(
+                pos2(pip_x.round(), (rect.center().y - PIP_SIZE * 0.5).round()),
+                egui::vec2(PIP_SIZE, PIP_SIZE),
+            )
+        } else {
+            // Vertical strip → pip at the OPPOSITE vertical end
+            // from the text. TopRail (top-to-bottom text) → pip at
+            // bottom; BottomRail (bottom-to-top text) → pip at top.
+            let top_to_bottom = matches!(anchor, PaneAnchor::TopRail(_));
+            let pip_y = if top_to_bottom {
+                rect.max.y - PIP_INSET - PIP_SIZE
+            } else {
+                rect.min.y + PIP_INSET
+            };
+            Rect::from_min_size(
+                pos2((rect.center().x - PIP_SIZE * 0.5).round(), pip_y.round()),
+                egui::vec2(PIP_SIZE, PIP_SIZE),
+            )
+        };
+        ui.painter().rect_filled(pip_rect, egui::CornerRadius::ZERO, pip_color);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+    }
+
+    // ── 5. Divider hairline on the body-facing edge ──
+    if theme.pane_show_title_divider {
+        let stroke = egui::Stroke::new(theme.border_width, style::widget_border(accent));
+        if is_horizontal_title {
+            // Horizontal title bar at top of pane → divider sits at
+            // the BOTTOM of the strip.
+            ui.painter().hline(rect.min.x..=rect.max.x, rect.max.y - 0.5, stroke);
+        } else {
+            // Vertical title strip on left of pane → divider on the
+            // RIGHT edge of the strip.
+            ui.painter().vline(rect.max.x - 0.5, rect.min.y..=rect.max.y, stroke);
+        }
+    }
 }
 
-/// Paint a rotated single-line galley centred inside `rect`. Used
-/// only for the two vertical-strip orientations.
-fn paint_rotated_centred(
-    ui: &mut egui::Ui,
-    rect: Rect,
-    galley: std::sync::Arc<egui::Galley>,
-    color: Color32,
-    angle: f32,
-) {
-    let g = galley.size();
-    let cx = rect.center().x;
-    let cy = rect.center().y;
-
-    // Rotation around the TextShape's `pos`:
-    //   +π/2: (dx,dy) → (-dy, dx); galley (0..g.x, 0..g.y) rotates
-    //         to (-g.y..0, 0..g.x). Centre of rotated bbox is at
-    //         (pos.x - g.y/2, pos.y + g.x/2).
-    //   -π/2: (dx,dy) → ( dy,-dx); galley rotates to (0..g.y, -g.x..0).
-    //         Centre at (pos.x + g.y/2, pos.y - g.x/2).
-    let pos = if angle > 0.0 {
-        // +π/2: centre at (pos.x - g.y/2, pos.y + g.x/2) = (cx, cy).
-        pos2(cx + g.y * 0.5, cy - g.x * 0.5)
-    } else {
-        // -π/2: centre at (pos.x + g.y/2, pos.y - g.x/2) = (cx, cy).
-        pos2(cx - g.y * 0.5, cy + g.x * 0.5)
-    };
-
-    let mut shape = egui::epaint::TextShape::new(pos, galley, color);
-    shape.angle = angle;
-    ui.painter().add(shape);
-}
