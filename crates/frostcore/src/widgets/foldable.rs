@@ -64,6 +64,10 @@ pub(crate) struct SectionTrack {
     pub state_id: egui::Id,
     pub outer_rect: egui::Rect,
     pub header_response: egui::Response,
+    /// Section's animated openness (0 = folded, 1 = fully open).
+    /// Captured at the time of render — used by the pane width
+    /// calc on the NEXT frame to lerp the section's slot width.
+    pub openness: f32,
 }
 
 /// Same visual recipe as [`section`] but with a custom-painted
@@ -163,7 +167,7 @@ pub(crate) fn section_tracked<'i>(
                     // bubble up as section-toggle clicks. The two
                     // rects don't overlap, which keeps egui's hit
                     // priority predictable.
-                    const HEADER_H: f32 = 22.0;
+                    const HEADER_H: f32 = 25.0;
                     const CHEVRON_W: f32 = 16.0;
                     const ICON_W: f32 = 18.0;
                     let header_w = ui.available_width();
@@ -819,6 +823,7 @@ pub(crate) fn section_tracked<'i>(
         state_id,
         outer_rect,
         header_response: captured_header_response.expect("header always allocated"),
+        openness: captured_openness,
     }
 }
 
@@ -879,6 +884,592 @@ fn paint_chevron(ui: &mut egui::Ui, rect: egui::Rect, openness: f32, tint: egui:
     // at the apex when the segments are short relative to the
     // stroke — the chevron's GLYPH_W vs 1.6 ratio lands right in
     // that sweet spot.
+    ui.painter()
+        .add(egui::Shape::line(pts, egui::Stroke::new(1.6, tint)));
+}
+
+/// Width of a horizontal-pane section's vertical title strip when
+/// the section is fully folded. Sized so two folded cards' L-corner
+/// ticks (GAME theme: `tick_len=10`, `inset=2` → 12 px from each
+/// edge) have visible breathing space between them and don't visually
+/// touch — minimum maths: `W > 2 * (tick_len + inset) + gap`.
+pub(crate) const H_SECTION_TITLE_STRIP_W: f32 = 40.0;
+
+/// Width of the vertical title strip when the section is fully
+/// unfolded. A few pixels wider than the folded value so the
+/// unfolded title strip reads as visibly larger — mirrors the
+/// vertical card's banner expanding to fill the whole card when
+/// folded, rotated 90°.
+pub(crate) const H_SECTION_TITLE_STRIP_W_OPEN: f32 = 44.0;
+
+/// Smoothstep-eased lerp between the folded and unfolded title
+/// strip width.
+pub(crate) fn h_section_title_strip_w_for(openness: f32) -> f32 {
+    egui::lerp(
+        H_SECTION_TITLE_STRIP_W..=H_SECTION_TITLE_STRIP_W_OPEN,
+        smoothstep(openness),
+    )
+}
+
+/// Inset between the title strip's logical end and the chevron /
+/// title text — same role as `TITLE_LEFT_INSET` in the vertical
+/// header.
+pub(crate) const H_SECTION_TITLE_INSET: f32 = 8.0;
+
+/// Chevron paint slot in the strip — same size as `CHEVRON_W` in
+/// the vertical header.
+pub(crate) const H_SECTION_CHEVRON_SLOT: f32 = 16.0;
+
+/// Padding from the strip's reading-start edge (top edge for
+/// top-to-bottom, bottom edge for bottom-to-top) to the chevron.
+/// ~5 % of the unfolded strip width.
+pub(crate) const H_SECTION_EDGE_INSET: f32 = 4.0;
+
+/// Section variant used inside HORIZONTAL (TOP/BOTTOM rail) panes.
+/// Layout differs from [`section_tracked`]:
+///
+/// * Card is rendered at exactly `card_size` (caller-controlled
+///   width × full pane body height).
+/// * Title text is rendered ROTATED 90° in a thin vertical strip
+///   on the LEFT (`title_on_right=false`) or RIGHT (`true`).
+/// * Body fills the remaining card area when expanded; when folded
+///   only the title strip shows.
+/// * Click on the title strip toggles fold state.
+///
+/// Reuses egui's `CollapsingState` for the fold state so the same
+/// section identity (driven by `id_salt`) survives switching between
+/// the two layouts (vertical pane vs horizontal pane), keeping
+/// open/closed state stable across panes that share the id_salt.
+pub(crate) fn section_tracked_horizontal<'i>(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    title: &str,
+    accent: egui::Color32,
+    default_open: bool,
+    icon: Option<impl Into<crate::icons::Icon<'i>>>,
+    title_on_right: bool,
+    top_to_bottom: bool,
+    card_size: egui::Vec2,
+    body: impl FnOnce(&mut egui::Ui),
+) -> SectionTrack {
+    let icon: Option<crate::icons::Icon<'i>> = icon.map(Into::into);
+    flush_pending_separator(ui);
+
+    let state_id = ui.make_persistent_id(("frost_section", id_salt));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            state_id,
+            default_open,
+        );
+    let openness = state.openness(ui.ctx());
+
+    let theme_now = crate::style::theme();
+
+    // Manual rect math — no nested flex inside the card. Egui_flex's
+    // own multi-frame measurement convergence was making the card
+    // size animate over many frames AND its width/height clamps
+    // weren't strict (paint-only items got 0 cross-axis size). With
+    // direct rects everything is exact and instant on frame 1.
+    let card_rect =
+        egui::Rect::from_min_size(ui.cursor().min, card_size);
+
+    // Card frame: same recipe as the vertical `section`.
+    if crate::style::section_show_frame() {
+        ui.painter().rect_filled(
+            card_rect,
+            egui::CornerRadius::same(theme_now.radius_md),
+            glass_fill(
+                crate::style::section_fill(accent),
+                accent,
+                glass_alpha_card(),
+            ),
+        );
+        ui.painter().rect_stroke(
+            card_rect,
+            egui::CornerRadius::same(theme_now.radius_md),
+            egui::Stroke::new(theme_now.border_width, widget_border(accent)),
+            egui::epaint::StrokeKind::Inside,
+        );
+    }
+
+    // Title strip width grows with `openness` so the title side has
+    // visibly more presence when the section unfolds. Floored at
+    // `card_size.x` so a fully-folded card (whose width IS the strip)
+    // never reports a strip narrower than the card itself.
+    let strip_w = h_section_title_strip_w_for(openness).min(card_size.x);
+
+    // Title strip + body rects, computed from card_rect. The body
+    // also gets `section_padding` shrink — same recipe as the
+    // vertical card's `Frame::inner_margin` so user content has
+    // the same breathing room from the card edges.
+    let title_strip_rect = if title_on_right {
+        egui::Rect::from_min_max(
+            egui::pos2(card_rect.max.x - strip_w, card_rect.min.y),
+            card_rect.max,
+        )
+    } else {
+        egui::Rect::from_min_max(
+            card_rect.min,
+            egui::pos2(card_rect.min.x + strip_w, card_rect.max.y),
+        )
+    };
+    let pad = crate::style::section_padding();
+    let pad_l = pad.left as f32;
+    let pad_r = pad.right as f32;
+    let pad_t = pad.top as f32;
+    let pad_b = pad.bottom as f32;
+    let body_rect = if title_on_right {
+        egui::Rect::from_min_max(
+            egui::pos2(
+                card_rect.min.x + pad_l,
+                card_rect.min.y + pad_t,
+            ),
+            egui::pos2(
+                card_rect.max.x - strip_w - pad_r,
+                card_rect.max.y - pad_b,
+            ),
+        )
+    } else {
+        egui::Rect::from_min_max(
+            egui::pos2(
+                card_rect.min.x + strip_w + pad_l,
+                card_rect.min.y + pad_t,
+            ),
+            egui::pos2(
+                card_rect.max.x - pad_r,
+                card_rect.max.y - pad_b,
+            ),
+        )
+    };
+
+    // Title-strip click target.
+    let title_id_for_strip = ui.id().with(("frost_h_section_title_strip", id_salt));
+    let header_response = ui.interact(
+        title_strip_rect,
+        title_id_for_strip,
+        egui::Sense::click_and_drag(),
+    );
+    if header_response.clicked() {
+        state.toggle(ui);
+    }
+    // egui 0.33's `CollapsingState::toggle` only mutates the local
+    // struct — it does NOT persist to ctx data. The vertical path
+    // works because `state.show_body_unindented` calls `state.store`
+    // internally; we render the body manually here, so we have to
+    // store explicitly or the toggled `open` flag is dropped on the
+    // next frame's `load_with_default_open`.
+    state.store(ui.ctx());
+
+    // Title-strip background — solid accent fill when the theme
+    // wants `title_strip_filled` (matches what `section_tracked`
+    // does for vertical sections). `pane_title_stripes` is for the
+    // PANE title only, never for section headers.
+    if theme_now.title_strip_filled {
+        ui.painter().rect_filled(
+            title_strip_rect,
+            egui::CornerRadius::ZERO,
+            accent,
+        );
+    }
+
+    // L-corner ticks — painted AFTER the title-strip accent fill so
+    // the strip-side corners aren't covered by it. Split colour
+    // recipe mirrors the vertical card's top/bot split: corners on
+    // the title-strip side use `contrast_text_for(accent)` when the
+    // strip is filled (so they read as dark ticks on the bright
+    // banner); corners on the body side use the breathing accent
+    // bracket. PRO theme has `section_corner_ticks = 0` so this
+    // no-ops there.
+    let tick_len = theme_now.section_corner_ticks;
+    if tick_len > 0.0 {
+        let inset = theme_now.section_corner_ticks_inset;
+        let r = if inset > 0.0 {
+            card_rect.shrink(inset)
+        } else {
+            card_rect
+        };
+        let snap_low = |v: f32| v.round() + 0.5;
+        let snap_high = |v: f32| v.round() - 0.5;
+        let lx = snap_low(r.min.x);
+        let ty = snap_low(r.min.y);
+        let rx = snap_high(r.max.x);
+        let by = snap_high(r.max.y);
+        let len = tick_len;
+        let bracket_accent = crate::style::high_contrast_accent(accent);
+        let time = ui.ctx().input(|i| i.time) as f32;
+        let breath = {
+            const PERIOD: f32 = 3.4;
+            let phase = (time * std::f32::consts::TAU / PERIOD).cos();
+            0.78 + 0.11 * (1.0 - phase)
+        };
+        let tick_alpha = (255.0 * breath).round() as u8;
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+        let accent_col = egui::Color32::from_rgba_unmultiplied(
+            bracket_accent.r(),
+            bracket_accent.g(),
+            bracket_accent.b(),
+            tick_alpha,
+        );
+        let contrast_col = crate::style::contrast_text_for(accent);
+        // Strip-side corners are on the title strip: they sit on
+        // the bright banner when filled, so use the contrast colour.
+        // Body-side corners sit on the dark/transparent body, so
+        // use the breathing accent bracket.
+        let strip_col = if theme_now.title_strip_filled {
+            contrast_col
+        } else {
+            accent_col
+        };
+        let body_col = accent_col;
+        let strip_stroke = egui::Stroke::new(1.0, strip_col);
+        let body_stroke = egui::Stroke::new(1.0, body_col);
+        let (tl_stroke, bl_stroke, tr_stroke, br_stroke) = if title_on_right {
+            // Strip on RIGHT → TR + BR are strip-side; TL + BL are body-side.
+            (body_stroke, body_stroke, strip_stroke, strip_stroke)
+        } else {
+            // Strip on LEFT → TL + BL are strip-side; TR + BR are body-side.
+            (strip_stroke, strip_stroke, body_stroke, body_stroke)
+        };
+        let shapes: [egui::Shape; 8] = [
+            // Top-left ┌
+            egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], tl_stroke),
+            egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], tl_stroke),
+            // Top-right ┐
+            egui::Shape::line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], tr_stroke),
+            egui::Shape::line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], tr_stroke),
+            // Bottom-left └
+            egui::Shape::line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], bl_stroke),
+            egui::Shape::line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], bl_stroke),
+            // Bottom-right ┘
+            egui::Shape::line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], br_stroke),
+            egui::Shape::line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], br_stroke),
+        ];
+        ui.painter().extend(shapes);
+    }
+
+    // Title text rotation.
+    let title_col = if theme_now.title_strip_filled {
+        crate::style::contrast_text_for(accent)
+    } else {
+        crate::style::section_title_color(accent)
+    };
+    let base_title_size = theme_now.section_title_size;
+    let unfolded_title_size = base_title_size + 1.5;
+    let title_size_pt = egui::lerp(
+        base_title_size..=unfolded_title_size,
+        smoothstep(openness),
+    );
+    let bracket_visible = theme_now.section_title_brackets && openness < 0.05;
+    let any_brackets = theme_now.section_title_brackets;
+    let title_font = egui::FontId::new(title_size_pt, crate::style::title_font_family());
+    let title_uc = title.to_uppercase();
+    let displayed = if theme_now.scramble_titles {
+        let session_id = egui::Id::new(("frost_section_title_session", state_id));
+        let session = crate::style::appearance_session(ui.ctx(), session_id);
+        let scramble_id = session_id.with(session);
+        // Match vertical: only kick the scramble cycle when the
+        // section is fully visible (no parent fade in flight) so
+        // the decode plays at full opacity, not during a fade-in.
+        let active = ui.opacity() >= 0.95;
+        crate::style::scramble_text(ui.ctx(), scramble_id, &title_uc, active)
+    } else {
+        title_uc
+    };
+    let body_format = egui::TextFormat {
+        font_id: title_font.clone(),
+        color: title_col,
+        extra_letter_spacing: theme_now.section_title_letter_spacing,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    if any_brackets {
+        let bracket_format = egui::TextFormat {
+            color: if bracket_visible {
+                title_col
+            } else {
+                egui::Color32::TRANSPARENT
+            },
+            ..body_format.clone()
+        };
+        job.append("[ ", 0.0, bracket_format.clone());
+        job.append(&displayed, 0.0, body_format.clone());
+        job.append(" ]", 0.0, bracket_format);
+    } else {
+        job.append(&displayed, 0.0, body_format);
+    }
+    // Reading order: chevron → [inline icon] → title. Inline icon
+    // (PRO) reserves a slot in the title text's offset; "at end"
+    // icon (GAME) sits at the OPPOSITE strip edge and doesn't
+    // shift the title.
+    let icon_inline = icon.is_some() && !theme_now.section_icon_at_end;
+    let icon_slot: f32 = if icon_inline {
+        theme_now.section_icon_size.max(12.0) + 6.0
+    } else {
+        0.0
+    };
+
+    // Chevron position — at the START of reading direction (where
+    // the user's eye lands first), same side as the section's
+    // "first letter". `H_SECTION_EDGE_INSET` adds a small padding
+    // from the strip's outer edge so the chevron isn't flush against
+    // the L-corner / strip edge.
+    if theme_now.show_section_chevron {
+        let (chevron_center, extra_angle) = if top_to_bottom {
+            (
+                egui::pos2(
+                    title_strip_rect.center().x,
+                    title_strip_rect.min.y + H_SECTION_EDGE_INSET + H_SECTION_CHEVRON_SLOT * 0.5,
+                ),
+                std::f32::consts::FRAC_PI_2,
+            )
+        } else {
+            (
+                egui::pos2(
+                    title_strip_rect.center().x,
+                    title_strip_rect.max.y - H_SECTION_EDGE_INSET - H_SECTION_CHEVRON_SLOT * 0.5,
+                ),
+                -std::f32::consts::FRAC_PI_2,
+            )
+        };
+        paint_chevron_rotated(ui, chevron_center, openness, extra_angle, title_col);
+    }
+
+    // Icon — position depends on `theme.section_icon_at_end`.
+    // PRO (false): icon sits inline with the title (right after
+    // the chevron, before the title text), sized to MATCH the
+    // current title font size — same recipe as the vertical card,
+    // which inlines the icon glyph at `title_size_pt` so the icon
+    // tracks the title text growth on unfold. GAME (true): icon
+    // floats at the FAR END of the strip and SCALES with openness
+    // (folded × 0.85, unfolded × 2.9106, smoothstep-eased).
+    if let Some(crate::icons::Icon::Name(name)) = icon {
+        let icon_at_end = theme_now.section_icon_at_end;
+        let icon_size = if icon_at_end {
+            let base_size = theme_now.section_icon_size.max(12.0);
+            let folded_size = base_size * 0.85;
+            let unfolded_size = base_size * 2.9106;
+            let t = smoothstep(openness);
+            egui::lerp(folded_size..=unfolded_size, t)
+        } else {
+            // PRO inline: track the title font size so the icon
+            // grows with the title on unfold (matches vertical's
+            // inlined-glyph behaviour).
+            title_size_pt
+        };
+        let icon_y = match (top_to_bottom, icon_at_end) {
+            (true, false) => {
+                // Top-to-bottom + inline → icon just below chevron.
+                title_strip_rect.min.y + H_SECTION_EDGE_INSET + H_SECTION_CHEVRON_SLOT + icon_size * 0.5
+            }
+            (true, true) => {
+                // Top-to-bottom + at end → icon at strip bottom.
+                // Anchor the BOTTOM of the icon at a fixed Y so the
+                // icon grows UPWARD toward the title text rather
+                // than sliding off the strip edge as it expands.
+                let bottom = title_strip_rect.max.y - H_SECTION_EDGE_INSET - H_SECTION_TITLE_INSET;
+                bottom - icon_size * 0.5
+            }
+            (false, false) => {
+                // Bottom-to-top + inline → icon just above chevron.
+                title_strip_rect.max.y - H_SECTION_EDGE_INSET - H_SECTION_CHEVRON_SLOT - icon_size * 0.5
+            }
+            (false, true) => {
+                // Bottom-to-top + at end → icon at strip top,
+                // anchored on its TOP edge so it grows downward.
+                let top = title_strip_rect.min.y + H_SECTION_EDGE_INSET + H_SECTION_TITLE_INSET;
+                top + icon_size * 0.5
+            }
+        };
+        let icon_pos = egui::pos2(title_strip_rect.center().x, icon_y);
+        // Rotated icon paint — match the title text's rotation so the
+        // glyph reads in the same direction as the rotated text. We
+        // can't use `paint_icon` (which calls `painter.text` at zero
+        // angle) — build a TextShape with `angle = ±π/2` and centre
+        // its rotated bbox at `icon_pos`, mirroring how the title
+        // text is centred along the strip's perpendicular axis.
+        if let Some((glyph, family)) = crate::icons::icon(name) {
+            let galley = ui.painter().layout_no_wrap(
+                glyph.to_string(),
+                egui::FontId::new(icon_size, family),
+                title_col,
+            );
+            let g = galley.size();
+            let (pos, angle) = if top_to_bottom {
+                // +π/2: rotated bbox extends from (pos.x - g.y, pos.y)
+                // to (pos.x, pos.y + g.x). Centre at icon_pos →
+                // pos.x = icon_pos.x + g.y/2, pos.y = icon_pos.y - g.x/2.
+                (
+                    egui::pos2(icon_pos.x + g.y * 0.5, icon_pos.y - g.x * 0.5),
+                    std::f32::consts::FRAC_PI_2,
+                )
+            } else {
+                // -π/2: rotated bbox (pos.x, pos.y - g.x) to
+                // (pos.x + g.y, pos.y). Centre at icon_pos →
+                // pos.x = icon_pos.x - g.y/2, pos.y = icon_pos.y + g.x/2.
+                (
+                    egui::pos2(icon_pos.x - g.y * 0.5, icon_pos.y + g.x * 0.5),
+                    -std::f32::consts::FRAC_PI_2,
+                )
+            };
+            let mut shape = egui::epaint::TextShape::new(pos, galley, title_col);
+            shape.angle = angle;
+            ui.painter().add(shape);
+        }
+    }
+
+    // Title text — AFTER chevron + icon. Centred along the strip's
+    // perpendicular axis so the rotated text bbox shares an X with
+    // the (already-centred) chevron and inline icon. After rotation
+    // around `pos`, the text bbox extends LEFTWARD by `text_h` for
+    // +π/2 (top_to_bottom) and RIGHTWARD for -π/2; offsetting `pos.x`
+    // by ±text_h*0.5 puts the bbox midpoint exactly on
+    // `strip.center().x`.
+    let galley = ui.painter().layout_job(job);
+    let text_h = galley.size().y;
+    let head_offset = H_SECTION_EDGE_INSET + H_SECTION_CHEVRON_SLOT + icon_slot + H_SECTION_TITLE_INSET;
+    let strip_cx = title_strip_rect.center().x;
+    let _ = title_on_right; // strip.center is symmetric — same px regardless of side
+    let (pos, angle) = if top_to_bottom {
+        let px = strip_cx + text_h * 0.5;
+        let py = (title_strip_rect.min.y + head_offset).round();
+        (egui::pos2(px.round(), py), std::f32::consts::FRAC_PI_2)
+    } else {
+        let px = strip_cx - text_h * 0.5;
+        let py = (title_strip_rect.max.y - head_offset).round();
+        (egui::pos2(px.round(), py), -std::f32::consts::FRAC_PI_2)
+    };
+    let mut shape = egui::epaint::TextShape::new(pos, galley, title_col);
+    shape.angle = angle;
+    ui.painter().add(shape);
+
+    // Thin divider between the title strip and the body (PRO theme
+    // — gated on the same `section_show_title_divider` theme flag
+    // the vertical card uses). Paints a vertical hairline at the
+    // strip's body-facing edge.
+    if crate::style::section_show_title_divider() {
+        let divider_x = if title_on_right {
+            title_strip_rect.min.x - 0.5
+        } else {
+            title_strip_rect.max.x + 0.5
+        };
+        ui.painter().vline(
+            divider_x.round() - 0.5,
+            title_strip_rect.min.y..=title_strip_rect.max.y,
+            egui::Stroke::new(theme_now.border_width, widget_border(accent)),
+        );
+    }
+
+    crate::floating::log_layout_change(
+        ui.ctx(),
+        egui::Id::new(("frost_layout_h_section_title", state_id)),
+        format_args!(
+            "CONTAINER_TITLE \"{}\" tl=({:.0},{:.0}) br=({:.0},{:.0}) sz=({:.0}x{:.0}) on_right={} top_to_bottom={}",
+            id_salt,
+            title_strip_rect.min.x, title_strip_rect.min.y,
+            title_strip_rect.max.x, title_strip_rect.max.y,
+            title_strip_rect.width(), title_strip_rect.height(),
+            title_on_right, top_to_bottom,
+        ),
+    );
+
+    crate::floating::log_layout_change(
+        ui.ctx(),
+        egui::Id::new(("frost_layout_h_section_body", state_id)),
+        format_args!(
+            "CONTAINER_BODY \"{}\" tl=({:.0},{:.0}) br=({:.0},{:.0}) sz=({:.0}x{:.0}) openness={:.2}",
+            id_salt,
+            body_rect.min.x, body_rect.min.y,
+            body_rect.max.x, body_rect.max.y,
+            body_rect.width(), body_rect.height(),
+            openness,
+        ),
+    );
+
+    // Body — render at body_rect via child_ui. top_down layout +
+    // explicit min/max size + ScrollArea (from caller) handles
+    // overflow.
+    if openness > 0.001 && body_rect.width() > 1.0 {
+        let mut body_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(body_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        body_ui.set_min_size(body_rect.size());
+        body_ui.set_max_size(body_rect.size());
+        // Hard clip body content to the body_rect — prevents user
+        // widgets that take more than `available_width` (snarl,
+        // code editor, dual-pane labelled rows) from spilling past
+        // the section card's right edge.
+        body_ui.set_clip_rect(body_rect);
+        let prev_opacity = body_ui.opacity();
+        if openness < 1.0 {
+            body_ui.multiply_opacity(openness);
+        }
+        body(&mut body_ui);
+        body_ui.set_opacity(prev_opacity);
+    }
+
+    // Advance the parent ui's cursor by exactly card_size — this
+    // is what tells the OUTER section row flex how much horizontal
+    // space we used. flex.add_ui's internal allocate_at_least sees
+    // this and places the next section at card_rect.max.x.
+    let _ = ui.allocate_exact_size(card_size, egui::Sense::hover());
+
+    crate::floating::log_layout_change(
+        ui.ctx(),
+        egui::Id::new(("frost_layout_h_section", state_id)),
+        format_args!(
+            "CONTAINER \"{}\" tl=({:.0},{:.0}) br=({:.0},{:.0}) sz=({:.0}x{:.0}) requested=({:.0}x{:.0})",
+            id_salt,
+            card_rect.min.x, card_rect.min.y,
+            card_rect.max.x, card_rect.max.y,
+            card_rect.width(), card_rect.height(),
+            card_size.x, card_size.y,
+        ),
+    );
+
+    SectionTrack {
+        state_id,
+        outer_rect: card_rect,
+        header_response,
+        openness,
+    }
+}
+
+/// Like [`paint_chevron`] but adds an extra rotation angle so the
+/// glyph reads correctly on a rotated strip. `extra_angle` is added
+/// on top of the openness-driven rotation.
+fn paint_chevron_rotated(
+    ui: &mut egui::Ui,
+    center: egui::Pos2,
+    openness: f32,
+    extra_angle: f32,
+    tint: egui::Color32,
+) {
+    const GLYPH_W: f32 = 8.0;
+    const GLYPH_H: f32 = 5.0;
+    let hw = GLYPH_W * 0.5;
+    let hh = GLYPH_H * 0.5;
+    let raw = [
+        egui::vec2(-hw, -hh),
+        egui::vec2(0.0, hh),
+        egui::vec2(hw, -hh),
+    ];
+    use std::f32::consts::TAU;
+    let rot = egui::emath::Rot2::from_angle(
+        egui::lerp(-TAU / 4.0..=0.0, openness) + extra_angle,
+    );
+    let pts: Vec<egui::Pos2> = raw
+        .iter()
+        .map(|v| {
+            let r = rot * *v;
+            egui::pos2(center.x + r.x, center.y + r.y)
+        })
+        .collect();
     ui.painter()
         .add(egui::Shape::line(pts, egui::Stroke::new(1.6, tint)));
 }

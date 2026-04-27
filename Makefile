@@ -36,14 +36,20 @@ compile:
 c: compile
 
 run:
-	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release -p bevy_frost --example $(EXAMPLE)
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run -p bevy_frost --example $(EXAMPLE)
+
+# Phase 2 of `PLAN_NEWUI.md` — flex-based pane2 example. Empty
+# panes (title strip + empty body) at all 12 anchor positions plus
+# theme/mode cycle buttons. Doesn't touch the existing demo.
+run-newui:
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run -p bevy_frost --example newui
 
 # Plain-egui (no Bevy) demo — `eframe` with the `wgpu` backend,
 # same Vulkan path Bevy uses. Runs under the `nixVulkan` wrapper
 # out of the box on nix systems; override with `RUN_WITH=` on
 # distros with a native Vulkan driver.
 run-egui:
-	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run --release -p egui_frost --example simple
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run -p egui_frost --example simple
 
 r: run
 

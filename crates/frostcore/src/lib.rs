@@ -35,6 +35,7 @@ pub mod flex;
 pub mod floating;
 pub mod icons;
 pub mod maximize;
+pub mod pane2;
 
 /// Re-export of the bundled [`iconflow`] crate so consumers can
 /// reach `iconflow::list(Pack::Fluentui)`, `Pack`, etc. without

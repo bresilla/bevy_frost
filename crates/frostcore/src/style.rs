@@ -1463,7 +1463,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         pane_fill_visible: true,
         show_section_chevron: true,
         title_strip_filled: false,
-        section_title_size: 12.0 * 1.15,
+        section_title_size: 11.0,
         body_accent_darken: 0.0,
         section_icon_at_end: false,
         section_icon_size: 0.0,

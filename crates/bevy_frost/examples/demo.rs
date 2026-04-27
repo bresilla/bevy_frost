@@ -54,6 +54,8 @@ use bevy_frost::style::srgb_to_egui;
 // button clicks using these constants.
 const RIBBON_LEFT: &str = "demo_ribbon_left";
 const RIBBON_RIGHT: &str = "demo_ribbon_right";
+const RIBBON_TOP: &str = "demo_ribbon_top";
+const RIBBON_BOTTOM: &str = "demo_ribbon_bottom";
 
 // ─── Command-palette item slices ───────────────────────────────
 //
@@ -102,19 +104,28 @@ const MENU_THEME: &str = "demo_menu_theme";
 const MENU_KEYS: &str = "demo_menu_keys";
 const MENU_ABOUT: &str = "demo_menu_about";
 
-/// Two ribbons — Left is **TwoSided**, Right is **ThreeSided**.
-/// Both Panel role, both accept drops from each other. Every button
-/// starts in the `Start` cluster (the UPPER corner of each rail);
-/// the Middle / End clusters remain declared but empty so you can
-/// drag buttons down into them whenever you want.
+// One-shot ribbon-button ids — these don't open panels; they cycle
+// the selected swatch cube backward / forward. They demonstrate the
+// per-item `role` override on `RibbonItem`: a single
+// `RibbonRole::Icon` button living inside an otherwise
+// `RibbonRole::Panel` ribbon.
+const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
+const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
+
+/// Four ribbons, one per screen edge — every edge is `ThreeSided`
+/// so each gives three drop slots (`Start` corner, `Middle`, `End`
+/// corner). Each ribbon accepts drops from EVERY other ribbon, so
+/// any button can be dragged to any edge / cluster on the fly. All
+/// `Panel` role here; the kit also supports `Bar` for one-shot
+/// command rows. Mix-and-match per ribbon if needed.
 const RIBBONS: &[RibbonDef] = &[
     RibbonDef {
         id: RIBBON_LEFT,
         edge: RibbonEdge::Left,
         role: RibbonRole::Panel,
-        mode: RibbonMode::TwoSided,
+        mode: RibbonMode::ThreeSided,
         draggable: true,
-        accepts: &[RIBBON_RIGHT],
+        accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM],
     },
     RibbonDef {
         id: RIBBON_RIGHT,
@@ -122,15 +133,33 @@ const RIBBONS: &[RibbonDef] = &[
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
         draggable: true,
-        accepts: &[RIBBON_LEFT],
+        accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
+    },
+    RibbonDef {
+        id: RIBBON_TOP,
+        edge: RibbonEdge::Top,
+        role: RibbonRole::Panel,
+        mode: RibbonMode::ThreeSided,
+        draggable: true,
+        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
+    },
+    RibbonDef {
+        id: RIBBON_BOTTOM,
+        edge: RibbonEdge::Bottom,
+        role: RibbonRole::Panel,
+        mode: RibbonMode::ThreeSided,
+        draggable: true,
+        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP],
     },
 ];
 
-/// Initial button layout: all three left buttons in the upper (Start)
-/// cluster of the Left rail; all three right buttons in the upper
-/// (Start) cluster of the Right rail. End / Middle clusters stay
-/// empty until the user drags something into them.
+/// Initial button layout — each of the four ribbons starts with at
+/// least one button so the user can experiment with dragging across
+/// edges from frame 0. Every entry is movable by the user once
+/// rendered (`draggable: true` on every `RibbonDef`); these are
+/// just first-frame defaults.
 const RIBBON_ITEMS: &[RibbonItem] = &[
+    // LEFT rail — primary navigation cluster.
     RibbonItem {
         id: MENU_WIDGETS,
         ribbon: RIBBON_LEFT,
@@ -139,6 +168,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("apps"),
         tooltip: "Widgets gallery",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_CONTAINERS,
@@ -148,6 +178,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("box"),
         tooltip: "Containers showcase",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_SCENE,
@@ -157,19 +188,9 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("folder"),
         tooltip: "Scene outliner",
         child_ribbon: None,
+        role: None,
     },
-    // Editor — LEFT rail, BOTTOM (`End`) cluster. Combined pane
-    // hosting BOTH the node graph and the code editor sections,
-    // each maximisable on its own via `frost_snarl` / `frost_code_editor`.
-    RibbonItem {
-        id: MENU_GRAPH,
-        ribbon: RIBBON_LEFT,
-        cluster: RibbonCluster::End,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("flowchart"),
-        tooltip: "Editor (graph + source)",
-        child_ribbon: None,
-    },
+    // RIGHT rail — theme + input.
     RibbonItem {
         id: MENU_THEME,
         ribbon: RIBBON_RIGHT,
@@ -178,6 +199,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("color"),
         tooltip: "Theme & colour",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_KEYS,
@@ -187,38 +209,74 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("keyboard"),
         tooltip: "Keys & gestures",
         child_ribbon: None,
+        role: None,
     },
+    // TOP rail — meta.
     RibbonItem {
         id: MENU_ABOUT,
-        ribbon: RIBBON_RIGHT,
+        ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
-        slot: 2,
+        slot: 0,
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
+        role: None,
+    },
+    // BOTTOM rail — editor surface (graph + code).
+    RibbonItem {
+        id: MENU_GRAPH,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("flowchart"),
+        tooltip: "Editor (graph + source)",
+        child_ribbon: None,
+        role: None,
+    },
+    // ── One-shot cube-cycle buttons ─────────────────────────────────
+    //
+    // Both live in the BOTTOM rail's `End` cluster so they sit at the
+    // opposite corner from the editor button. Each carries a
+    // `role: Some(RibbonRole::Icon)` override — even though
+    // `RIBBON_BOTTOM` is declared `RibbonRole::Panel`, these two
+    // dispatch through the icon path: no panel toggles, no
+    // selected-state, just a one-shot click that fires an action.
+    RibbonItem {
+        id: ACTION_PREV_CUBE,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("arrow-left"),
+        tooltip: "Select previous cube",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_NEXT_CUBE,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::End,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("arrow-right"),
+        tooltip: "Select next cube",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
     },
 ];
 
 fn main() {
+    let mut window = WindowGeometry::load("bevy_frost_demo").to_window("bevy_frost demo");
+    // `Mailbox` swap-chain — vsync still on (no tearing) but the GPU
+    // always presents the newest frame instead of stalling on a queue.
+    window.present_mode = PresentMode::Mailbox;
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "bevy_frost demo".into(),
-                resolution: (1280u32, 800u32).into(),
-                // `Mailbox` swap-chain — vsync still on (no
-                // tearing) but the GPU always presents the
-                // newest frame instead of stalling on a queue.
-                // Saves up to one full frame of input lag vs
-                // the default `AutoVsync` (FIFO). Switch to
-                // `AutoNoVsync` for the lowest possible latency
-                // at the cost of tearing.
-                present_mode: PresentMode::Mailbox,
-                ..default()
-            }),
+            primary_window: Some(window),
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
         .add_plugins(FrostPlugin)
+        .add_plugins(WindowSettingsPlugin::new("bevy_frost_demo"))
         // bevy_glacial — the demo's camera, grid, selection ring,
         // and gizmo helpers all come from this crate. Replaces
         // the demo's previously hand-rolled `ChaseCamera`,
@@ -1218,17 +1276,21 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
 /// a button is a single-line edit here, nothing else to change.
 fn draw_ribbons(
     mut contexts: EguiContexts,
-    accent: Res<AccentColor>,
+    mut accent: ResMut<AccentColor>,
     mut open: ResMut<RibbonOpen>,
     mut placement: ResMut<RibbonPlacement>,
     mut drag: ResMut<RibbonDrag>,
+    mut selected: ResMut<SelectedSwatch>,
+    cubes: Query<(Entity, &ColorCube)>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
-    // `draw_assembly` handles: button paint, panel-exclusive toggle
-    // routing for RibbonOpen, drag-to-swap with the `accepts` list
-    // gating cross-ribbon moves, and returns Icon clicks (none in
-    // this demo).
-    let _clicks = draw_assembly(
+    // `draw_assembly` handles button paint + drag-to-swap (with the
+    // `accepts` list gating cross-ribbon moves) + panel-exclusive
+    // toggle routing for `RibbonOpen`. It returns the click list
+    // for any `RibbonRole::Icon` button (including per-item
+    // `role` overrides) so we can dispatch one-shot actions —
+    // here, the prev / next cube cycle.
+    let clicks = draw_assembly(
         ctx,
         accent.0,
         RIBBONS,
@@ -1238,6 +1300,36 @@ fn draw_ribbons(
         &mut drag,
         |_| false,
     );
+
+    // Action dispatch — only icon-role clicks reach this branch.
+    let action_click = clicks.iter().find(|c| {
+        matches!(c.role, RibbonRole::Icon)
+            && (c.item == ACTION_PREV_CUBE || c.item == ACTION_NEXT_CUBE)
+    });
+    if let Some(click) = action_click {
+        // Stable order across runs — sort by Entity index. Demo
+        // cubes are spawned in a single setup pass, so this is
+        // deterministic per-run.
+        let mut sorted: Vec<(Entity, &ColorCube)> = cubes.iter().collect();
+        sorted.sort_by_key(|(e, _)| *e);
+        if sorted.is_empty() {
+            return;
+        }
+        let cur_idx = selected
+            .0
+            .and_then(|e| sorted.iter().position(|(other, _)| *other == e));
+        let len = sorted.len();
+        let new_idx = match (cur_idx, click.item) {
+            (Some(i), ACTION_PREV_CUBE) => (i + len - 1) % len,
+            (Some(i), ACTION_NEXT_CUBE) => (i + 1) % len,
+            (None,    ACTION_PREV_CUBE) => len - 1,
+            (None,    ACTION_NEXT_CUBE) => 0,
+            _ => return,
+        };
+        let (entity, cube) = sorted[new_idx];
+        selected.0 = Some(entity);
+        accent.0 = cube.egui_col;
+    }
 }
 
 // ─── Panels — each anchors to whichever cluster its button sits in ──
@@ -1269,7 +1361,7 @@ fn draw_panels(
     if is_open(MENU_WIDGETS) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_WIDGETS, "Widgets", egui::vec2(320.0, 600.0),
+            MENU_WIDGETS, "Widgets", egui::vec2(320.0, 480.0),
             &mut keep_open, accent_col,
             |pane| widgets_panel(pane, &mut state),
         );
@@ -1285,7 +1377,7 @@ fn draw_panels(
     if is_open(MENU_SCENE) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_SCENE, "Elements", egui::vec2(340.0, 520.0),
+            MENU_SCENE, "Elements", egui::vec2(340.0, 480.0),
             &mut keep_open, accent_col,
             |pane| elements_panel(pane, &mut state),
         );
@@ -1293,7 +1385,7 @@ fn draw_panels(
     if is_open(MENU_GRAPH) {
         floating_window_for_item(
             ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_GRAPH, "Editor", egui::vec2(560.0, 720.0),
+            MENU_GRAPH, "Editor", egui::vec2(560.0, 480.0),
             &mut keep_open, accent_col,
             |pane| editor_panel(pane, &mut state),
         );

@@ -94,7 +94,8 @@ impl Plugin for RibbonPlugin {
             .add_systems(
                 EguiPrimaryContextPass,
                 paint_drop_ghost_system.in_set(RibbonGhostSet),
-            );
+            )
+            .add_systems(EguiPrimaryContextPass, debug_toggle_system);
     }
 }
 
@@ -105,6 +106,32 @@ fn paint_drop_ghost_system(
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     frostcore::paint_drop_ghost(ctx, &*layout, *accent);
+}
+
+/// **F12** — toggle egui's "show interactive widget bounds" overlay.
+/// Renders a colored outline around every widget egui knows about,
+/// plus the layout rects driving it. Use this to show the dev where
+/// a layout is breaking. Bound globally on the primary egui ctx.
+///
+/// `Style.debug` is `#[cfg(debug_assertions)]`-gated by egui itself,
+/// so this toggle only compiles in debug builds. `make run` runs
+/// `--release` — to use F12, run a debug build (e.g. `cargo run -p
+/// bevy_frost --example demo`) or override `debug-assertions = true`
+/// in the workspace release profile.
+fn debug_toggle_system(mut contexts: EguiContexts) {
+    let Ok(_ctx) = contexts.ctx_mut() else { return };
+    #[cfg(debug_assertions)]
+    {
+        let pressed = _ctx.input_mut(|i| {
+            i.consume_key(bevy_egui::egui::Modifiers::NONE, bevy_egui::egui::Key::F12)
+        });
+        if pressed {
+            _ctx.style_mut(|s| {
+                s.debug.show_interactive_widgets = !s.debug.show_interactive_widgets;
+                s.debug.show_widget_hits = s.debug.show_interactive_widgets;
+            });
+        }
+    }
 }
 
 // ─── Combined install ──────────────────────────────────────────────

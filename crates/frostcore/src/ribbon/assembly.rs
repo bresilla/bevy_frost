@@ -179,6 +179,22 @@ pub struct RibbonItem {
     /// Phase-1 stub — carried on the struct so callers can already
     /// wire the data; renderer lands with phase 2.
     pub child_ribbon: Option<&'static str>,
+    /// Per-item override for the ribbon's [`RibbonRole`]. `None`
+    /// means "inherit from the parent ribbon's `role`". `Some(...)`
+    /// lets a single button behave differently from its rail —
+    /// most useful for dropping a one-shot `RibbonRole::Icon`
+    /// button into a `RibbonRole::Panel` ribbon (or vice-versa)
+    /// without spawning a separate rail just for that button.
+    pub role: Option<RibbonRole>,
+}
+
+impl RibbonItem {
+    /// Effective role for this item — `role` if set, else the
+    /// owning ribbon's role.
+    #[inline]
+    pub fn effective_role(&self, ribbon: &RibbonDef) -> RibbonRole {
+        self.role.unwrap_or(ribbon.role)
+    }
 }
 
 // ─── State resources ────────────────────────────────────────────────
@@ -312,29 +328,39 @@ struct ButtonPlacement {
 /// additionally need the total button count (`cluster_total`) so the
 /// row-width can be computed; `None` falls back to 0 for
 /// non-centred ribbons.
-/// Pixels reserved along each edge by the side rails, used to inset
-/// the top / bottom ribbons so the corners don't overlap. Vertical
-/// rails are considered "ownership priority" — they claim full
-/// screen height first; horizontal bars render *between* them.
+/// Per-edge content insets. Each field is the coordinate where the
+/// rail along the *perpendicular* axis starts its first button (or
+/// where the last button ends, mirrored). When the perpendicular
+/// rail at that edge exists the inset = its outer button edge plus
+/// one inter-button gap so corners read as one tight row of icons;
+/// when the perpendicular rail is absent the inset collapses to
+/// `EDGE_GAP` (just screen-edge padding) so the rail is free to
+/// render right up to the screen corner.
+///
+/// In practice:
+/// * `left` / `right` inset Top and Bottom rails (so they don't
+///   overlap the side rails' corner buttons).
+/// * `top` / `bottom` inset Left and Right rails (so they don't
+///   overlap the horizontal rails' corner buttons).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SideInsets {
     pub left: f32,
     pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
 }
 
 fn compute_side_insets(ribbons: &[RibbonDef]) -> SideInsets {
-    let thickness = EDGE_GAP * 2.0 + SIDE_BTN_SIZE;
+    // First-button offset with a perpendicular rail present = that
+    // rail's button outer edge (`EDGE_GAP + SIDE_BTN_SIZE`) plus
+    // one button gap. Without it: just the screen-edge padding.
+    let with_rail = EDGE_GAP + SIDE_BTN_SIZE + SIDE_BTN_GAP;
+    let inset = |present: bool| if present { with_rail } else { EDGE_GAP };
     SideInsets {
-        left: if ribbons.iter().any(|r| r.edge == RibbonEdge::Left) {
-            thickness
-        } else {
-            0.0
-        },
-        right: if ribbons.iter().any(|r| r.edge == RibbonEdge::Right) {
-            thickness
-        } else {
-            0.0
-        },
+        left:   inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Left)),
+        right:  inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Right)),
+        top:    inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Top)),
+        bottom: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Bottom)),
     }
 }
 
@@ -366,6 +392,13 @@ fn place_button(
 
     match (def.edge, cluster) {
         // ── Vertical rails (Left / Right) ─────────────────────────
+        //
+        // Side rails own their corners — first/last button sit at
+        // the screen corner regardless of whether Top/Bottom rails
+        // exist. Pane offsets shift around the perpendicular rail
+        // separately (see `panel_anchor_offset`) so the pane
+        // doesn't cover the perpendicular rail's button when it
+        // opens.
         (RibbonEdge::Left, RibbonCluster::Start) => ButtonPlacement {
             anchor: egui::Align2::LEFT_TOP,
             offset: egui::vec2(EDGE_GAP, EDGE_GAP + s * step),
@@ -393,12 +426,14 @@ fn place_button(
 
         // ── Horizontal bars (Top / Bottom) ────────────────────────
         //
-        // Offsets along the X axis include the side-rail insets so
-        // Top/Bottom ribbons stop at the vertical rails instead of
-        // overlapping into them.
+        // X offsets use `insets.left/right` directly — the inset
+        // already includes the screen-edge padding plus the side
+        // rail's button + one button-gap when a side rail is
+        // present, so the first button sits one normal button gap
+        // away from the side rail's button (seamless corner).
         (RibbonEdge::Top, RibbonCluster::Start) => ButtonPlacement {
             anchor: egui::Align2::LEFT_TOP,
-            offset: egui::vec2(insets.left + EDGE_GAP + s * step, EDGE_GAP),
+            offset: egui::vec2(insets.left + s * step, EDGE_GAP),
         },
         (RibbonEdge::Top, RibbonCluster::Middle) => ButtonPlacement {
             anchor: egui::Align2::CENTER_TOP,
@@ -406,11 +441,11 @@ fn place_button(
         },
         (RibbonEdge::Top, RibbonCluster::End) => ButtonPlacement {
             anchor: egui::Align2::RIGHT_TOP,
-            offset: egui::vec2(-insets.right - EDGE_GAP - s * step, EDGE_GAP),
+            offset: egui::vec2(-insets.right - s * step, EDGE_GAP),
         },
         (RibbonEdge::Bottom, RibbonCluster::Start) => ButtonPlacement {
             anchor: egui::Align2::LEFT_BOTTOM,
-            offset: egui::vec2(insets.left + EDGE_GAP + s * step, -EDGE_GAP),
+            offset: egui::vec2(insets.left + s * step, -EDGE_GAP),
         },
         (RibbonEdge::Bottom, RibbonCluster::Middle) => ButtonPlacement {
             anchor: egui::Align2::CENTER_BOTTOM,
@@ -418,7 +453,7 @@ fn place_button(
         },
         (RibbonEdge::Bottom, RibbonCluster::End) => ButtonPlacement {
             anchor: egui::Align2::RIGHT_BOTTOM,
-            offset: egui::vec2(-insets.right - EDGE_GAP - s * step, -EDGE_GAP),
+            offset: egui::vec2(-insets.right - s * step, -EDGE_GAP),
         },
     }
 }
@@ -536,6 +571,9 @@ fn ribbon_strip_rect(def: &RibbonDef, ctx: &egui::Context, insets: SideInsets) -
     let screen = ctx.content_rect();
     let thickness = EDGE_GAP * 2.0 + SIDE_BTN_SIZE;
     match def.edge {
+        // Side rails own their corner buttons — drop strips run
+        // the full screen height so drops near the corner still
+        // resolve to the correct rail.
         RibbonEdge::Left => egui::Rect::from_min_max(
             screen.min,
             egui::pos2(screen.min.x + thickness, screen.max.y),
@@ -544,8 +582,8 @@ fn ribbon_strip_rect(def: &RibbonDef, ctx: &egui::Context, insets: SideInsets) -
             egui::pos2(screen.max.x - thickness, screen.min.y),
             screen.max,
         ),
-        // Horizontal bars are trimmed by the side-rail insets so the
-        // corners don't overlap.
+        // Horizontal bars are trimmed by the side-rail insets so
+        // they don't claim corner cells the side rails occupy.
         RibbonEdge::Top => egui::Rect::from_min_max(
             egui::pos2(screen.min.x + insets.left, screen.min.y),
             egui::pos2(screen.max.x - insets.right, screen.min.y + thickness),
@@ -819,7 +857,8 @@ pub fn draw_assembly(
         // the caller-supplied `active` closure. Both may OR with
         // each other so a caller can also tint a Panel button
         // active for reasons outside the menu-open state.
-        let is_active = match def.role {
+        let item_role = item.effective_role(def);
+        let is_active = match item_role {
             RibbonRole::Panel => open.is_open(def.id, item.id) || active(item.id),
             RibbonRole::Icon => active(item.id),
         };
@@ -975,14 +1014,15 @@ pub fn draw_assembly(
         let Some(def) = ribbons.iter().find(|d| d.id == rid) else {
             continue;
         };
-        match def.role {
+        let click_role = item.effective_role(def);
+        match click_role {
             RibbonRole::Panel => open.toggle(def.id, item.id),
             RibbonRole::Icon => {}
         }
         clicks.push(RibbonClick {
             item: item.id,
             ribbon: def.id,
-            role: def.role,
+            role: click_role,
         });
     }
 
@@ -1117,16 +1157,24 @@ pub fn floating_window_for_item(
         return;
     };
     let anchor = panel_anchor(def, cluster);
+    let insets = compute_side_insets(ribbons);
+    let anchor_offset = panel_anchor_offset(def, cluster, insets);
     let scope = cluster_width_scope(def.id, effective_cluster(def.mode, cluster));
+    // Top / Bottom rail panes lay sections out horizontally
+    // (left-to-right with horizontal scroll on overflow); Left /
+    // Right rail panes keep the default vertical stack.
+    let horizontal = !def.edge.is_vertical();
     crate::floating::floating_window_scoped(
         ctx,
         item_id,
         title,
         anchor,
+        anchor_offset,
         size,
         open,
         accent,
         scope,
+        horizontal,
         add_contents,
     );
 }
@@ -1151,4 +1199,66 @@ pub fn panel_anchor_for_item(
     let item = find_item(items, item_id)?;
     let def = find_ribbon(ribbons, item.ribbon)?;
     Some(panel_anchor(def, item.cluster))
+}
+
+/// Anchor-offset vector that pushes a pane AWAY from the ribbon's
+/// edge so the pane sits adjacent to (not on top of) the button
+/// that opened it.
+///
+/// On Left / Right rails the offset slides the pane horizontally
+/// off the rail (`±side_inset`) plus a small `EDGE_GAP` on the
+/// opposite axis. On Top / Bottom rails the offset slides the
+/// pane vertically off the rail.
+///
+/// Top / Bottom rails are *trimmed* by the Left / Right rail's
+/// thickness (their corners belong to the side rails, see
+/// [`ribbon_strip_rect`]). The pane mirrors that trim: a Top
+/// rail Start-cluster pane is shifted right by `insets.left` so
+/// its left edge lines up with the first button on the rail, not
+/// the screen corner the LEFT rail already owns. End clusters
+/// get the same shift on the opposite side; Middle clusters
+/// recentre by `(insets.left - insets.right) / 2`.
+///
+/// `side_inset` is the rail thickness — `EDGE_GAP +
+/// SIDE_BTN_SIZE + RAIL_PANEL_GAP` — so the pane lands `RAIL_PANEL_GAP`
+/// below (or above / right of / left of) the button row.
+pub fn panel_anchor_offset(
+    def: &RibbonDef,
+    cluster: RibbonCluster,
+    insets: SideInsets,
+) -> egui::Vec2 {
+    // Match `floating::RAIL_PANEL_GAP` + the rail thickness math
+    // in `floating_window_scoped`. Kept in sync by the asserts
+    // there. Equals `SIDE_BTN_GAP` so panes from perpendicular
+    // rails meet at the exact same corner pixel.
+    const RAIL_PANEL_GAP: f32 = 4.0;
+    let side_inset = EDGE_GAP + SIDE_BTN_SIZE + RAIL_PANEL_GAP;
+    // Trim shifts. Start hugs the first button's coordinate (the
+    // inset already encodes screen padding + perpendicular-rail
+    // corner), End mirrors on the opposite side, Middle splits the
+    // asymmetry between the two perpendicular rails.
+    let h_start = insets.left;
+    let h_end = -insets.right;
+    let h_mid = (insets.left - insets.right) * 0.5;
+    let v_start = insets.top;
+    let v_end = -insets.bottom;
+    let v_mid = (insets.top - insets.bottom) * 0.5;
+    match (def.edge, cluster) {
+        // LEFT rail — pane slides RIGHT off the rail.
+        (RibbonEdge::Left,  RibbonCluster::Start)  => egui::vec2(side_inset, v_start),
+        (RibbonEdge::Left,  RibbonCluster::Middle) => egui::vec2(side_inset, v_mid),
+        (RibbonEdge::Left,  RibbonCluster::End)    => egui::vec2(side_inset, v_end),
+        // RIGHT rail — pane slides LEFT off the rail.
+        (RibbonEdge::Right, RibbonCluster::Start)  => egui::vec2(-side_inset, v_start),
+        (RibbonEdge::Right, RibbonCluster::Middle) => egui::vec2(-side_inset, v_mid),
+        (RibbonEdge::Right, RibbonCluster::End)    => egui::vec2(-side_inset, v_end),
+        // TOP rail — pane slides DOWN off the rail.
+        (RibbonEdge::Top,    RibbonCluster::Start)  => egui::vec2(h_start, side_inset),
+        (RibbonEdge::Top,    RibbonCluster::Middle) => egui::vec2(h_mid,   side_inset),
+        (RibbonEdge::Top,    RibbonCluster::End)    => egui::vec2(h_end,   side_inset),
+        // BOTTOM rail — pane slides UP off the rail.
+        (RibbonEdge::Bottom, RibbonCluster::Start)  => egui::vec2(h_start, -side_inset),
+        (RibbonEdge::Bottom, RibbonCluster::Middle) => egui::vec2(h_mid,   -side_inset),
+        (RibbonEdge::Bottom, RibbonCluster::End)    => egui::vec2(h_end,   -side_inset),
+    }
 }

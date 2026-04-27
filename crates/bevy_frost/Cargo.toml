@@ -53,8 +53,12 @@ mimalloc = { workspace = true }
 # `bevy_glacial` — used by the demo example only (camera /
 # scene helpers). Pulled from git so the workspace doesn't need a
 # local checkout.
-bevy_glacial = { git = "https://github.com/bresilla/bevy_glacial.git" }
+bevy_glacial = { git = "https://github.com/bresilla/bevy_glacial.git", rev = "d7bc6d3" }
 
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
+
+[[example]]
+name = "newui"
+path = "examples/newui.rs"

@@ -24,6 +24,10 @@ pub mod layout;
 mod paint;
 pub mod static_ribbon;
 
+// Layout constants — re-exported so other modules (e.g. `pane2`)
+// can compute pane insets without duplicating the values.
+pub use paint::{EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
+
 pub use active::SideActive;
 pub use assembly::{
     draw_assembly, find_item, find_ribbon, floating_window_for_item, panel_anchor,

@@ -119,6 +119,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("apps"),
         tooltip: "Widgets gallery",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_CONTAINERS,
@@ -128,6 +129,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("box"),
         tooltip: "Containers showcase",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_SCENE,
@@ -137,6 +139,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("folder"),
         tooltip: "Scene outliner",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_GRAPH,
@@ -146,6 +149,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Editor (graph + source)",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_ICONS,
@@ -155,6 +159,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("icons"),
         tooltip: "Fluent UI icon grid",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_THEME,
@@ -164,6 +169,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("color"),
         tooltip: "Theme & colour",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_KEYS,
@@ -173,6 +179,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("keyboard"),
         tooltip: "Keys & gestures",
         child_ribbon: None,
+        role: None,
     },
     RibbonItem {
         id: MENU_ABOUT,
@@ -182,6 +189,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
+        role: None,
     },
 ];
 
