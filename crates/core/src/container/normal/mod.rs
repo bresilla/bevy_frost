@@ -50,10 +50,12 @@ const _BODY_PAD: f32 = 6.0;
 /// container share the same outer cross dimension.
 pub const CONTAINER_DEFAULT_WIDTH: f32 = 280.0;
 pub const CONTAINER_DEFAULT_HEIGHT: f32 = 280.0;
-/// Outer margin between the container's painted frame and the
-/// parent pane's body inset. Small (a few px) just so the container
-/// doesn't sit flush against the pane chrome.
-const OUTER_MARGIN: i8 = 3;
+// Container outer margins now come from the active theme:
+//   `theme.section_outer_margin_main`  — main-axis (between stacked
+//      containers and between first container ↔ pane title strip).
+//   `theme.section_outer_margin_cross` — cross-axis (between the
+//      container's painted edge and the pane's left/right or
+//      top/bottom chrome). PRO ≈ 3/3, GAME ≈ 9/1.
 
 /// A labelled, single-body container. Build with [`Normal::new`],
 /// then [`Normal::show`] each frame. The `anchor` is forwarded to
@@ -121,20 +123,37 @@ impl Normal {
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
 
+        let theme_now = style::theme();
         let pad = style::section_padding();
         let pad_w = (pad.left as f32) + (pad.right as f32);
         let pad_h = (pad.top as f32) + (pad.bottom as f32);
         // Frame chrome that sits OUTSIDE the cross_inner slot:
         //   `pad_*` — Frame's `inner_margin` (theme `section_padding`).
-        //   `outer_*` — Frame's `outer_margin` (constant per side).
+        //   `outer_*` — Frame's `outer_margin`, per-axis from theme.
         //   `stroke_*` — border drawn on either side (PRO=1, GAME=0).
         // Subtract them so the Frame's resulting outer rect fits
         // inside `outer_avail` exactly — no 2-px overflow into the
         // pane's stroke or shadow when the theme has a visible border.
-        let outer_w = (OUTER_MARGIN as f32) * 2.0;
-        let outer_h = (OUTER_MARGIN as f32) * 2.0;
+        // Total outer-margin on each axis. Cross-axis is symmetric
+        // (`2 × cross`); main-axis sums the per-side title-facing
+        // and body-facing margins.
+        let main_outer_total = (theme_now.section_outer_margin_main_title as f32)
+            + (theme_now.section_outer_margin_main_body as f32);
+        let cross_outer_total = (theme_now.section_outer_margin_cross as f32) * 2.0;
+        // X axis = cross when horizontal-strip, main when vertical-strip.
+        let outer_w = if horizontal_strip {
+            cross_outer_total
+        } else {
+            main_outer_total
+        };
+        // Y axis = main when horizontal-strip, cross when vertical-strip.
+        let outer_h = if horizontal_strip {
+            main_outer_total
+        } else {
+            cross_outer_total
+        };
         let stroke_w = if style::section_show_frame() {
-            style::theme().border_width * 2.0
+            theme_now.border_width * 2.0
         } else {
             0.0
         };
@@ -321,6 +340,17 @@ impl Normal {
                 );
                 let parent_clip = ui.clip_rect();
                 child.set_clip_rect(parent_clip.intersect(visible_rect));
+                // Inner top-pad on the title-facing edge of the
+                // body (theme-driven). Allocated FIRST in the body
+                // layout so the cursor advances past it before the
+                // user's body callback runs — pushes the first
+                // widget away from the title strip without changing
+                // the title's own thickness or the inter-container
+                // gap. PRO = 0 (no-op); GAME ≈ 8.
+                let body_top_pad = style::theme().section_body_inner_top_pad;
+                if body_top_pad > 0.0 {
+                    child.add_space(body_top_pad);
+                }
                 body_cfg.paint(&mut child, body);
             };
 
@@ -416,9 +446,43 @@ impl Normal {
     /// `radius_md` corners. When the active theme has
     /// `section_show_frame = false` (GAME) we drop the visuals and
     /// keep just the inner padding so body content sits flush.
+    /// `outer_margin` is per-side from the theme:
+    ///   • main-axis title-FACING side — sets the gap between the
+    ///     pane title strip and the FIRST container.
+    ///   • main-axis body-FACING side — combines with the next
+    ///     container's title-side margin to produce the
+    ///     inter-container gap.
+    ///   • cross-axis sides — breathing space against the pane's
+    ///     left/right (or top/bottom for vertical-strip) chrome.
     fn theme_frame(&self) -> Frame {
         let theme = style::theme();
-        let outer = egui::Margin::same(OUTER_MARGIN);
+        let title_side = self.anchor.title_side();
+        let main_title = theme.section_outer_margin_main_title;
+        let main_body = theme.section_outer_margin_main_body;
+        let cross = theme.section_outer_margin_cross;
+        // Each title side puts the title-facing margin on a
+        // different edge of the container's outer rect; the
+        // body-facing margin lives on the OPPOSITE edge. Cross-axis
+        // (the two sides parallel to the title strip) always uses
+        // `cross`.
+        let outer = match title_side {
+            TitleSide::Top => egui::Margin {
+                left: cross, right: cross,
+                top: main_title, bottom: main_body,
+            },
+            TitleSide::Bottom => egui::Margin {
+                left: cross, right: cross,
+                top: main_body, bottom: main_title,
+            },
+            TitleSide::Left => egui::Margin {
+                top: cross, bottom: cross,
+                left: main_title, right: main_body,
+            },
+            TitleSide::Right => egui::Margin {
+                top: cross, bottom: cross,
+                left: main_body, right: main_title,
+            },
+        };
         if style::section_show_frame() {
             Frame::new()
                 .fill(style::glass_fill(
@@ -705,6 +769,9 @@ fn paint_title(
 /// rect. Vertical strips paint the icon centred (no rotation —
 /// Fluent glyphs read fine in either orientation, and rotating
 /// would require a `TextShape` round-trip just for a decoration).
+///
+/// Painted on `Order::Foreground` so the icon sits ABOVE the ribbon
+/// buttons (`Order::Middle`) and the pane chrome (`Order::Background`).
 fn paint_floating_icon(
     ui: &mut Ui,
     strip_rect: egui::Rect,
@@ -739,7 +806,13 @@ fn paint_floating_icon(
             let cy = if title_side == TitleSide::Top {
                 (strip_rect.center().y - offset).round()
             } else {
-                (strip_rect.center().y + offset).round()
+                // Bottom strip: a small openness-scaled downward
+                // bias so the icon doesn't read as "pushed up" into
+                // the body above. `BIAS` is the extra pixels of
+                // downward shift at full open; folded keeps the
+                // existing centred position.
+                const BIAS: f32 = 6.0;
+                (strip_rect.center().y + offset + BIAS * t).round()
             };
             let on_far_end_left = reversed;
             if on_far_end_left {
@@ -810,25 +883,26 @@ fn paint_floating_icon(
         }
     };
 
-    let clip_rect = icon_rect.expand(8.0);
+    let _ = icon_rect;
+    // Render on `Order::Foreground` so the icon sits above ribbon
+    // buttons (`Order::Middle`) and the pane chrome
+    // (`Order::Background`).
+    let layer_id = egui::LayerId::new(
+        egui::Order::Foreground,
+        ui.id().with("frost_floating_icon_layer"),
+    );
     match icon_src {
         Icon::Name(name) => {
-            // Override the painter's clip — we WANT the icon to
-            // overflow the strip when open, but only inside the
-            // clip_rect padding. Cloning the painter and calling
-            // `set_clip_rect` (not `with_clip_rect`, which
-            // intersects) lets the glyph escape the title strip.
-            let mut p = ui.painter().clone();
-            p.set_clip_rect(clip_rect);
+            let p = ui.ctx().layer_painter(layer_id);
             crate::icons::paint_icon(&p, icon_pos, icon_align, name, size, title_col);
         }
         Icon::Svg(_) => {
             let mut child = ui.new_child(
                 UiBuilder::new()
-                    .max_rect(clip_rect)
+                    .layer_id(layer_id)
+                    .max_rect(icon_rect)
                     .layout(Layout::default()),
             );
-            child.set_clip_rect(clip_rect);
             crate::icons::paint_section_icon(
                 &mut child,
                 icon_pos,

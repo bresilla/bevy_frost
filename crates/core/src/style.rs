@@ -1189,6 +1189,39 @@ pub struct Theme {
     /// distinct "body is inside" cue without the title needing to
     /// be cramped against the frame edge.
     pub section_body_indent: f32,
+    /// Container Frame's `outer_margin` on the MAIN axis, on the
+    /// side FACING the container's own title strip (and therefore
+    /// also facing the parent pane's title strip for the FIRST
+    /// container in the stack). Drives the gap between the pane
+    /// title and the first container. PRO ≈ 3 px, GAME ≈ 9 px.
+    pub section_outer_margin_main_title: i8,
+    /// Container Frame's `outer_margin` on the MAIN axis, on the
+    /// side FACING the body (i.e. facing the next container in
+    /// the stack). Two adjacent containers contribute
+    /// `section_outer_margin_main_body` (the upper container's
+    /// title-facing side won't show here; what shows is THIS
+    /// container's body-side + the NEXT container's title-side).
+    /// Set this lower than `_title` to tighten inter-container
+    /// gaps without shrinking the title-strip-to-first-container
+    /// gap. PRO ≈ 3 px (uniform), GAME ≈ 0 px (so the inter-section
+    /// gap is just the next container's title-side margin = 9 px,
+    /// half the previous symmetric `9 + 9 = 18 px` gap).
+    pub section_outer_margin_main_body: i8,
+    /// Container Frame's `outer_margin` on the CROSS axis (the axis
+    /// the title strip spans). Drives breathing space between the
+    /// container's painted edge and the pane's left/right (or
+    /// top/bottom for vertical-strip panes) chrome. PRO ≈ 3 px;
+    /// GAME ≈ 1 px so the containers feel like inset slabs almost
+    /// flush with the pane edge.
+    pub section_outer_margin_cross: i8,
+    /// Extra space inside the container body at its TITLE-facing
+    /// edge — pushes the first body widget away from the title
+    /// strip without changing the title strip's own thickness or
+    /// the inter-section gap. PRO ≈ 0 (the existing
+    /// `TITLE_BODY_GAP_HALF` already breathes well); GAME ≈ 8 px
+    /// so body content sits clear of the heavy banner instead of
+    /// crowding it.
+    pub section_body_inner_top_pad: f32,
     /// Section open / close animation duration in seconds. Drives
     /// egui's `style.animation_time`, so it also governs every
     /// `animate_bool` consumer in the kit (chevron rotation,
@@ -1505,6 +1538,10 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_pad_x: 4,
         section_pad_y: 3,
         section_body_indent: 8.0,
+        section_outer_margin_main_title: 3,
+        section_outer_margin_main_body: 3,
+        section_outer_margin_cross: 3,
+        section_body_inner_top_pad: 0.0,
         // PRO — quick snappy fold / unfold so flipping sections
         // open while inspecting feels responsive.
         // 0.15 → 0.06 (~2.5× faster). PRO sections fold/unfold
@@ -1651,6 +1688,15 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_pad_x: 6,
         section_pad_y: 8,
         section_body_indent: 8.0,
+        // GAME stacking: containers feel like discrete tiles. Wide
+        // gaps between adjacent containers (and between the first
+        // container and the pane title) read as deliberate
+        // separators; the cross-axis margin is tight so each
+        // container is almost flush with the pane edge.
+        section_outer_margin_main_title: 9,
+        section_outer_margin_main_body: 0,
+        section_outer_margin_cross: 1,
+        section_body_inner_top_pad: 8.0,
         // GAME — slower fold / unfold so the banner expansion reads
         // as a deliberate "scene change" cue.
         section_animation_time: 0.35,

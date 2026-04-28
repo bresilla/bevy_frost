@@ -64,7 +64,6 @@ pub const DEFAULT_BODY_MAIN_OPEN: f32 = 280.0;
 /// `section_padding` (PRO 4×3, GAME 6×8) so a hardcoded constant
 /// can't get this right for both.
 const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
-const CONTAINER_OUTER_MARGIN_TOTAL: f32 = 6.0; // 3 px each side
 
 /// Compute the pane's animated openness 0..=1 for `pane_id`. Both
 /// `Pane2` and `Normal` call this with the same id so they lerp in
@@ -153,18 +152,22 @@ impl Pane2 {
         // anchored corner stays pixel-pinned during the animation.
         let openness = body_openness(ctx, self.id);
         // Container's collapsed outer size differs per theme (PRO
-        // uses section_padding 4×3, GAME uses 6×8). Compute from
-        // the active theme so the pane main lerp matches the
-        // container's actual rendered size on both axes.
+        // uses section_padding 4×3 + outer_margin 3, GAME uses 6×8 +
+        // outer_margin 9 main / 1 cross). Compute from the active
+        // theme so the pane main lerp matches the container's
+        // actual rendered size on both axes.
+        let theme_now = style::theme();
         let pad = style::section_padding();
         let container_pad_main = if horizontal_strip {
             (pad.top as f32) + (pad.bottom as f32)
         } else {
             (pad.left as f32) + (pad.right as f32)
         };
+        let container_outer_main_total = (theme_now.section_outer_margin_main_title as f32)
+            + (theme_now.section_outer_margin_main_body as f32);
         let body_main_collapsed = CONTAINER_TITLE_THICKNESS
             + container_pad_main
-            + CONTAINER_OUTER_MARGIN_TOTAL;
+            + container_outer_main_total;
         let collapsed_main =
             TITLE_STRIP_THICKNESS + body_main_collapsed + PANE_FRAME_CHROME;
         let expanded_main =
