@@ -1148,7 +1148,12 @@ fn paint_corner_ticks(
     let len = tick_len;
 
     let contrast_col = style::contrast_text_for(accent);
-    let bracket_accent = style::high_contrast_accent(accent);
+    // Body-side corner ticks paint in the EXACT accent the caller
+    // passed — not the brightness-adjusted `high_contrast_accent`
+    // variant. The user picks an accent and expects to see THAT
+    // colour; the brightness lift was producing a tick that read
+    // off-hue from every other accent surface.
+    let bracket_accent = accent;
     let time = ui.ctx().input(|i| i.time) as f32;
     let breath = {
         const PERIOD: f32 = 3.4;

@@ -1790,7 +1790,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // (which the user explicitly asked for) AND guarantees the
         // strokes can't bleed past the rect under any sub-pixel
         // rounding.
-        section_corner_ticks_inset: 4.0,
+        section_corner_ticks_inset: 3.0,
         section_title_brackets: true,
         // No prefix glyph — the brackets are the only header
         // ornament. Originally `▸ ` showed when brackets were off

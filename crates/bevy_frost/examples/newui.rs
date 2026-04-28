@@ -146,15 +146,17 @@ const CLOUD_ALTITUDE_M: f32 = 4_000.0;
 // ─── App ───────────────────────────────────────────────────────────
 
 fn main() {
+    // `bevy_glacial::WindowSettingsPlugin` persists the primary
+    // window's size + position to
+    // `${XDG_CONFIG_HOME:-~/.config}/newui/window.txt`. Load the
+    // saved geometry up-front so the first paint uses it; the
+    // plugin (registered below) writes back on resize / move.
+    let geometry = WindowGeometry::load("newui");
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "newui — Phase 2".into(),
-                        resolution: (1280u32, 800u32).into(),
-                        ..default()
-                    }),
+                    primary_window: Some(geometry.to_window("newui — Phase 2")),
                     ..default()
                 })
                 // Surface egui's debug-level chatter (request_discard
@@ -181,6 +183,7 @@ fn main() {
         // the ribbon buttons (corekit's draw_assembly + paint) AND
         // the panes (Pane2).
         .add_plugins(GlacialPlugins)
+        .add_plugins(WindowSettingsPlugin::new("newui"))
         .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
         .insert_resource(GroundGrid {
             visible: true,
