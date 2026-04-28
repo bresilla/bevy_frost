@@ -28,6 +28,7 @@
 
 pub mod features;
 
+pub mod container;
 pub mod flex;
 pub mod icons;
 pub mod pane;

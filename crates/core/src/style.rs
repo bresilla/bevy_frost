@@ -1965,7 +1965,7 @@ pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Colo
     // mid-range untouched.
     let hsl = c.to_hsla();
     let l = hsl.l;
-    let smoothstep = |t: f64| -> f64 {
+    let _smoothstep = |t: f64| -> f64 {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };

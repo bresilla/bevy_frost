@@ -18,6 +18,7 @@ use bevy_glacial::prelude::*;
 // (corekit's). Going through `bevy_frost::prelude::*` would hand
 // us `frostcore`'s parallel state, where the buttons never see the
 // PRO/GAME swap.
+use corekit::container::Normal;
 use corekit::pane::{PaneAnchor, Pane2, RailZone};
 use corekit::ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
@@ -442,6 +443,26 @@ fn ui_system(
     corekit::style::set_theme(active_theme);
     corekit::style::apply_theme(ctx, *accent, *glass);
 
+    // F12 → toggle egui's "show interactive widget bounds" overlay
+    // (matches `bevy_frost::debug_toggle_system` in the legacy
+    // crate). Renders a coloured outline + hit-rect around every
+    // widget egui knows about, so layout / hit-target issues are
+    // immediately visible.
+    //
+    // `Style.debug` is `#[cfg(debug_assertions)]`-gated by egui, so
+    // the overlay is a no-op in `--release`. `make run-newui` runs
+    // a debug build, so it shows here.
+    #[cfg(debug_assertions)]
+    {
+        let pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12));
+        if pressed {
+            ctx.style_mut(|s| {
+                s.debug.show_interactive_widgets = !s.debug.show_interactive_widgets;
+                s.debug.show_widget_hits = s.debug.show_interactive_widgets;
+            });
+        }
+    }
+
     let clicks = draw_assembly(
         ctx, accent.0, RIBBONS, RIBBON_ITEMS,
         &mut open, &mut placement, &mut drag,
@@ -487,7 +508,9 @@ fn ui_system(
             // (shouldn't happen — every pane button is in RIBBON_ITEMS).
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
-                .show(ctx, |_body_ui| {});
+                .show(ctx, |body_ui| {
+                    Normal::new(label, anchor, accent_col).show(body_ui, |_inner_ui| {});
+                });
         }
     }
 }

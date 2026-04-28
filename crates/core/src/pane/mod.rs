@@ -19,7 +19,7 @@ mod anchor;
 mod layout;
 mod title;
 
-pub use anchor::{PaneAnchor, RailZone};
+pub use anchor::{PaneAnchor, RailZone, TitleSide};
 
 use egui::{Color32, Id, Stroke, Vec2, vec2};
 
@@ -188,6 +188,19 @@ impl Pane2 {
         } else {
             vec2(TITLE_STRIP_THICKNESS, cross_inner)
         };
+        // Lock the body slot's CROSS axis (only) at min_size. Without
+        // this, `ui.available_width()` (or `available_height()`) read
+        // inside the body closure differs between flex's intrinsic-
+        // measurement pass and its final-layout pass — egui detects
+        // the unstable size, calls `request_discard` every frame, and
+        // paints the red "PERF WARNING: request_discard has been
+        // called N frames in a row" overlay. The `0.0` on the main
+        // axis preserves content-driven growth there.
+        let body_min = if horizontal_strip {
+            vec2(cross_inner, 0.0)
+        } else {
+            vec2(0.0, cross_inner)
+        };
         let title_at_end = title_side.is_at_end();
 
         let mut flex = if horizontal_strip {
@@ -226,15 +239,33 @@ impl Pane2 {
                     );
                 };
                 let body_paint = move |ui: &mut egui::Ui| {
-                    // No fixed allocation — let the user's body grow
-                    // the pane along the main axis. If `body` is a
-                    // no-op, the item collapses to 0 on the main
-                    // axis and the pane shows JUST the title strip.
+                    // Clamp the body ui's CROSS axis before running
+                    // the user's closure. Without this, a flex
+                    // intrinsic-measurement pass hands the body an
+                    // inner `Ui` whose max_rect spans the FULL outer
+                    // flex (often the whole egui::Area), so any body
+                    // widget that reads `ui.available_width()` /
+                    // `available_height()` sees a screen-sized value
+                    // on the intrinsic pass and a slot-sized value
+                    // on the final pass. egui_flex stores the
+                    // measured intrinsic_size on the body item, the
+                    // value differs across passes, the flex calls
+                    // `request_discard` every frame, and egui paints
+                    // the red "PERF WARNING: request_discard…"
+                    // overlay. Locking max_width / max_height to the
+                    // pane's known cross axis stabilises the value.
+                    // Main axis stays free so body content drives
+                    // pane growth.
+                    if horizontal_strip {
+                        ui.set_max_width(cross_inner);
+                    } else {
+                        ui.set_max_height(cross_inner);
+                    }
                     body(ui);
                 };
 
                 if title_at_end {
-                    flex.add_ui(item(), body_paint);
+                    flex.add_ui(item().min_size(body_min), body_paint);
                     flex.add_ui(
                         item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
                         title_paint,
@@ -244,7 +275,7 @@ impl Pane2 {
                         item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
                         title_paint,
                     );
-                    flex.add_ui(item(), body_paint);
+                    flex.add_ui(item().min_size(body_min), body_paint);
                 }
             });
     }

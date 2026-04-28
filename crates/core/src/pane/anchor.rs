@@ -32,12 +32,27 @@ impl PaneAnchor {
         matches!(self, PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_))
     }
 
+    /// Which screen rail the pane sits on, expressed as a [`TitleSide`].
+    /// Always matches the rail (`LeftRail` → `Left`, etc.) regardless
+    /// of zone — useful when you want chrome inside the pane (e.g.
+    /// the [`crate::container::Normal`] container's own title strip)
+    /// to chord with the rail edge instead of with the pane's
+    /// perpendicular-flipped corner title.
+    pub fn rail_side(self) -> TitleSide {
+        match self {
+            PaneAnchor::LeftRail(_) => TitleSide::Left,
+            PaneAnchor::RightRail(_) => TitleSide::Right,
+            PaneAnchor::TopRail(_) => TitleSide::Top,
+            PaneAnchor::BottomRail(_) => TitleSide::Bottom,
+        }
+    }
+
     /// Which side of the pane the title strip sits on.
     /// Middle-zone panes use the rail-anchor side (the original
     /// convention). All corner-zone (Start/End) panes flip:
     /// vertical-pane corners get a horizontal title; horizontal-pane
     /// corners get a vertical title — perpendicular to the rail.
-    pub(crate) fn title_side(self) -> TitleSide {
+    pub fn title_side(self) -> TitleSide {
         match self {
             PaneAnchor::LeftRail(RailZone::Start)   => TitleSide::Top,
             PaneAnchor::LeftRail(RailZone::End)     => TitleSide::Bottom,
@@ -57,8 +72,9 @@ impl PaneAnchor {
     /// `true` → reverse the title text's reading-start so the FIRST
     /// letter sits next to the pane's own button on the rail. After
     /// flipping TE/RS to perpendicular title strips, the "reversed"
-    /// set is TS, RS, RE, BE.
-    pub(crate) fn title_reversed(self) -> bool {
+    /// set is TS, RS, RE, BE. Public so [`crate::container::Normal`]
+    /// can match the pane's text direction.
+    pub fn title_reversed(self) -> bool {
         matches!(
             self,
             PaneAnchor::TopRail(RailZone::Start)
@@ -84,7 +100,7 @@ impl PaneAnchor {
 
 /// Which side of the pane rect carries the title strip.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum TitleSide {
+pub enum TitleSide {
     Top,
     Bottom,
     Left,
@@ -92,10 +108,10 @@ pub(crate) enum TitleSide {
 }
 
 impl TitleSide {
-    pub(crate) fn is_horizontal_strip(self) -> bool {
+    pub fn is_horizontal_strip(self) -> bool {
         matches!(self, TitleSide::Top | TitleSide::Bottom)
     }
-    pub(crate) fn is_at_end(self) -> bool {
+    pub fn is_at_end(self) -> bool {
         matches!(self, TitleSide::Bottom | TitleSide::Right)
     }
 }
