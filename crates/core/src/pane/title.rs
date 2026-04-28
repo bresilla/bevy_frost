@@ -72,15 +72,20 @@ pub(crate) fn paint_pane_title(
     let centred = anchor.is_middle();
 
     // ── 3. Title text paint ──
-    // Periodic chromatic-aberration ghosts: a deterministic per-id
-    // timer fires every few seconds, ramping the offset 0→peak→0
-    // over ~220 ms. We paint a red ghost shifted one way and a cyan
-    // ghost shifted the other, then the main text on top — the
-    // overlap leaves clean coloured fringes only on the leading and
-    // trailing letter edges. Offset is `0.0` when inactive, so this
-    // collapses to the original single-pass paint.
-    let aberration =
-        style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"));
+    // Periodic chromatic-aberration ghosts (GAME only — gated on
+    // `theme.pane_title_chromatic_aberration`). A deterministic
+    // per-id timer fires every few seconds, ramping the offset
+    // 0→peak→0 over ~280 ms. We paint a red ghost shifted along the
+    // reading direction one way and a cyan ghost the other, then
+    // the main text on top — the overlap leaves clean coloured
+    // fringes only on the leading and trailing letter edges. PRO
+    // sets the flag to false, the helper short-circuits to 0.0,
+    // and this collapses to the original single-pass paint.
+    let aberration = if theme.pane_title_chromatic_aberration {
+        style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"))
+    } else {
+        0.0
+    };
     let chr_red = Color32::from_rgb(220, 60, 70);
     let chr_cyan = Color32::from_rgb(60, 220, 230);
 
@@ -105,15 +110,20 @@ pub(crate) fn paint_pane_title(
             )
         };
         if aberration > 0.0 {
+            // Horizontal strip: text reads along screen-X, so the
+            // chromatic split runs along X. Tiny ±1 px cross jitter
+            // (Y) on each ghost for a touch of CRT-misregistration
+            // grit without smearing the glyph height.
+            const CROSS_JITTER: f32 = 1.0;
             ui.painter().text(
-                pos2(pos.x - aberration, pos.y),
+                pos2(pos.x - aberration, pos.y - CROSS_JITTER),
                 align,
                 &displayed,
                 font.clone(),
                 chr_red,
             );
             ui.painter().text(
-                pos2(pos.x + aberration, pos.y),
+                pos2(pos.x + aberration, pos.y + CROSS_JITTER),
                 align,
                 &displayed,
                 font.clone(),
@@ -168,13 +178,16 @@ pub(crate) fn paint_pane_title(
                 -std::f32::consts::FRAC_PI_2,
             )
         };
-        // For rotated text the aberration "screen-X" offset reads
-        // as offset along the strip's CROSS axis after rotation,
-        // which still presents as a left/right colour split to the
-        // viewer — apply the offset in screen-X regardless.
+        // For rotated text (vertical-strip pane title) the reading
+        // direction is screen-Y, so the chromatic split must run
+        // along Y to land along the text's length, not across its
+        // height. Tiny ±1 px cross jitter (X) on each ghost adds a
+        // CRT-misregistration touch without distorting the glyph
+        // height after rotation.
         if aberration > 0.0 {
-            let r_pos = pos2(text_pos.x - aberration, text_pos.y);
-            let c_pos = pos2(text_pos.x + aberration, text_pos.y);
+            const CROSS_JITTER: f32 = 1.0;
+            let r_pos = pos2(text_pos.x - CROSS_JITTER, text_pos.y - aberration);
+            let c_pos = pos2(text_pos.x + CROSS_JITTER, text_pos.y + aberration);
             let mut s_red = egui::epaint::TextShape::new(r_pos, galley.clone(), chr_red);
             s_red.angle = angle;
             ui.painter().add(s_red);

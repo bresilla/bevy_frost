@@ -1040,9 +1040,12 @@ pub fn glitch_text(ctx: &egui::Context, id: egui::Id, base: &str) -> String {
 /// fire on staggered, deterministic schedules.
 pub fn chromatic_aberration_offset(ctx: &egui::Context, id: egui::Id) -> f32 {
     /// Total split duration, peak in the middle.
-    const DUR: f64 = 0.30;
-    /// Maximum pixel offset of each ghost from the centre.
-    const PEAK: f32 = 6.0;
+    const DUR: f64 = 0.28;
+    /// Maximum pixel offset of each ghost from the centre, ALONG the
+    /// text's reading direction. Caller is responsible for projecting
+    /// this onto the appropriate axis (screen-X for horizontal text,
+    /// screen-Y for vertical / rotated text).
+    const PEAK: f32 = 8.0;
 
     let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let period_h = id_seed.wrapping_mul(0xC229_6164_8C84_38AB);
@@ -1259,6 +1262,12 @@ pub struct Theme {
     /// so body content sits clear of the heavy banner instead of
     /// crowding it.
     pub section_body_inner_top_pad: f32,
+    /// `true` → fire a periodic chromatic-aberration split on the
+    /// pane's title text (red ghost shifted along the reading
+    /// direction one way, cyan ghost the other, ramping
+    /// `0 → peak → 0` over a few hundred ms every 5–13 s). PRO
+    /// keeps titles still; GAME enables the CRT-style colour split.
+    pub pane_title_chromatic_aberration: bool,
     /// Section open / close animation duration in seconds. Drives
     /// egui's `style.animation_time`, so it also governs every
     /// `animate_bool` consumer in the kit (chevron rotation,
@@ -1579,6 +1588,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_outer_margin_main_body: 3,
         section_outer_margin_cross: 3,
         section_body_inner_top_pad: 0.0,
+        pane_title_chromatic_aberration: false,
         // PRO — quick snappy fold / unfold so flipping sections
         // open while inspecting feels responsive.
         // 0.15 → 0.06 (~2.5× faster). PRO sections fold/unfold
@@ -1734,6 +1744,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_outer_margin_main_body: 0,
         section_outer_margin_cross: 1,
         section_body_inner_top_pad: 8.0,
+        pane_title_chromatic_aberration: true,
         // GAME — slower fold / unfold so the banner expansion reads
         // as a deliberate "scene change" cue.
         section_animation_time: 0.35,

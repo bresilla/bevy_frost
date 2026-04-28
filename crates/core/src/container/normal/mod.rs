@@ -437,7 +437,7 @@ impl Normal {
                     egui::pos2(r.right() + pad.right as f32, r.bottom() + pad.bottom as f32),
                 )
             };
-            paint_corner_ticks(ui, used_outer, accent, title_side);
+            paint_corner_ticks(ui, used_outer, accent, title_side, openness);
         });
     }
 
@@ -924,6 +924,18 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// "Ease-out-back" — `t = 0 → 0`, `t = 1 → 1`, peaks at `~1.18`
+/// around `t ≈ 0.6` for an overshoot. Used by the corner-bracket
+/// snap so the brackets fly past rest by a few px before settling.
+#[inline]
+fn ease_out_back(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let c1: f32 = 2.5;
+    let c3 = c1 + 1.0;
+    let t1 = t - 1.0;
+    1.0 + c3 * t1 * t1 * t1 + c1 * t1 * t1
+}
+
 /// Paint a chevron at `center` rotated to match the title side and
 /// `openness` 0..=1. Glyph reads `›` (closed) → `⌄` (open) for a
 /// Top title; mirrored / rotated for the other three sides.
@@ -968,23 +980,74 @@ fn paint_chevron_h(
 }
 
 /// Paint L-shaped corner ticks around `outer_rect`. Gated on
-/// `theme.section_corner_ticks > 0` (GAME enables, PRO disables).
+/// `theme.section_corner_ticks > 0` (GAME enables, PRO disables —
+/// PRO ships `0.0` so this whole function returns early there).
 /// Title-side corners use the contrast colour (white-on-banner);
 /// body-side corners use a breathing-accent so they pulse against
 /// the panel surface.
+///
+/// `openness` drives a **corner-bracket snap** on container open:
+///
+/// * Brackets start `START_OFFSET` px outside the rest position
+///   when the container is collapsed.
+/// * `snap_t = (openness × SNAP_RATIO).clamp(0, 1)` reaches `1` when
+///   openness ≈ `1 / SNAP_RATIO`, so the snap completes BEFORE the
+///   body finishes opening — chrome lands first, body fills in.
+/// * `ease_out_back` produces a small overshoot past rest before
+///   settling, plus a fade-in driven by the same `snap_t` so a
+///   collapsed container doesn't have ticks "floating" outside it.
 fn paint_corner_ticks(
     ui: &mut Ui,
     outer_rect: egui::Rect,
     accent: Color32,
     title_side: TitleSide,
+    openness: f32,
 ) {
     let theme = style::theme();
     let tick_len = theme.section_corner_ticks;
     if tick_len <= 0.0 {
         return;
     }
-    let inset = theme.section_corner_ticks_inset;
+    let rest_inset = theme.section_corner_ticks_inset;
+    // Manual `time-since-last-appearance` clock. Resets every time
+    // the pane is shown again — detected via a "last paint gap":
+    // when a Pane is closed it stops painting, so on the next
+    // open the elapsed-since-last-paint exceeds `GAP_THRESHOLD`
+    // and we reset the snap clock. Without this, the timestamp
+    // would be stored once and the snap would only fire on first
+    // app start.
+    const APPEAR_DUR: f32 = 0.5;
+    const START_OFFSET: f32 = 10.0;
+    const SNAP_RATIO: f32 = 1.2;
+    const GAP_THRESHOLD: f64 = 0.2;
+    let snap_id = ui.id().with("frost_corner_snap");
+    let last_paint_id = snap_id.with("last_paint");
+    let first_seen_id = snap_id.with("first_seen");
+    let now = ui.ctx().input(|i| i.time);
+    let first_seen: f64 = ui.ctx().data_mut(|d| {
+        let just_reappeared = match d.get_temp::<f64>(last_paint_id) {
+            Some(t) => (now - t) > GAP_THRESHOLD,
+            None => true,
+        };
+        d.insert_temp(last_paint_id, now);
+        if just_reappeared {
+            d.insert_temp(first_seen_id, now);
+            now
+        } else {
+            d.get_temp::<f64>(first_seen_id).unwrap_or(now)
+        }
+    });
+    let appear = (((now - first_seen) as f32) / APPEAR_DUR).clamp(0.0, 1.0);
+    if appear < 1.0 {
+        ui.ctx().request_repaint();
+    }
+    let openness_t = (openness * SNAP_RATIO).clamp(0.0, 1.0);
+    let snap_t = appear.min(openness_t);
+    let snap = ease_out_back(snap_t);
+    let extra = egui::lerp(-START_OFFSET..=0.0, snap);
+    let inset = rest_inset + extra;
     let r = outer_rect.shrink(inset);
+
     let snap_low = |v: f32| v.round() + 0.5;
     let snap_high = |v: f32| v.round() - 0.5;
     let lx = snap_low(r.min.x);
@@ -1001,14 +1064,24 @@ fn paint_corner_ticks(
         let phase = (time * std::f32::consts::TAU / PERIOD).cos();
         0.78 + 0.11 * (1.0 - phase)
     };
-    let tick_alpha = (255.0 * breath).round() as u8;
+    // Body-side accent pulses with breath; title-side contrast stays
+    // solid. No fade — brackets are visible at all positions in the
+    // snap so the fly-in reads clearly.
+    let accent_alpha = (255.0 * breath).round() as u8;
+    let contrast_alpha = 255_u8;
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(33));
     let accent_col = Color32::from_rgba_unmultiplied(
         bracket_accent.r(),
         bracket_accent.g(),
         bracket_accent.b(),
-        tick_alpha,
+        accent_alpha,
+    );
+    let contrast_col = Color32::from_rgba_unmultiplied(
+        contrast_col.r(),
+        contrast_col.g(),
+        contrast_col.b(),
+        contrast_alpha,
     );
     // Pick the title-side colour (sits on the banner →
     // contrast/white) vs the body-side colour (sits on the panel →
