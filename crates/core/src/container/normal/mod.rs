@@ -16,7 +16,7 @@
 //! });
 //! ```
 
-use egui::{epaint::TextShape, pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Sense, Stroke, Ui, Vec2};
+use egui::{epaint::TextShape, pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Sense, Stroke, Ui};
 
 use super::body::Body;
 use crate::flex::{item, Flex, FlexAlign, Size};
@@ -38,12 +38,15 @@ const TITLE_BODY_GAP_HALF: f32 = 4.0;
 /// so the hairline divider reads cleanly; kept as a knob for later
 /// tuning).
 const _BODY_PAD: f32 = 6.0;
-/// Maximum total container width. Caps the X axis regardless of
-/// orientation so a top/bottom-rail pane (cross axis = full pane
-/// width) doesn't paint a 560 px-wide card, and a left/right-rail
-/// pane's content-driven body doesn't grow beyond a comfortable
-/// reading width.
-pub const CONTAINER_MAX_WIDTH: f32 = 280.0;
+/// Default cross-axis size. Used as the container's locked cross
+/// dimension — width for horizontal-title containers, height for
+/// vertical-title containers. The MAIN axis stays content-driven
+/// (capped via `Body::max_main` for vertical-title to stop a body
+/// like `text_input` from growing the pane unboundedly along X).
+/// Pane2's locked cross axis matches this constant so the pane and
+/// container share the same outer cross dimension.
+pub const CONTAINER_DEFAULT_WIDTH: f32 = 280.0;
+pub const CONTAINER_DEFAULT_HEIGHT: f32 = 280.0;
 /// Outer margin between the container's painted frame and the
 /// parent pane's body inset. Small (a few px) just so the container
 /// doesn't sit flush against the pane chrome.
@@ -84,28 +87,30 @@ impl Normal {
         let outer_w = (OUTER_MARGIN as f32) * 2.0;
         let outer_h = (OUTER_MARGIN as f32) * 2.0;
 
-        // Cross axis = the dim the title strip spans. The parent pane
-        // locked this axis (Pane2's `set_max_width` / `set_max_height`
-        // in `body_paint`) so reading available_size here is stable
-        // across flex passes.
+        // Cross axis = the dim the title strip spans. Locked to
+        // `CONTAINER_DEFAULT_*` (clamped to `outer_avail`).
+        // Main axis stays content-driven so the container — and the
+        // pane wrapping it — collapse to widget size when the body
+        // is empty.
         let outer_avail = ui.available_size();
-        // CONTAINER_MAX_WIDTH caps the X axis regardless of which
-        // axis is the cross — it's the *width* cap, not a cross-
-        // axis cap.
         let cross_inner = if horizontal_strip {
-            (outer_avail.x - pad_w - outer_w)
-                .min(CONTAINER_MAX_WIDTH - pad_w - outer_w)
+            (CONTAINER_DEFAULT_WIDTH - pad_w - outer_w)
+                .min((outer_avail.x - pad_w - outer_w).max(0.0))
                 .max(0.0)
         } else {
-            (outer_avail.y - pad_h - outer_h).max(0.0)
+            (CONTAINER_DEFAULT_HEIGHT - pad_h - outer_h)
+                .min((outer_avail.y - pad_h - outer_h).max(0.0))
+                .max(0.0)
         };
-        // For vertical-strip containers the body grows along X; cap
-        // its main-axis width so the container as a whole stays
-        // within `CONTAINER_MAX_WIDTH`.
-        let body_main_max_x = if horizontal_strip {
+        // Vertical-title containers cap the body's main-axis width
+        // (default for X) so a `text_input` (which fills
+        // `available_width`) doesn't blow up the container.
+        let body_main_max = if horizontal_strip {
             None
         } else {
-            Some((CONTAINER_MAX_WIDTH - TITLE_ZONE_THICKNESS - pad_w - outer_w).max(0.0))
+            Some(
+                (CONTAINER_DEFAULT_WIDTH - TITLE_ZONE_THICKNESS - pad_w - outer_w).max(0.0),
+            )
         };
 
         let title_size = if horizontal_strip {
@@ -118,8 +123,8 @@ impl Normal {
         // `Tabbed` so the cross-axis clamp + flex-multipass-safety
         // logic lives in one place.
         let mut body_cfg = Body::new(horizontal_strip, cross_inner);
-        if let Some(max_x) = body_main_max_x {
-            body_cfg = body_cfg.max_main(max_x);
+        if let Some(max) = body_main_max {
+            body_cfg = body_cfg.max_main(max);
         }
 
         let id_salt = ui.id().with("normal_flex");
@@ -129,6 +134,9 @@ impl Normal {
 
         let frame = self.theme_frame();
         frame.show(ui, |ui| {
+            // Lock the CROSS axis only — main stays content-driven
+            // so the pane (which sizes to its body's intrinsic) is
+            // small for small content, big for big content.
             let flex = if horizontal_strip {
                 Flex::vertical().width(Size::Points(cross_inner))
             } else {

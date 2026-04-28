@@ -28,15 +28,16 @@ use crate::style;
 
 // ─── Sizing constants ──────────────────────────────────────────────
 
-/// Cross-axis size for vertical-rail (Left/Right) panes — the
-/// dimension that doesn't grow with body content. Width when the
-/// title is horizontal (top/bottom of pane); height when the title
-/// is vertical (left/right of pane).
+/// Cross-axis size for the pane's body slot. Equal across all four
+/// rails so the slot just matches the
+/// `crate::container::Normal::CONTAINER_DEFAULT_*` outer size — the
+/// pane is then exactly as big as the container plus the title
+/// strip. Bumping this up creates empty space inside the pane;
+/// shrinking it crops the container.
 pub const VERTICAL_PANE_X: f32 = 280.0;
-pub const VERTICAL_PANE_Y: f32 = 320.0;
-/// Cross-axis size for horizontal-rail (Top/Bottom) panes.
-pub const HORIZONTAL_PANE_X: f32 = 560.0;
-pub const HORIZONTAL_PANE_Y: f32 = 220.0;
+pub const VERTICAL_PANE_Y: f32 = 280.0;
+pub const HORIZONTAL_PANE_X: f32 = 280.0;
+pub const HORIZONTAL_PANE_Y: f32 = 280.0;
 
 /// Thickness of the title strip on its main axis (perpendicular to
 /// the strip's reading direction).
