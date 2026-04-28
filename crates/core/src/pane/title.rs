@@ -58,7 +58,10 @@ pub(crate) fn paint_pane_title(
         let session_id = id.with("pane2_title_session");
         let session = style::appearance_session(ui.ctx(), session_id);
         let scramble_id = session_id.with(session);
-        style::scramble_text(ui.ctx(), scramble_id, &title_uc, true)
+        let scrambled = style::scramble_text(ui.ctx(), scramble_id, &title_uc, true);
+        // Same periodic single-letter glitch the container title
+        // uses — keeps the pane title alive after its decode cycle.
+        style::glitch_text(ui.ctx(), session_id.with("glitch"), &scrambled)
     } else {
         title_uc
     };

@@ -17,8 +17,8 @@
 //! ```
 
 use egui::{
-    epaint::TextShape, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Frame, Id, Layout,
-    Rect, Sense, Stroke, Ui, UiBuilder,
+    epaint::TextShape, pos2, vec2, Align, Color32, CornerRadius, FontId, Frame, Id, Layout, Rect,
+    Sense, Stroke, Ui, UiBuilder,
 };
 
 use super::body::Body;
@@ -349,6 +349,20 @@ impl Normal {
                     egui::Shape::rect_filled(banner, egui::CornerRadius::ZERO, accent),
                 );
             }
+
+            // Corner ticks (GAME): L-shaped marks at each corner of
+            // the container's outer rect, with a slow breathing
+            // pulse. PRO has `section_corner_ticks = 0` so this is
+            // a no-op there.
+            let used_outer = {
+                let pad = style::section_padding();
+                let r = ui.min_rect();
+                egui::Rect::from_min_max(
+                    egui::pos2(r.left() - pad.left as f32, r.top() - pad.top as f32),
+                    egui::pos2(r.right() + pad.right as f32, r.bottom() + pad.bottom as f32),
+                )
+            };
+            paint_corner_ticks(ui, used_outer, accent, title_side);
         });
     }
 
@@ -379,9 +393,16 @@ impl Normal {
     }
 }
 
-/// Paint the title strip into `rect`. Picks horizontal vs rotated
-/// text based on `anchor.title_side()` so the container matches the
-/// parent pane's title direction.
+/// Paint the title strip into `rect`. Theme-aware:
+/// * Title size, letter-spacing, font family, brackets, chevron all
+///   from `theme()`.
+/// * UPPERCASE always.
+/// * `[ TITLE ]` brackets when `theme.section_title_brackets` —
+///   layout space is reserved even when invisible so the title text
+///   doesn't shift between collapsed / open.
+/// * Chevron prefix when `theme.show_section_chevron` (PRO).
+/// * Hairline divider on the body-facing edge in PRO; banner cover
+///   in GAME (painted by caller).
 fn paint_title(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -392,55 +413,92 @@ fn paint_title(
 ) {
     let theme = style::theme();
     let title_side = anchor.title_side();
-    // GAME-style banner: text uses a contrast colour against the
-    // accent. The banner FILL itself is painted outside this fn
-    // (in `Normal::show`) so it can extend through the surrounding
-    // inner_margin and into half the flex gap — i.e., the padding
-    // around the title gets the same accent colour, not the body
-    // colour.
     let filled = theme.title_strip_filled;
     let title_col = if filled {
         style::contrast_text_for(accent)
     } else {
         style::section_title_color(accent)
     };
-    // Text + galley paints clip to `rect`; the body-facing divider
-    // sits ON the rect's edge so it must use the unclipped parent
-    // `ui.painter()`, otherwise it gets cut by `painter_at(rect)`.
+
     let title_painter = ui.painter_at(rect);
     let painter = ui.painter();
-    let font = FontId::proportional(13.0);
+
+    let title_font = FontId::new(theme.section_title_size, style::title_font_family());
+    let bracket_visible = theme.section_title_brackets && !open;
+    let any_brackets = theme.section_title_brackets;
+    let title_uc = title.to_uppercase();
+    // GAME theme: scramble-decode the title each time the
+    // container reappears (matching the old `section_tracked`
+    // recipe). The session id bumps when the parent ui's visibility
+    // gaps, salting the scramble id so a fresh cycle plays.
+    let displayed = if theme.scramble_titles {
+        let session_id = ui.id().with(("frost_normal_title_session", title));
+        let session = style::appearance_session(ui.ctx(), session_id);
+        let scramble_id = session_id.with(session);
+        let active = ui.opacity() >= 0.95;
+        let scrambled = style::scramble_text(ui.ctx(), scramble_id, &title_uc, active);
+        // Post-stabilisation glitch: every ~5 s a random letter
+        // momentarily becomes a scramble symbol and reverts.
+        style::glitch_text(ui.ctx(), session_id.with("glitch"), &scrambled)
+    } else {
+        title_uc
+    };
+
+    let default_format = egui::TextFormat {
+        font_id: title_font.clone(),
+        color: title_col,
+        extra_letter_spacing: theme.section_title_letter_spacing,
+        ..Default::default()
+    };
+    let bracket_format = egui::TextFormat {
+        color: if bracket_visible {
+            title_col
+        } else {
+            Color32::TRANSPARENT
+        },
+        ..default_format.clone()
+    };
+
+    let mut job = egui::text::LayoutJob::default();
+    if any_brackets {
+        job.append("[ ", 0.0, bracket_format.clone());
+    }
+    job.append(&displayed, 0.0, default_format);
+    if any_brackets {
+        job.append(" ]", 0.0, bracket_format);
+    }
+    let galley = title_painter.layout_job(job);
+    let g_size = galley.size();
 
     match title_side {
         TitleSide::Top | TitleSide::Bottom => {
-            // Same alignment recipe as `pane::title::paint_pane_title`:
-            // for "reversed" anchors (TS, RS, RE, BE) the first letter
-            // sits next to the pane's own button on the rail —
-            // RIGHT_CENTER on RightRail anchors, LEFT_CENTER otherwise.
-            if anchor.title_reversed() {
-                title_painter.text(
-                    rect.right_center() - vec2(TITLE_INSET, 0.0),
-                    Align2::RIGHT_CENTER,
-                    title,
-                    font,
+            // Optional chevron painted ahead of the title text.
+            let mut text_inset = TITLE_INSET;
+            if theme.show_section_chevron {
+                const CHEVRON_W: f32 = 14.0;
+                let chevron_x = if anchor.title_reversed() {
+                    rect.right() - TITLE_INSET - CHEVRON_W * 0.5
+                } else {
+                    rect.left() + TITLE_INSET + CHEVRON_W * 0.5
+                };
+                paint_chevron_h(
+                    &title_painter,
+                    egui::pos2(chevron_x, rect.center().y),
+                    title_side,
+                    if open { 1.0 } else { 0.0 },
                     title_col,
                 );
-            } else {
-                title_painter.text(
-                    rect.left_center() + vec2(TITLE_INSET, 0.0),
-                    Align2::LEFT_CENTER,
-                    title,
-                    font,
-                    title_col,
-                );
+                text_inset = TITLE_INSET + CHEVRON_W + 2.0;
             }
-            // Hairline divider painted at the MIDPOINT of the flex
-            // gap — `TITLE_BODY_GAP_HALF` outside the title rect's
-            // body-facing edge — so it gets equal padding on both
-            // sides (title-to-divider + divider-to-body). Drawn
-            // with the unclipped painter so it isn't culled by
-            // `rect`. Skipped in GAME theme since the accent-filled
-            // banner already separates title from body.
+
+            let text_pos = if anchor.title_reversed() {
+                pos2(rect.right() - text_inset - g_size.x, rect.center().y - g_size.y * 0.5)
+            } else {
+                pos2(rect.left() + text_inset, rect.center().y - g_size.y * 0.5)
+            };
+            title_painter.galley(text_pos, galley, title_col);
+
+            // Body-facing divider — PRO only, when expanded.
             if !filled && open {
                 let y = match title_side {
                     TitleSide::Top => (rect.bottom() + TITLE_BODY_GAP_HALF).round() + 0.5,
@@ -451,29 +509,42 @@ fn paint_title(
             }
         }
         TitleSide::Left | TitleSide::Right => {
-            let galley = title_painter.layout_no_wrap(title.to_string(), font, title_col);
-            let g = galley.size();
             let cx = rect.center().x;
-            // Matches `pane::title::paint_pane_title`'s convention so
-            // the container's rotated text reads in the SAME
-            // direction as the parent pane's title:
-            //   top_to_bottom = (right_side) XOR (reversed)
-            // `title_reversed()` is `true` for TS, RS, RE, BE.
             let on_right_side = title_side == TitleSide::Right;
             let top_to_bottom = on_right_side ^ anchor.title_reversed();
+
+            // Optional chevron at the reading-start of the title.
+            let mut text_inset = TITLE_INSET;
+            if theme.show_section_chevron {
+                const CHEVRON_W: f32 = 14.0;
+                let chevron_y = if top_to_bottom {
+                    rect.top() + TITLE_INSET + CHEVRON_W * 0.5
+                } else {
+                    rect.bottom() - TITLE_INSET - CHEVRON_W * 0.5
+                };
+                paint_chevron_h(
+                    &title_painter,
+                    egui::pos2(cx, chevron_y),
+                    title_side,
+                    if open { 1.0 } else { 0.0 },
+                    title_col,
+                );
+                text_inset = TITLE_INSET + CHEVRON_W + 2.0;
+            }
+
             let (text_pos, angle) = if top_to_bottom {
                 (
                     pos2(
-                        (cx + g.y * 0.5).round(),
-                        (rect.min.y + TITLE_INSET).round(),
+                        (cx + g_size.y * 0.5).round(),
+                        (rect.min.y + text_inset).round(),
                     ),
                     std::f32::consts::FRAC_PI_2,
                 )
             } else {
                 (
                     pos2(
-                        (cx - g.y * 0.5).round(),
-                        (rect.max.y - TITLE_INSET).round(),
+                        (cx - g_size.y * 0.5).round(),
+                        (rect.max.y - text_inset).round(),
                     ),
                     -std::f32::consts::FRAC_PI_2,
                 )
@@ -481,9 +552,7 @@ fn paint_title(
             let mut shape = TextShape::new(text_pos, galley, title_col);
             shape.angle = angle;
             title_painter.add(shape);
-            // Hairline divider painted at the MIDPOINT of the flex
-            // gap (see horizontal-strip branch for rationale).
-            // Skipped under GAME's filled banner.
+
             if !filled && open {
                 let x = match title_side {
                     TitleSide::Left => (rect.right() + TITLE_BODY_GAP_HALF).round() + 0.5,
@@ -495,3 +564,118 @@ fn paint_title(
         }
     }
 }
+
+/// Paint a chevron at `center` rotated to match the title side and
+/// `openness` 0..=1. Glyph reads `›` (closed) → `⌄` (open) for a
+/// Top title; mirrored / rotated for the other three sides.
+fn paint_chevron_h(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    title_side: TitleSide,
+    openness: f32,
+    tint: Color32,
+) {
+    const GLYPH_W: f32 = 8.0;
+    const GLYPH_H: f32 = 5.0;
+    let hw = GLYPH_W * 0.5;
+    let hh = GLYPH_H * 0.5;
+    // Base shape `⌄`: arms at top corners, apex at bottom centre.
+    let raw = [
+        egui::vec2(-hw, -hh),
+        egui::vec2(0.0, hh),
+        egui::vec2(hw, -hh),
+    ];
+    use std::f32::consts::TAU;
+    // Closed → open angle ranges per side:
+    //   Top:    -90° → 0°   (›  → ⌄)
+    //   Bottom: -90° → 180° (›  → ^)
+    //   Left:    0°  → -90° (⌄  → ›)
+    //   Right:   0°  →  90° (⌄  → ‹)
+    let (closed, open) = match title_side {
+        TitleSide::Top => (-TAU / 4.0, 0.0),
+        TitleSide::Bottom => (-TAU / 4.0, TAU / 2.0),
+        TitleSide::Left => (0.0, -TAU / 4.0),
+        TitleSide::Right => (0.0, TAU / 4.0),
+    };
+    let rot = egui::emath::Rot2::from_angle(egui::lerp(closed..=open, openness));
+    let pts: Vec<egui::Pos2> = raw
+        .iter()
+        .map(|v| {
+            let r = rot * *v;
+            egui::pos2(center.x + r.x, center.y + r.y)
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, Stroke::new(1.6, tint)));
+}
+
+/// Paint L-shaped corner ticks around `outer_rect`. Gated on
+/// `theme.section_corner_ticks > 0` (GAME enables, PRO disables).
+/// Title-side corners use the contrast colour (white-on-banner);
+/// body-side corners use a breathing-accent so they pulse against
+/// the panel surface.
+fn paint_corner_ticks(
+    ui: &mut Ui,
+    outer_rect: egui::Rect,
+    accent: Color32,
+    title_side: TitleSide,
+) {
+    let theme = style::theme();
+    let tick_len = theme.section_corner_ticks;
+    if tick_len <= 0.0 {
+        return;
+    }
+    let inset = theme.section_corner_ticks_inset;
+    let r = outer_rect.shrink(inset);
+    let snap_low = |v: f32| v.round() + 0.5;
+    let snap_high = |v: f32| v.round() - 0.5;
+    let lx = snap_low(r.min.x);
+    let ty = snap_low(r.min.y);
+    let rx = snap_high(r.max.x);
+    let by = snap_high(r.max.y);
+    let len = tick_len;
+
+    let contrast_col = style::contrast_text_for(accent);
+    let bracket_accent = style::high_contrast_accent(accent);
+    let time = ui.ctx().input(|i| i.time) as f32;
+    let breath = {
+        const PERIOD: f32 = 3.4;
+        let phase = (time * std::f32::consts::TAU / PERIOD).cos();
+        0.78 + 0.11 * (1.0 - phase)
+    };
+    let tick_alpha = (255.0 * breath).round() as u8;
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(33));
+    let accent_col = Color32::from_rgba_unmultiplied(
+        bracket_accent.r(),
+        bracket_accent.g(),
+        bracket_accent.b(),
+        tick_alpha,
+    );
+    // Pick the title-side colour (sits on the banner →
+    // contrast/white) vs the body-side colour (sits on the panel →
+    // accent with breathing alpha).
+    let (tl, tr, bl, br) = match title_side {
+        TitleSide::Top => (contrast_col, contrast_col, accent_col, accent_col),
+        TitleSide::Bottom => (accent_col, accent_col, contrast_col, contrast_col),
+        TitleSide::Left => (contrast_col, accent_col, contrast_col, accent_col),
+        TitleSide::Right => (accent_col, contrast_col, accent_col, contrast_col),
+    };
+    let stroke = |c: Color32| Stroke::new(1.0, c);
+
+    let shapes: [egui::Shape; 8] = [
+        // ┌ top-left
+        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], stroke(tl)),
+        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], stroke(tl)),
+        // ┐ top-right
+        egui::Shape::line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], stroke(tr)),
+        egui::Shape::line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], stroke(tr)),
+        // └ bottom-left
+        egui::Shape::line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], stroke(bl)),
+        egui::Shape::line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], stroke(bl)),
+        // ┘ bottom-right
+        egui::Shape::line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], stroke(br)),
+        egui::Shape::line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], stroke(br)),
+    ];
+    ui.painter().extend(shapes);
+}
+

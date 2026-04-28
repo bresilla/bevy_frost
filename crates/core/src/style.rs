@@ -954,6 +954,80 @@ pub fn scramble_text(
     display
 }
 
+/// Periodic single-letter "glitch" overlay layered on top of the
+/// stabilised text. Once per `BUCKET_PERIOD` (5 s), a deterministic-
+/// random NON-whitespace character is replaced with a `SCRAMBLE_CHARS`
+/// symbol for `GLITCH_DUR` (~180 ms) at a random phase within the
+/// bucket. Outside that window the text is returned unchanged.
+///
+/// Intended to follow `scramble_text` so the title plays its decode
+/// cycle on appear, then the occasional glitch flickers a single
+/// letter every few seconds against the locked text.
+pub fn glitch_text(ctx: &egui::Context, id: egui::Id, base: &str) -> String {
+    const GLITCH_DUR: f64 = 0.18;
+
+    // Collect non-whitespace character indices — those are the only
+    // valid targets. If the picked target is whitespace we'd render
+    // it unchanged (boring), so pre-filter and use the random hash
+    // to pick from this list.
+    let candidates: Vec<usize> = base
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| !c.is_whitespace())
+        .map(|(i, _)| i)
+        .collect();
+    if candidates.is_empty() {
+        return base.to_string();
+    }
+
+    // Per-id random bucket period in [3.0, 9.0] s — so multiple
+    // titles glitch on independent cadences and never sync up.
+    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let period_h = id_seed.wrapping_mul(0xC229_6164_8C84_38AB);
+    let bucket_period = 3.0 + ((period_h as f64) / (u64::MAX as f64)) * 6.0;
+
+    let now = ctx.input(|i| i.time);
+    let bucket = (now / bucket_period).floor() as u64;
+    let bucket_start = (bucket as f64) * bucket_period;
+    let phase = now - bucket_start;
+
+    let h1 = id_seed.wrapping_add(bucket.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let glitch_start = ((h1 as f64) / (u64::MAX as f64)) * (bucket_period - GLITCH_DUR);
+    // Pick TWO independent (idx, scramble_char) pairs. Both are
+    // hashed from the same bucket+id so they're stable for the
+    // duration of the glitch. Independence between the two picks
+    // is intentional — sometimes they land on the same character,
+    // which is fine.
+    let h2 = h1.wrapping_mul(0x94D0_49BB_1331_11EB);
+    let target_idx_a = candidates[(h2 as usize) % candidates.len()];
+    let h3 = h2.wrapping_mul(0xD680_5F76_18FB_F0FB);
+    let scramble_idx_a = (h3 as usize) % SCRAMBLE_CHARS.len();
+    let h4 = h3.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    let target_idx_b = candidates[(h4 as usize) % candidates.len()];
+    let h5 = h4.wrapping_mul(0x165667B19E3779F9);
+    let scramble_idx_b = (h5 as usize) % SCRAMBLE_CHARS.len();
+
+    ctx.request_repaint_after(std::time::Duration::from_millis(33));
+
+    let in_glitch = phase >= glitch_start && phase < glitch_start + GLITCH_DUR;
+    if !in_glitch {
+        return base.to_string();
+    }
+
+    base.chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i == target_idx_a {
+                SCRAMBLE_CHARS[scramble_idx_a]
+            } else if i == target_idx_b {
+                SCRAMBLE_CHARS[scramble_idx_b]
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 // ─── Design-system tokens ────────────────────────────────────────────
 //
 // Every panel should lay out against THESE instead of ad-hoc `add_space`
