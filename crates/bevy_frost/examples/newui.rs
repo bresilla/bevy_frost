@@ -11,18 +11,19 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
-use bevy_frost::prelude::*;
 use bevy_glacial::prelude::*;
-// `corekit` owns the theme state Pane2 reads from. We pull
-// `set_theme` / theme presets / `apply_theme` from corekit so the
-// pane sees the right theme; `frostcore`'s parallel state stays
-// (un)used by the FrostPlugin and just doesn't drive newui anymore.
+// Everything UI-side comes from `corekit` now — ribbon types,
+// resources, draw_assembly, theme runtime, pane. That way the
+// ribbon buttons and the panes share a single global theme state
+// (corekit's). Going through `bevy_frost::prelude::*` would hand
+// us `frostcore`'s parallel state, where the buttons never see the
+// PRO/GAME swap.
 use corekit::pane::{PaneAnchor, Pane2, RailZone};
-use corekit::style::{
-    apply_theme as core_apply_theme, set_theme as core_set_theme, theme_game as core_theme_game,
-    theme_pro as core_theme_pro, AccentColor as CoreAccent, GlassOpacity as CoreGlass,
-    Mode as CoreMode,
+use corekit::ribbon::{
+    draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
+    RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,
 };
+use corekit::style::{AccentColor, GlassOpacity, Mode};
 
 // ─── Ribbon / pane ids ──────────────────────────────────────────────
 
@@ -153,15 +154,26 @@ fn main() {
             ..default()
         }))
         .add_plugins(bevy_egui::EguiPlugin::default())
-        .add_plugins(FrostPlugin)
-        // bevy_glacial's GroundGrid + ChaseCamera + helpers, same
-        // setup the demo uses for the camera rig.
+        // No `FrostPlugin` — that wires `frostcore`'s theme runtime
+        // and ribbon resources, which would shadow the ones we
+        // initialise from `corekit` below. We register corekit's
+        // resources manually and run `apply_theme` inside
+        // `ui_system`, which is enough to drive PRO/GAME for both
+        // the ribbon buttons (corekit's draw_assembly + paint) AND
+        // the panes (Pane2).
         .add_plugins(GlacialPlugins)
         .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
         .insert_resource(GroundGrid {
             visible: true,
             color: Color::srgba(0.30, 0.38, 0.50, 0.42),
         })
+        // corekit ribbon resources (the bevy feature derives Resource
+        // on each via cfg_attr).
+        .init_resource::<AccentColor>()
+        .init_resource::<GlassOpacity>()
+        .init_resource::<RibbonOpen>()
+        .init_resource::<RibbonPlacement>()
+        .init_resource::<RibbonDrag>()
         .init_resource::<ThemeFamily>()
         .init_resource::<ThemeModeRes>()
         .init_resource::<SelectedSwatch>()
@@ -414,22 +426,21 @@ fn ui_system(
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
-    // Drive corekit's theme runtime — the pane reads from corekit's
-    // global theme + uses corekit's `title_font_family` (which only
-    // returns the bundled Iosevka face once `apply_theme` has
-    // installed corekit's fonts on this `ctx`). Building the theme
-    // through corekit's presets (`core_theme_pro`/`core_theme_game`)
-    // and calling `core_set_theme` keeps Pane2 in sync with the
-    // user-visible PRO/GAME button cycle.
+    // Drive corekit's theme runtime each frame. `set_theme` swaps
+    // the global; `apply_theme` registers the bundled Iosevka faces
+    // and pushes the theme-derived `egui::Visuals`. Both ribbon
+    // buttons (drawn by corekit's `draw_assembly`) and Pane2 read
+    // from this same global, so PRO ↔ GAME cycles every visible
+    // surface together.
     let active_theme = match (family.0, mode.0) {
-        (0, 0) => core_theme_pro(CoreMode::Dark),
-        (0, 1) => core_theme_pro(CoreMode::Light),
-        (1, 0) => core_theme_game(CoreMode::Dark),
-        (1, 1) => core_theme_game(CoreMode::Light),
-        _      => core_theme_pro(CoreMode::Dark),
+        (0, 0) => corekit::style::theme_pro(Mode::Dark),
+        (0, 1) => corekit::style::theme_pro(Mode::Light),
+        (1, 0) => corekit::style::theme_game(Mode::Dark),
+        (1, 1) => corekit::style::theme_game(Mode::Light),
+        _      => corekit::style::theme_pro(Mode::Dark),
     };
-    core_set_theme(active_theme);
-    core_apply_theme(ctx, CoreAccent(accent.0), CoreGlass(glass.0));
+    corekit::style::set_theme(active_theme);
+    corekit::style::apply_theme(ctx, *accent, *glass);
 
     let clicks = draw_assembly(
         ctx, accent.0, RIBBONS, RIBBON_ITEMS,

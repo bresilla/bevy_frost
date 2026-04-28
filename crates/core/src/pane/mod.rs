@@ -23,15 +23,20 @@ pub use anchor::{PaneAnchor, RailZone};
 
 use egui::{Color32, Id, Stroke, Vec2, vec2};
 
-use crate::flex::{item, Flex, FlexAlign};
+use crate::flex::{item, Flex, FlexAlign, Size};
 use crate::style;
 
 // ─── Sizing constants ──────────────────────────────────────────────
 
-/// Pane size for vertical rails (LeftRail / RightRail).
-pub const PANE_VERTICAL_SIZE: Vec2 = vec2(280.0, 320.0);
-/// Pane size for horizontal rails (TopRail / BottomRail).
-pub const PANE_HORIZONTAL_SIZE: Vec2 = vec2(560.0, 220.0);
+/// Cross-axis size for vertical-rail (Left/Right) panes — the
+/// dimension that doesn't grow with body content. Width when the
+/// title is horizontal (top/bottom of pane); height when the title
+/// is vertical (left/right of pane).
+pub const VERTICAL_PANE_X: f32 = 280.0;
+pub const VERTICAL_PANE_Y: f32 = 320.0;
+/// Cross-axis size for horizontal-rail (Top/Bottom) panes.
+pub const HORIZONTAL_PANE_X: f32 = 560.0;
+pub const HORIZONTAL_PANE_Y: f32 = 220.0;
 
 /// Thickness of the title strip on its main axis (perpendicular to
 /// the strip's reading direction).
@@ -80,27 +85,27 @@ impl Pane2 {
 
     /// Render the pane this frame. `body` runs after the title strip
     /// is laid out; its `Ui` covers the rest of the pane.
+    ///
+    /// Pane sizing is content-driven: an empty `body` collapses the
+    /// pane to JUST the title strip thickness, and adding content
+    /// extends the pane along the title's perpendicular axis (a
+    /// horizontal title bar grows down with stacked containers; a
+    /// vertical title strip grows right). The cross axis (the one
+    /// the title spans) is fixed per anchor.
     pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui)) {
-        let pane_size = if self.anchor.is_vertical_pane() {
-            PANE_VERTICAL_SIZE
-        } else {
-            PANE_HORIZONTAL_SIZE
-        };
-        // `content_rect` excludes any reserved areas (statusbar /
-        // menubar / docked panels). Matches what
-        // `floating::floating_window_scoped` reads, so panes land
-        // exactly where ribbon buttons expect.
-        let screen = ctx.content_rect();
-        let pos = layout::compute_pane_pos(self.anchor, screen, pane_size);
-
+        let (align, offset) = layout::anchor_align(self.anchor);
         let area_id = self.id.with("pane2_area");
         egui::Area::new(area_id)
             // `Order::Middle` (not Foreground) — same layer egui's
             // ribbon buttons live on, so the pane and buttons share
-            // a stacking context and don't visually pop above each
-            // other when adjacent.
+            // a stacking context.
             .order(egui::Order::Middle)
-            .fixed_pos(pos)
+            // `anchor(align, offset)` pins the corresponding corner /
+            // edge centre of the Area to a fixed screen position;
+            // egui sizes the Area to its content, so as the body
+            // grows the pinned corner stays put and the opposite
+            // edge moves.
+            .anchor(align, offset)
             .show(ctx, |ui| {
                 let theme = style::theme();
                 let fill = if theme.pane_fill_visible {
@@ -130,17 +135,22 @@ impl Pane2 {
                     shadow,
                 }
                 .show(ui, |ui| {
-                    ui.set_min_size(pane_size - vec2(4.0, 4.0));
-                    ui.set_max_size(pane_size - vec2(4.0, 4.0));
                     self.lay_out_flex(ui, body);
                 });
             });
     }
 
-    /// Inner flex layout: split the pane Ui into a fixed-size title
-    /// strip + a `grow(1.0)` body. Direction comes from `title_side`
-    /// (per-anchor) — horizontal strips need a vertical flex,
-    /// vertical strips need a horizontal flex.
+    /// Inner flex layout: split the pane Ui into a fixed-thickness
+    /// title strip + a content-sized body. Direction comes from
+    /// `title_side` (per-anchor) — horizontal strips need a vertical
+    /// flex, vertical strips need a horizontal flex.
+    ///
+    /// Sizing is content-driven: the cross axis (the dimension the
+    /// title spans) is locked per anchor, while the main axis (the
+    /// dimension perpendicular to the title) is left free so the
+    /// pane is exactly tall/wide enough to fit the title strip plus
+    /// whatever the body closure allocates. Empty body → pane is
+    /// just the strip.
     fn lay_out_flex(self, ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
         let Pane2 {
             id,
@@ -149,38 +159,48 @@ impl Pane2 {
             accent,
         } = self;
         let title_side = anchor.title_side();
+        let horizontal_strip = title_side.is_horizontal_strip();
 
-        let pane_size = if anchor.is_vertical_pane() {
-            PANE_VERTICAL_SIZE
+        // Cross axis = the dimension the title strip spans. Locked.
+        // Main axis = perpendicular; grows with body content.
+        let cross = if horizontal_strip {
+            // Title runs along X → cross axis is X (width).
+            if anchor.is_vertical_pane() {
+                VERTICAL_PANE_X
+            } else {
+                HORIZONTAL_PANE_X
+            }
         } else {
-            PANE_HORIZONTAL_SIZE
+            // Title runs along Y → cross axis is Y (height).
+            if anchor.is_vertical_pane() {
+                VERTICAL_PANE_Y
+            } else {
+                HORIZONTAL_PANE_Y
+            }
         };
-        let inner = pane_size - vec2(4.0, 4.0);
+        // The pane's outer Frame has a 2px inner_margin on every side
+        // (4 total per axis) — subtract so the flex's locked dimension
+        // matches the desired outer pane size.
+        let cross_inner = cross - 4.0;
 
-        let (flex, title_size, body_size) = if title_side.is_horizontal_strip() {
-            // Title bar runs HORIZONTALLY. Flex direction = column.
-            // Title is `inner.x × 25`; body claims the remaining
-            // height.
-            (
-                Flex::vertical(),
-                vec2(inner.x, TITLE_STRIP_THICKNESS),
-                vec2(inner.x, inner.y - TITLE_STRIP_THICKNESS),
-            )
+        let title_size = if horizontal_strip {
+            vec2(cross_inner, TITLE_STRIP_THICKNESS)
         } else {
-            // Title strip runs VERTICALLY. Flex direction = row.
-            (
-                Flex::horizontal(),
-                vec2(TITLE_STRIP_THICKNESS, inner.y),
-                vec2(inner.x - TITLE_STRIP_THICKNESS, inner.y),
-            )
+            vec2(TITLE_STRIP_THICKNESS, cross_inner)
         };
         let title_at_end = title_side.is_at_end();
 
-        flex.gap(Vec2::ZERO)
+        let mut flex = if horizontal_strip {
+            Flex::vertical().width(Size::Points(cross_inner))
+        } else {
+            Flex::horizontal().height(Size::Points(cross_inner))
+        };
+        flex = flex
+            .gap(Vec2::ZERO)
             .align_items(FlexAlign::Stretch)
-            .size(inner)
-            .id_salt(id.with("pane2_flex"))
-            .show(ui, |flex| {
+            .id_salt(id.with("pane2_flex"));
+
+        flex.show(ui, |flex| {
                 let title_text = title.clone();
                 let title_paint = move |ui: &mut egui::Ui| {
                     // Allocate the EXACT expected strip size — not
@@ -206,15 +226,15 @@ impl Pane2 {
                     );
                 };
                 let body_paint = move |ui: &mut egui::Ui| {
-                    // Same recipe — allocate the precise body size
-                    // computed from inner minus the strip.
-                    let (_alloc_rect, _) =
-                        ui.allocate_exact_size(body_size, egui::Sense::hover());
+                    // No fixed allocation — let the user's body grow
+                    // the pane along the main axis. If `body` is a
+                    // no-op, the item collapses to 0 on the main
+                    // axis and the pane shows JUST the title strip.
                     body(ui);
                 };
 
                 if title_at_end {
-                    flex.add_ui(item().grow(1.0).min_size(body_size), body_paint);
+                    flex.add_ui(item(), body_paint);
                     flex.add_ui(
                         item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
                         title_paint,
@@ -224,7 +244,7 @@ impl Pane2 {
                         item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
                         title_paint,
                     );
-                    flex.add_ui(item().grow(1.0).min_size(body_size), body_paint);
+                    flex.add_ui(item(), body_paint);
                 }
             });
     }

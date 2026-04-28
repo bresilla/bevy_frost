@@ -1,57 +1,34 @@
-//! Anchor → screen-position math for [`super::Pane2`]. Uniform
-//! `RAIL_INSET = 46` on every edge — same recipe the original
-//! `frostcore::floating::floating_window_scoped` uses (4 px gap
-//! between pane and rail button strip on every side).
+//! Anchor → screen position for [`super::Pane2`]. Uses `egui::Area`'s
+//! `anchor(Align2, offset)` API so the Area auto-positions itself
+//! based on its content size — the pane's main axis grows with body
+//! content while the pinned corner stays put.
 //!
-//! Earlier revisions had per-anchor "far" pushes on the bottom/
-//! right edges to fix what looked like dimension bugs. The actual
-//! cause was a flex intrinsic-size pass painting strips at the
-//! wrong rect (now fixed in `super::Pane2::lay_out_flex` by
-//! allocating an exact size instead of `available_size_before_wrap`).
-//! Once the paint was clean, the per-anchor pushes were no longer
-//! needed and got removed.
-//!
-//! Generic axis math dispatches by `RailZone` to compute Start /
-//! Middle / End placement along each rail's perpendicular axis.
+//! For Start/End zones the corner closest to the rail stays pinned
+//! and the opposite edge moves as content grows. For Middle zones the
+//! pane's centre sits at the rail's mid-point and grows symmetrically.
 
-use egui::{pos2, Rect, Vec2};
+use egui::{vec2, Align2, Vec2};
 
 use super::anchor::{PaneAnchor, RailZone};
 use super::RAIL_INSET;
 
-/// Compute the top-left screen position for a pane of size `pane`
-/// anchored at `anchor` inside `screen`.
-pub(crate) fn compute_pane_pos(
-    anchor: PaneAnchor,
-    screen: Rect,
-    pane: Vec2,
-) -> egui::Pos2 {
-    let inset = RAIL_INSET;
-    let x_min = screen.min.x + inset;
-    let y_min = screen.min.y + inset;
-    let x_max = screen.max.x - inset;
-    let y_max = screen.max.y - inset;
-
-    // Side-rail (Left/Right) panes pin x to one edge and place y by
-    // zone; horizontal-rail (Top/Bottom) panes pin y and place x by
-    // zone.
-    let x = match anchor {
-        PaneAnchor::LeftRail(_) => x_min,
-        PaneAnchor::RightRail(_) => x_max - pane.x,
-        PaneAnchor::TopRail(z) | PaneAnchor::BottomRail(z) => match z {
-            RailZone::Start  => x_min,
-            RailZone::Middle => (x_min + x_max - pane.x) * 0.5,
-            RailZone::End    => x_max - pane.x,
-        },
-    };
-    let y = match anchor {
-        PaneAnchor::TopRail(_) => y_min,
-        PaneAnchor::BottomRail(_) => y_max - pane.y,
-        PaneAnchor::LeftRail(z) | PaneAnchor::RightRail(z) => match z {
-            RailZone::Start  => y_min,
-            RailZone::Middle => (y_min + y_max - pane.y) * 0.5,
-            RailZone::End    => y_max - pane.y,
-        },
-    };
-    pos2(x, y)
+/// Pick the `Align2` + offset that pins the pane to its rail-
+/// adjacent corner. egui::Area::anchor reads this to position the
+/// Area so the pinned corner stays put as content size changes.
+pub(crate) fn anchor_align(anchor: PaneAnchor) -> (Align2, Vec2) {
+    let i = RAIL_INSET;
+    match anchor {
+        PaneAnchor::LeftRail(RailZone::Start)   => (Align2::LEFT_TOP,    vec2( i,  i)),
+        PaneAnchor::LeftRail(RailZone::Middle)  => (Align2::LEFT_CENTER, vec2( i,  0.0)),
+        PaneAnchor::LeftRail(RailZone::End)     => (Align2::LEFT_BOTTOM, vec2( i, -i)),
+        PaneAnchor::RightRail(RailZone::Start)  => (Align2::RIGHT_TOP,    vec2(-i,  i)),
+        PaneAnchor::RightRail(RailZone::Middle) => (Align2::RIGHT_CENTER, vec2(-i,  0.0)),
+        PaneAnchor::RightRail(RailZone::End)    => (Align2::RIGHT_BOTTOM, vec2(-i, -i)),
+        PaneAnchor::TopRail(RailZone::Start)    => (Align2::LEFT_TOP,   vec2( i,  i)),
+        PaneAnchor::TopRail(RailZone::Middle)   => (Align2::CENTER_TOP, vec2( 0.0,  i)),
+        PaneAnchor::TopRail(RailZone::End)      => (Align2::RIGHT_TOP,  vec2(-i,  i)),
+        PaneAnchor::BottomRail(RailZone::Start) => (Align2::LEFT_BOTTOM,   vec2( i, -i)),
+        PaneAnchor::BottomRail(RailZone::Middle)=> (Align2::CENTER_BOTTOM, vec2( 0.0, -i)),
+        PaneAnchor::BottomRail(RailZone::End)   => (Align2::RIGHT_BOTTOM,  vec2(-i, -i)),
+    }
 }
