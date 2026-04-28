@@ -1028,6 +1028,43 @@ pub fn glitch_text(ctx: &egui::Context, id: egui::Id, base: &str) -> String {
         .collect()
 }
 
+/// Periodic **chromatic-aberration** trigger (Volume-2 effect #47).
+///
+/// Returns the current ghost-offset in pixels (0.0 when inactive). Per-id
+/// random firing every 5–13 seconds, ramping `0 → peak → 0` over 220 ms in
+/// a triangular envelope. Callers paint a red ghost at `pos.x − offset`,
+/// a cyan ghost at `pos.x + offset`, then the main text on top — the eye
+/// reads the brief edge-fringes as a CRT-style chromatic split.
+///
+/// Same hash-driven timing pattern as [`glitch_text`] so different titles
+/// fire on staggered, deterministic schedules.
+pub fn chromatic_aberration_offset(ctx: &egui::Context, id: egui::Id) -> f32 {
+    /// Total split duration, peak in the middle.
+    const DUR: f64 = 0.30;
+    /// Maximum pixel offset of each ghost from the centre.
+    const PEAK: f32 = 6.0;
+
+    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let period_h = id_seed.wrapping_mul(0xC229_6164_8C84_38AB);
+    // 5 + [0, 8) seconds → 5–13 s between firings, deterministic per id.
+    let bucket_period = 5.0 + ((period_h as f64) / (u64::MAX as f64)) * 8.0;
+    let now = ctx.input(|i| i.time);
+    let bucket = (now / bucket_period).floor() as u64;
+    let bucket_start = (bucket as f64) * bucket_period;
+    let phase = now - bucket_start;
+    let h1 = id_seed.wrapping_add(bucket.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let trigger_start = ((h1 as f64) / (u64::MAX as f64)) * (bucket_period - DUR);
+
+    if phase < trigger_start || phase >= trigger_start + DUR {
+        return 0.0;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_millis(33));
+    let t = ((phase - trigger_start) / DUR).clamp(0.0, 1.0) as f32;
+    // Triangular envelope: 0 → 1 at t=0.5, then back to 0.
+    let strength = 1.0 - (2.0 * t - 1.0).abs();
+    PEAK * strength
+}
+
 // ─── Design-system tokens ────────────────────────────────────────────
 //
 // Every panel should lay out against THESE instead of ad-hoc `add_space`

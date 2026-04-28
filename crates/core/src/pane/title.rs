@@ -72,42 +72,63 @@ pub(crate) fn paint_pane_title(
     let centred = anchor.is_middle();
 
     // ── 3. Title text paint ──
+    // Periodic chromatic-aberration ghosts: a deterministic per-id
+    // timer fires every few seconds, ramping the offset 0→peak→0
+    // over ~220 ms. We paint a red ghost shifted one way and a cyan
+    // ghost shifted the other, then the main text on top — the
+    // overlap leaves clean coloured fringes only on the leading and
+    // trailing letter edges. Offset is `0.0` when inactive, so this
+    // collapses to the original single-pass paint.
+    let aberration =
+        style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"));
+    let chr_red = Color32::from_rgb(220, 60, 70);
+    let chr_cyan = Color32::from_rgb(60, 220, 230);
+
     if is_horizontal_strip {
-        if centred {
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                displayed,
-                font,
-                text_col,
-            );
+        let (pos, align) = if centred {
+            (rect.center(), egui::Align2::CENTER_CENTER)
         } else if reversed {
-            let pos = pos2(
-                (rect.max.x - TITLE_INSET).round(),
-                rect.center().y.round(),
-            );
-            ui.painter().text(
-                pos,
+            (
+                pos2(
+                    (rect.max.x - TITLE_INSET).round(),
+                    rect.center().y.round(),
+                ),
                 egui::Align2::RIGHT_CENTER,
-                displayed,
-                font,
-                text_col,
-            );
+            )
         } else {
-            let pos = pos2(
-                (rect.min.x + TITLE_INSET).round(),
-                rect.center().y.round(),
+            (
+                pos2(
+                    (rect.min.x + TITLE_INSET).round(),
+                    rect.center().y.round(),
+                ),
+                egui::Align2::LEFT_CENTER,
+            )
+        };
+        if aberration > 0.0 {
+            ui.painter().text(
+                pos2(pos.x - aberration, pos.y),
+                align,
+                &displayed,
+                font.clone(),
+                chr_red,
             );
             ui.painter().text(
-                pos,
-                egui::Align2::LEFT_CENTER,
-                displayed,
-                font,
-                text_col,
+                pos2(pos.x + aberration, pos.y),
+                align,
+                &displayed,
+                font.clone(),
+                chr_cyan,
             );
         }
+        ui.painter().text(pos, align, displayed, font, text_col);
     } else {
-        let galley = ui.painter().layout_no_wrap(displayed, font, text_col);
+        // Vertical strip: lay out a single galley with placeholder
+        // colour so the same `Arc<Galley>` can drive three
+        // `TextShape`s tinted differently for the aberration ghosts
+        // and the main text. Cheap clone (Arc bump) instead of
+        // re-laying out three separate galleys.
+        let galley =
+            ui.painter().layout_no_wrap(displayed, font, Color32::PLACEHOLDER);
         let g = galley.size();
         let cx = rect.center().x;
         let on_right_side = title_side == TitleSide::Right;
@@ -147,6 +168,20 @@ pub(crate) fn paint_pane_title(
                 -std::f32::consts::FRAC_PI_2,
             )
         };
+        // For rotated text the aberration "screen-X" offset reads
+        // as offset along the strip's CROSS axis after rotation,
+        // which still presents as a left/right colour split to the
+        // viewer — apply the offset in screen-X regardless.
+        if aberration > 0.0 {
+            let r_pos = pos2(text_pos.x - aberration, text_pos.y);
+            let c_pos = pos2(text_pos.x + aberration, text_pos.y);
+            let mut s_red = egui::epaint::TextShape::new(r_pos, galley.clone(), chr_red);
+            s_red.angle = angle;
+            ui.painter().add(s_red);
+            let mut s_cyan = egui::epaint::TextShape::new(c_pos, galley.clone(), chr_cyan);
+            s_cyan.angle = angle;
+            ui.painter().add(s_cyan);
+        }
         let mut shape = egui::epaint::TextShape::new(text_pos, galley, text_col);
         shape.angle = angle;
         ui.painter().add(shape);
