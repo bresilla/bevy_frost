@@ -124,35 +124,34 @@ impl Normal {
         let pad = style::section_padding();
         let pad_w = (pad.left as f32) + (pad.right as f32);
         let pad_h = (pad.top as f32) + (pad.bottom as f32);
-        // Outer margin is applied by the Frame and reserved on
-        // BOTH sides of every axis. Subtract the same amount from
-        // the cross-axis target so the inner flex sees the actual
-        // content area.
+        // Frame chrome that sits OUTSIDE the cross_inner slot:
+        //   `pad_*` — Frame's `inner_margin` (theme `section_padding`).
+        //   `outer_*` — Frame's `outer_margin` (constant per side).
+        //   `stroke_*` — border drawn on either side (PRO=1, GAME=0).
+        // Subtract them so the Frame's resulting outer rect fits
+        // inside `outer_avail` exactly — no 2-px overflow into the
+        // pane's stroke or shadow when the theme has a visible border.
         let outer_w = (OUTER_MARGIN as f32) * 2.0;
         let outer_h = (OUTER_MARGIN as f32) * 2.0;
+        let stroke_w = if style::section_show_frame() {
+            style::theme().border_width * 2.0
+        } else {
+            0.0
+        };
 
         // Cross axis = the dim the title strip spans. Locked to
-        // `CONTAINER_DEFAULT_*` (clamped to `outer_avail`).
-        // Main axis stays content-driven so the container — and the
-        // pane wrapping it — collapse to widget size when the body
-        // is empty.
+        // `CONTAINER_DEFAULT_*` and clamped to `outer_avail` so the
+        // Frame's outer cross always fits its parent.
         let outer_avail = ui.available_size();
         let cross_inner = if horizontal_strip {
-            (CONTAINER_DEFAULT_WIDTH - pad_w - outer_w)
-                .min((outer_avail.x - pad_w - outer_w).max(0.0))
+            (CONTAINER_DEFAULT_WIDTH - pad_w - outer_w - stroke_w)
+                .min((outer_avail.x - pad_w - outer_w - stroke_w).max(0.0))
                 .max(0.0)
         } else {
-            (CONTAINER_DEFAULT_HEIGHT - pad_h - outer_h)
-                .min((outer_avail.y - pad_h - outer_h).max(0.0))
+            (CONTAINER_DEFAULT_HEIGHT - pad_h - outer_h - stroke_w)
+                .min((outer_avail.y - pad_h - outer_h - stroke_w).max(0.0))
                 .max(0.0)
         };
-        // No `max_main` override — Body's set_max_width on the
-        // main axis was EXTENDING the child UI's max_rect beyond
-        // `full_body_main`, causing `text_input` to render wider
-        // than the body slot and the container's `min_rect` to
-        // overflow. The child UI built with `max_rect = full_rect`
-        // already gives `text_input` the right `available_width`.
-        let body_main_max: Option<f32> = None;
 
         let title_size = if horizontal_strip {
             vec2(cross_inner, TITLE_ZONE_THICKNESS)
@@ -160,15 +159,11 @@ impl Normal {
             vec2(TITLE_ZONE_THICKNESS, cross_inner)
         };
 
-        // Shared body recipe — used by both `Normal` and (later)
-        // `Tabbed` so the cross-axis clamp + flex-multipass-safety
-        // logic lives in one place.
-        let mut body_cfg = Body::new(horizontal_strip, cross_inner);
-        if let Some(max) = body_main_max {
-            body_cfg = body_cfg.max_main(max);
-        }
+        // Shared body recipe — applies the cross-axis clamp so child
+        // widgets see a stable `ui.available_*` regardless of the
+        // surrounding layout's measurement passes.
+        let body_cfg = Body::new(horizontal_strip, cross_inner);
 
-        let id_salt = ui.id().with("normal_flex");
         let title_text = self.title.clone();
         let anchor = self.anchor;
         let accent = self.accent;
@@ -187,7 +182,6 @@ impl Normal {
             *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true)
         });
         let openness = pane::body_openness(ui.ctx(), pane_id);
-        let _ = id_salt; // (still kept around in case the body re-introduces flex later)
         // Body's full main-axis size when fully open. Used as the
         // child UI's `max_rect` extent so widgets ALWAYS render at
         // their natural size; only the clip mask animates. Caller

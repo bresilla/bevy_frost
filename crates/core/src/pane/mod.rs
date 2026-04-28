@@ -27,16 +27,22 @@ use crate::style;
 
 // ─── Sizing constants ──────────────────────────────────────────────
 
-/// Cross-axis OUTER size for the pane. Equal to the container's
-/// outer dimension — the container clamps its cross-axis to
-/// `outer_avail` inside `Normal::show`, so it always fits whatever
-/// space the pane gives it. No +chrome bump is needed; the pane's
-/// inner_margin and stroke fall over the container's `outer_margin`
-/// breathing room (3 px each side) without clipping the body.
-pub const VERTICAL_PANE_X: f32 = 280.0;
-pub const VERTICAL_PANE_Y: f32 = 280.0;
-pub const HORIZONTAL_PANE_X: f32 = 280.0;
-pub const HORIZONTAL_PANE_Y: f32 = 280.0;
+/// Pane Frame's `inner_margin` per side. Used both literally (in the
+/// `Frame { inner_margin: … }` builder) and to compute the inner
+/// cross-axis available to the body via `cross - 2 * PANE_INNER_MARGIN`.
+/// Keep these in sync — if you change the Frame margin, recompute the
+/// available space.
+const PANE_INNER_MARGIN: f32 = 2.0;
+/// Total chrome (both sides) the pane Frame steals from the inner ui
+/// — used in the body main-axis size lerp so the pane's outer height
+/// includes the chrome both above and below the body.
+const PANE_FRAME_CHROME: f32 = PANE_INNER_MARGIN * 2.0;
+
+/// Pane outer cross-axis size. The pane is square in cross-axis
+/// regardless of which rail it lives on, and the container inside
+/// clamps its own cross to `outer_avail` so it always fits — no
+/// per-orientation tuning needed.
+pub const PANE_OUTER_CROSS: f32 = 280.0;
 
 /// Thickness of the title strip on its main axis (perpendicular to
 /// the strip's reading direction).
@@ -59,8 +65,6 @@ pub const DEFAULT_BODY_MAIN_OPEN: f32 = 280.0;
 /// can't get this right for both.
 const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
 const CONTAINER_OUTER_MARGIN_TOTAL: f32 = 6.0; // 3 px each side
-/// Pane frame's `inner_margin` (2 px each side, total 4 per axis).
-const PANE_FRAME_CHROME: f32 = 4.0;
 
 /// Compute the pane's animated openness 0..=1 for `pane_id`. Both
 /// `Pane2` and `Normal` call this with the same id so they lerp in
@@ -137,11 +141,7 @@ impl Pane2 {
 
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
-        let cross_outer = if horizontal_strip {
-            if self.anchor.is_vertical_pane() { VERTICAL_PANE_X } else { HORIZONTAL_PANE_X }
-        } else {
-            if self.anchor.is_vertical_pane() { VERTICAL_PANE_Y } else { HORIZONTAL_PANE_Y }
-        };
+        let cross_outer = PANE_OUTER_CROSS;
 
         // Compute pane main from the body's animation state in
         // THIS frame. Both `Pane2` and `Normal` call
@@ -252,7 +252,7 @@ impl Pane2 {
                     color: Color32::from_black_alpha(115),
                 };
                 egui::Frame {
-                    inner_margin: egui::Margin::same(2),
+                    inner_margin: egui::Margin::same(PANE_INNER_MARGIN as i8),
                     outer_margin: egui::Margin::ZERO,
                     fill,
                     stroke: Stroke::new(
@@ -293,25 +293,10 @@ impl Pane2 {
 
         // Cross axis = the dimension the title strip spans. Locked.
         // Main axis = perpendicular; grows with body content.
-        let cross = if horizontal_strip {
-            // Title runs along X → cross axis is X (width).
-            if anchor.is_vertical_pane() {
-                VERTICAL_PANE_X
-            } else {
-                HORIZONTAL_PANE_X
-            }
-        } else {
-            // Title runs along Y → cross axis is Y (height).
-            if anchor.is_vertical_pane() {
-                VERTICAL_PANE_Y
-            } else {
-                HORIZONTAL_PANE_Y
-            }
-        };
-        // The pane's outer Frame has a 2px inner_margin on every side
-        // (4 total per axis) — subtract so the flex's locked dimension
-        // matches the desired outer pane size.
-        let cross_inner = cross - 4.0;
+        // Subtract the pane Frame's inner_margin (both sides) so the
+        // child ui's max_width/height matches the area inside the
+        // frame chrome — what's actually available to the body.
+        let cross_inner = PANE_OUTER_CROSS - PANE_FRAME_CHROME;
 
         let title_size = if horizontal_strip {
             vec2(cross_inner, TITLE_STRIP_THICKNESS)
