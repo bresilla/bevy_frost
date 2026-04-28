@@ -13,8 +13,16 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_frost::prelude::*;
 use bevy_glacial::prelude::*;
-use frostcore::pane2::{PaneAnchor, RailZone};
-use frostcore::style::{theme_game, theme_pro, set_theme, Mode};
+// `corekit` owns the theme state Pane2 reads from. We pull
+// `set_theme` / theme presets / `apply_theme` from corekit so the
+// pane sees the right theme; `frostcore`'s parallel state stays
+// (un)used by the FrostPlugin and just doesn't drive newui anymore.
+use corekit::pane::{PaneAnchor, Pane2, RailZone};
+use corekit::style::{
+    apply_theme as core_apply_theme, set_theme as core_set_theme, theme_game as core_theme_game,
+    theme_pro as core_theme_pro, AccentColor as CoreAccent, GlassOpacity as CoreGlass,
+    Mode as CoreMode,
+};
 
 // ─── Ribbon / pane ids ──────────────────────────────────────────────
 
@@ -54,15 +62,25 @@ const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
     (RIBBON_BOTTOM, PANE_B_E, PaneAnchor::BottomRail(RailZone::End),   "B END"),
 ];
 
+// All four ribbons accept buttons dragged from each other. With
+// `draggable: true` + the `accepts` list filled in, `draw_assembly`
+// lets the user pick up any button and drop it on any rail/cluster.
+// The pane that opens for that button re-anchors automatically to
+// wherever the button currently lives — drag a "TS" button to the
+// LEFT rail and clicking it now opens at the LEFT rail's start.
 const RIBBONS: &[RibbonDef] = &[
     RibbonDef { id: RIBBON_LEFT,   edge: RibbonEdge::Left,   role: RibbonRole::Panel,
-                mode: RibbonMode::ThreeSided, draggable: false, accepts: &[] },
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM] },
     RibbonDef { id: RIBBON_RIGHT,  edge: RibbonEdge::Right,  role: RibbonRole::Panel,
-                mode: RibbonMode::ThreeSided, draggable: false, accepts: &[] },
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM] },
     RibbonDef { id: RIBBON_TOP,    edge: RibbonEdge::Top,    role: RibbonRole::Panel,
-                mode: RibbonMode::ThreeSided, draggable: false, accepts: &[] },
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM] },
     RibbonDef { id: RIBBON_BOTTOM, edge: RibbonEdge::Bottom, role: RibbonRole::Panel,
-                mode: RibbonMode::ThreeSided, draggable: false, accepts: &[] },
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP] },
 ];
 
 const RIBBON_ITEMS: &[RibbonItem] = &[
@@ -387,6 +405,7 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
 fn ui_system(
     mut contexts: EguiContexts,
     accent: Res<AccentColor>,
+    glass: Res<GlassOpacity>,
     mut open: ResMut<RibbonOpen>,
     mut placement: ResMut<RibbonPlacement>,
     mut drag: ResMut<RibbonDrag>,
@@ -395,14 +414,22 @@ fn ui_system(
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
+    // Drive corekit's theme runtime — the pane reads from corekit's
+    // global theme + uses corekit's `title_font_family` (which only
+    // returns the bundled Iosevka face once `apply_theme` has
+    // installed corekit's fonts on this `ctx`). Building the theme
+    // through corekit's presets (`core_theme_pro`/`core_theme_game`)
+    // and calling `core_set_theme` keeps Pane2 in sync with the
+    // user-visible PRO/GAME button cycle.
     let active_theme = match (family.0, mode.0) {
-        (0, 0) => theme_pro(Mode::Dark),
-        (0, 1) => theme_pro(Mode::Light),
-        (1, 0) => theme_game(Mode::Dark),
-        (1, 1) => theme_game(Mode::Light),
-        _      => theme_pro(Mode::Dark),
+        (0, 0) => core_theme_pro(CoreMode::Dark),
+        (0, 1) => core_theme_pro(CoreMode::Light),
+        (1, 0) => core_theme_game(CoreMode::Dark),
+        (1, 1) => core_theme_game(CoreMode::Light),
+        _      => core_theme_pro(CoreMode::Dark),
     };
-    set_theme(active_theme);
+    core_set_theme(active_theme);
+    core_apply_theme(ctx, CoreAccent(accent.0), CoreGlass(glass.0));
 
     let clicks = draw_assembly(
         ctx, accent.0, RIBBONS, RIBBON_ITEMS,
@@ -422,9 +449,33 @@ fn ui_system(
         open.is_open(rid, id)
     };
 
-    for &(_, button_id, anchor, label) in PANE_DEFS {
+    // Resolve the LIVE pane anchor — `placement.resolve` returns
+    // wherever the button currently lives (after any drag), so a
+    // button moved from TopRail::Start to LeftRail::End now opens
+    // at the new corner.
+    let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
+        let item = find_item(RIBBON_ITEMS, id)?;
+        let (rid, cluster, _) = placement.resolve(item);
+        let def = find_ribbon(RIBBONS, rid)?;
+        let zone = match cluster {
+            RibbonCluster::Start  => RailZone::Start,
+            RibbonCluster::Middle => RailZone::Middle,
+            RibbonCluster::End    => RailZone::End,
+        };
+        Some(match def.edge {
+            RibbonEdge::Left   => PaneAnchor::LeftRail(zone),
+            RibbonEdge::Right  => PaneAnchor::RightRail(zone),
+            RibbonEdge::Top    => PaneAnchor::TopRail(zone),
+            RibbonEdge::Bottom => PaneAnchor::BottomRail(zone),
+        })
+    };
+
+    for &(_, button_id, default_anchor, label) in PANE_DEFS {
         if is_open(button_id) {
-            frostcore::pane2::Pane2::new(button_id, label, anchor, accent_col)
+            // Fall back to the declared default if we can't resolve
+            // (shouldn't happen — every pane button is in RIBBON_ITEMS).
+            let anchor = live_anchor(button_id).unwrap_or(default_anchor);
+            Pane2::new(button_id, label, anchor, accent_col)
                 .show(ctx, |_body_ui| {});
         }
     }

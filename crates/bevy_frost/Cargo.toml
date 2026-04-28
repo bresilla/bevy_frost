@@ -9,6 +9,9 @@ readme = "README.md"
 
 [dependencies]
 frostcore = { workspace = true, features = ["bevy"] }
+# corekit — successor crate (PLAN_NEWUI.md). Used by the `newui`
+# example for the new flex-based pane system.
+corekit = { workspace = true, features = ["bevy"] }
 bevy = { workspace = true, features = [
     "std",
     "async_executor",

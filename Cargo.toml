@@ -4,6 +4,7 @@ members = [
     "crates/frostcore",
     "crates/egui_frost",
     "crates/bevy_frost",
+    "crates/core",
 ]
 
 
@@ -30,6 +31,10 @@ bevy_egui = { version = "0.39", default-features = false }
 # member can say `frostcore = { workspace = true }` without repeating
 # the path.
 frostcore = { path = "crates/frostcore", version = "0.0.1" }
+# Directory is `crates/core/`; package id is `corekit` (avoids
+# shadowing Rust's std `core`). Successor to `frostcore` —
+# see `PLAN_NEWUI.md`.
+corekit = { path = "crates/core", version = "0.0.1" }
 
 # `mimalloc` — drop-in global allocator. egui's tessellator + shape
 # `Vec`s thrash the system allocator under heavy heap pressure;
