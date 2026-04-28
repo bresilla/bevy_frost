@@ -4,11 +4,11 @@
 //! parent pane's title strip, so nested chrome chords with the pane
 //! chrome.
 //!
-//! Layout uses [`crate::flex::Flex`] internally — same multi-pass-
-//! safe machinery the pane itself uses. The cross axis (the dim the
-//! title strip spans) is locked to the parent pane's locked axis;
-//! the main axis is `TITLE_ZONE_THICKNESS + BODY_PAD + BODY_MAIN_SIZE`,
-//! capping the pane's growth.
+//! Layout is plain egui (no flex). Title strip is allocated with
+//! `allocate_exact_size`; the body is rendered into a child UI
+//! whose `max_rect` is the FULL body extent and whose `clip_rect`
+//! lerps with `ctx.animate_bool(...)` — same recipe egui's
+//! `CollapsingState::show_body_unindented` uses.
 //!
 //! ```ignore
 //! Normal::new("Properties", anchor, accent).show(ui, |ui| {
@@ -16,11 +16,13 @@
 //! });
 //! ```
 
-use egui::{epaint::TextShape, pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Sense, Stroke, Ui};
+use egui::{
+    epaint::TextShape, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Frame, Id, Layout,
+    Rect, Sense, Stroke, Ui, UiBuilder,
+};
 
 use super::body::Body;
-use crate::flex::{item, Flex, FlexAlign, Size};
-use crate::pane::{PaneAnchor, TitleSide};
+use crate::pane::{self, PaneAnchor, TitleSide};
 use crate::style;
 
 /// Title-bar thickness (perpendicular to the strip's long axis).
@@ -61,14 +63,24 @@ pub struct Normal {
     title: String,
     anchor: PaneAnchor,
     accent: Color32,
+    /// Parent pane's id. Used to look up / toggle the shared
+    /// `body_open` state and the animation's `openness`, so
+    /// `Pane2` and the container animate in lockstep.
+    pane_id: Id,
 }
 
 impl Normal {
-    pub fn new(title: impl Into<String>, anchor: PaneAnchor, accent: Color32) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        anchor: PaneAnchor,
+        accent: Color32,
+        pane_id: impl Into<Id>,
+    ) -> Self {
         Self {
             title: title.into(),
             anchor,
             accent,
+            pane_id: pane_id.into(),
         }
     }
 
@@ -102,16 +114,13 @@ impl Normal {
                 .min((outer_avail.y - pad_h - outer_h).max(0.0))
                 .max(0.0)
         };
-        // Vertical-title containers cap the body's main-axis width
-        // (default for X) so a `text_input` (which fills
-        // `available_width`) doesn't blow up the container.
-        let body_main_max = if horizontal_strip {
-            None
-        } else {
-            Some(
-                (CONTAINER_DEFAULT_WIDTH - TITLE_ZONE_THICKNESS - pad_w - outer_w).max(0.0),
-            )
-        };
+        // No `max_main` override — Body's set_max_width on the
+        // main axis was EXTENDING the child UI's max_rect beyond
+        // `full_body_main`, causing `text_input` to render wider
+        // than the body slot and the container's `min_rect` to
+        // overflow. The child UI built with `max_rect = full_rect`
+        // already gives `text_input` the right `available_width`.
+        let body_main_max: Option<f32> = None;
 
         let title_size = if horizontal_strip {
             vec2(cross_inner, TITLE_ZONE_THICKNESS)
@@ -133,67 +142,152 @@ impl Normal {
         let accent = self.accent;
 
         let banner_filled = style::theme().title_strip_filled;
+
+        // Open state + animation are stored on the parent pane's
+        // id (NOT `ui.id()`) so `Pane2::show` and `Normal::show`
+        // both compute the SAME `openness` from the same
+        // `animate_bool` call within a frame. That synchronises the
+        // pane's outer size and the container's body slot — no
+        // anchor lag, no per-frame edge drift.
+        let pane_id = self.pane_id;
+        let open: bool = ui.ctx().data_mut(|d| {
+            *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true)
+        });
+        let openness = pane::body_openness(ui.ctx(), pane_id);
+        let _ = id_salt; // (still kept around in case the body re-introduces flex later)
+        // Body's full main-axis size when fully open. Used as the
+        // child UI's `max_rect` extent so widgets ALWAYS render at
+        // their natural size; only the clip mask animates.
+        let full_body_main = if horizontal_strip {
+            (CONTAINER_DEFAULT_HEIGHT
+                - TITLE_ZONE_THICKNESS
+                - pad_h
+                - outer_h
+                - TITLE_BODY_GAP_HALF * 2.0)
+                .max(0.0)
+        } else {
+            (CONTAINER_DEFAULT_WIDTH
+                - TITLE_ZONE_THICKNESS
+                - pad_w
+                - outer_w
+                - TITLE_BODY_GAP_HALF * 2.0)
+                .max(0.0)
+        };
+        // Body slot size LERPS with `openness` to match Pane2's
+        // lerp (both compute openness from the SAME `animate_bool`
+        // call, so they animate in lockstep — no anchor drift).
+        let body_visible = openness > 0.0;
+        let total_gap = TITLE_BODY_GAP_HALF * 2.0 * openness;
+        let visible_body_main = openness * full_body_main;
+
         let frame = self.theme_frame();
         frame.show(ui, |ui| {
-            // Reserve a placeholder shape for the GAME-style accent
-            // banner. We need it BEFORE the flex's content paints so
-            // the title text + body widgets sit on top, and we set
-            // it AFTER the flex is laid out so we know the title
-            // strip's actual position.
+            // GAME-style banner placeholder, set AFTER the layout is
+            // measured so we know where the title strip ended up.
             let banner_idx = if banner_filled {
                 Some(ui.painter().add(egui::Shape::Noop))
             } else {
                 None
             };
 
-            // Lock the CROSS axis only — main stays content-driven
-            // so the pane (which sizes to its body's intrinsic) is
-            // small for small content, big for big content.
-            let flex = if horizontal_strip {
-                Flex::vertical().width(Size::Points(cross_inner))
+            // ── Manual layout (no flex) ──
+            // egui's `CollapsingState` recipe: title is allocated at
+            // its exact size, the body is rendered at FULL size into
+            // a clipped child UI, and only the VISIBLE portion is
+            // allocated to the parent ui (`force_set_min_rect` /
+            // `allocate_rect`). So:
+            //   • body's content widgets keep their natural
+            //     `available_*` width — no per-frame text_input
+            //     shrinking,
+            //   • the parent's min_rect lerps smoothly with
+            //     `openness`, which animates the container chrome
+            //     and the parent pane's `fixed_pos` together,
+            //   • no flex item state changes, no `request_discard`
+            //     storm, no PERF WARNING overlay.
+            let layout = if horizontal_strip {
+                Layout::top_down(Align::Min)
             } else {
-                Flex::horizontal().height(Size::Points(cross_inner))
+                Layout::left_to_right(Align::Min)
             };
-            // Main-axis gap = 2× `TITLE_BODY_GAP_HALF` so the divider
-            // (painted at the gap's MIDPOINT inside `paint_title`)
-            // gets equal breathing space on both sides — between the
-            // title text and the line, and between the line and the
-            // body's first widget.
-            let total_gap = TITLE_BODY_GAP_HALF * 2.0;
-            let gap = if horizontal_strip {
-                vec2(0.0, total_gap)
-            } else {
-                vec2(total_gap, 0.0)
-            };
-            flex.gap(gap)
-                .align_items(FlexAlign::Stretch)
-                .id_salt(id_salt)
-                .show(ui, |flex| {
-                    let title_paint = move |ui: &mut Ui| {
-                        // Allocate EXACT title size — `available_size`
-                        // is unsafe inside flex (NOTES.md #1).
-                        let (rect, _) = ui.allocate_exact_size(title_size, Sense::hover());
-                        paint_title(ui, rect, &title_text, anchor, accent);
-                    };
+            let mut layout_ui = ui.new_child(
+                UiBuilder::new().max_rect(ui.max_rect()).layout(layout),
+            );
+            // Zero item_spacing — we control all gaps via
+            // `total_gap` (animated) and `allocate_exact_size`.
+            // Egui's default spacing (3 px vert / 8 px horiz)
+            // would otherwise stack on top of `total_gap` and
+            // overflow the pane.
+            layout_ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                    if title_at_end {
-                        flex.add_ui(body_cfg.flex_item(), move |ui| {
-                            body_cfg.paint(ui, body);
-                        });
-                        flex.add_ui(
-                            item().basis(TITLE_ZONE_THICKNESS).min_size(title_size),
-                            title_paint,
-                        );
-                    } else {
-                        flex.add_ui(
-                            item().basis(TITLE_ZONE_THICKNESS).min_size(title_size),
-                            title_paint,
-                        );
-                        flex.add_ui(body_cfg.flex_item(), move |ui| {
-                            body_cfg.paint(ui, body);
-                        });
-                    }
-                });
+            let render_title = |ui: &mut Ui| {
+                let (rect, resp) = ui.allocate_exact_size(title_size, Sense::click());
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    pane::toggle_body(ui.ctx(), pane_id);
+                }
+                paint_title(ui, rect, &title_text, anchor, accent, open);
+            };
+
+            let render_body = |ui: &mut Ui, body: Box<dyn FnOnce(&mut Ui)>| {
+                if !body_visible || full_body_main <= 0.0 {
+                    return;
+                }
+                let cur_min = ui.cursor().min;
+                let visible_size = if horizontal_strip {
+                    vec2(cross_inner, visible_body_main)
+                } else {
+                    vec2(visible_body_main, cross_inner)
+                };
+                let full_size = if horizontal_strip {
+                    vec2(cross_inner, full_body_main)
+                } else {
+                    vec2(full_body_main, cross_inner)
+                };
+                let visible_rect = Rect::from_min_size(cur_min, visible_size);
+                let full_rect = Rect::from_min_size(cur_min, full_size);
+                // egui's `CollapsingState` recipe: render at FULL
+                // size in a child UI, clip to the VISIBLE portion.
+                // Widgets get their natural `available_*` (no
+                // shrinking), only the clip mask animates.
+                let body_layout = if horizontal_strip {
+                    Layout::top_down(Align::Min)
+                } else {
+                    Layout::left_to_right(Align::Min)
+                };
+                let mut child = ui.new_child(
+                    UiBuilder::new().max_rect(full_rect).layout(body_layout),
+                );
+                let parent_clip = ui.clip_rect();
+                child.set_clip_rect(parent_clip.intersect(visible_rect));
+                body_cfg.paint(&mut child, body);
+                // Allocate ONLY the visible portion in parent → the
+                // container's outer rect lerps with `openness`, in
+                // lockstep with Pane2's pre-computed outer size.
+                let _ = ui.allocate_rect(visible_rect, Sense::hover());
+            };
+
+            let body_box: Box<dyn FnOnce(&mut Ui)> = Box::new(body);
+            if title_at_end {
+                render_body(&mut layout_ui, body_box);
+                if total_gap > 0.0 {
+                    layout_ui.add_space(total_gap);
+                }
+                render_title(&mut layout_ui);
+            } else {
+                render_title(&mut layout_ui);
+                if total_gap > 0.0 {
+                    layout_ui.add_space(total_gap);
+                }
+                render_body(&mut layout_ui, body_box);
+            }
+
+            // After laying out, advance the parent ui's cursor
+            // past what `layout_ui` used so the Frame measures the
+            // animated extent.
+            let used = layout_ui.min_rect();
+            let _ = ui.allocate_rect(used, Sense::hover());
 
             // After flex is laid out, paint the GAME banner into
             // the deferred shape index. Banner extends from the
@@ -209,35 +303,45 @@ impl Normal {
                 let painted_r = used.right() + pad.right as f32;
                 let painted_t = used.top() - pad.top as f32;
                 let painted_b = used.bottom() + pad.bottom as f32;
-                let banner = match title_side {
-                    TitleSide::Top => egui::Rect::from_min_max(
+                // When collapsed, banner covers the entire painted
+                // frame (no body, no gap to extend into). Otherwise
+                // the banner stops at the gap midpoint.
+                let banner = if !open {
+                    egui::Rect::from_min_max(
                         egui::pos2(painted_l, painted_t),
-                        egui::pos2(
-                            painted_r,
-                            used.top() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
-                        ),
-                    ),
-                    TitleSide::Bottom => egui::Rect::from_min_max(
-                        egui::pos2(
-                            painted_l,
-                            used.bottom() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
-                        ),
                         egui::pos2(painted_r, painted_b),
-                    ),
-                    TitleSide::Left => egui::Rect::from_min_max(
-                        egui::pos2(painted_l, painted_t),
-                        egui::pos2(
-                            used.left() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
-                            painted_b,
+                    )
+                } else {
+                    match title_side {
+                        TitleSide::Top => egui::Rect::from_min_max(
+                            egui::pos2(painted_l, painted_t),
+                            egui::pos2(
+                                painted_r,
+                                used.top() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                            ),
                         ),
-                    ),
-                    TitleSide::Right => egui::Rect::from_min_max(
-                        egui::pos2(
-                            used.right() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
-                            painted_t,
+                        TitleSide::Bottom => egui::Rect::from_min_max(
+                            egui::pos2(
+                                painted_l,
+                                used.bottom() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                            ),
+                            egui::pos2(painted_r, painted_b),
                         ),
-                        egui::pos2(painted_r, painted_b),
-                    ),
+                        TitleSide::Left => egui::Rect::from_min_max(
+                            egui::pos2(painted_l, painted_t),
+                            egui::pos2(
+                                used.left() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                                painted_b,
+                            ),
+                        ),
+                        TitleSide::Right => egui::Rect::from_min_max(
+                            egui::pos2(
+                                used.right() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                                painted_t,
+                            ),
+                            egui::pos2(painted_r, painted_b),
+                        ),
+                    }
                 };
                 let p = ui.painter().clone().with_clip_rect(banner.expand(2.0));
                 p.set(
@@ -278,7 +382,14 @@ impl Normal {
 /// Paint the title strip into `rect`. Picks horizontal vs rotated
 /// text based on `anchor.title_side()` so the container matches the
 /// parent pane's title direction.
-fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, accent: Color32) {
+fn paint_title(
+    ui: &mut Ui,
+    rect: egui::Rect,
+    title: &str,
+    anchor: PaneAnchor,
+    accent: Color32,
+    open: bool,
+) {
     let theme = style::theme();
     let title_side = anchor.title_side();
     // GAME-style banner: text uses a contrast colour against the
@@ -330,7 +441,7 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             // with the unclipped painter so it isn't culled by
             // `rect`. Skipped in GAME theme since the accent-filled
             // banner already separates title from body.
-            if !filled {
+            if !filled && open {
                 let y = match title_side {
                     TitleSide::Top => (rect.bottom() + TITLE_BODY_GAP_HALF).round() + 0.5,
                     _ => (rect.top() - TITLE_BODY_GAP_HALF).round() - 0.5,
@@ -373,7 +484,7 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             // Hairline divider painted at the MIDPOINT of the flex
             // gap (see horizontal-strip branch for rationale).
             // Skipped under GAME's filled banner.
-            if !filled {
+            if !filled && open {
                 let x = match title_side {
                     TitleSide::Left => (rect.right() + TITLE_BODY_GAP_HALF).round() + 0.5,
                     _ => (rect.left() - TITLE_BODY_GAP_HALF).round() - 0.5,

@@ -21,27 +21,63 @@ mod title;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
 
-use egui::{Color32, Id, Stroke, Vec2, vec2};
+use egui::{vec2, Align, Color32, Id, Layout, Sense, Stroke};
 
-use crate::flex::{item, Flex, FlexAlign, Size};
 use crate::style;
 
 // ─── Sizing constants ──────────────────────────────────────────────
 
-/// Cross-axis size for the pane's body slot. Equal across all four
-/// rails so the slot just matches the
-/// `crate::container::Normal::CONTAINER_DEFAULT_*` outer size — the
-/// pane is then exactly as big as the container plus the title
-/// strip. Bumping this up creates empty space inside the pane;
-/// shrinking it crops the container.
-pub const VERTICAL_PANE_X: f32 = 280.0;
-pub const VERTICAL_PANE_Y: f32 = 280.0;
-pub const HORIZONTAL_PANE_X: f32 = 280.0;
-pub const HORIZONTAL_PANE_Y: f32 = 280.0;
+/// Cross-axis OUTER size for the pane = `CONTAINER_DEFAULT_*` +
+/// `PANE_FRAME_CHROME`. The pane's frame inner_margin steals 2 px on
+/// each side (4 total per axis), so pane inner cross = 280, which
+/// matches the container's outer cross — container fits exactly.
+pub const VERTICAL_PANE_X: f32 = 284.0;
+pub const VERTICAL_PANE_Y: f32 = 284.0;
+pub const HORIZONTAL_PANE_X: f32 = 284.0;
+pub const HORIZONTAL_PANE_Y: f32 = 284.0;
 
 /// Thickness of the title strip on its main axis (perpendicular to
 /// the strip's reading direction).
 pub const TITLE_STRIP_THICKNESS: f32 = 25.0;
+
+/// Animation duration for the body's open/close transition. Shared
+/// between [`Pane2`] (for size animation) and
+/// [`crate::container::Normal`] (for body content animation), so
+/// both lerp at the same rate.
+pub const BODY_ANIMATION_TIME: f32 = 0.18;
+
+/// Container outer main-axis size when the body is fully expanded.
+/// Equal to `crate::container::Normal::CONTAINER_DEFAULT_*`, so the
+/// pane and container agree on the fully-open size.
+pub const DEFAULT_BODY_MAIN_OPEN: f32 = 280.0;
+/// Container's title-strip thickness and outer-margin reservation
+/// — used to compute the collapsed body main size from the active
+/// theme each frame (see `body_main_collapsed`). Themes differ in
+/// `section_padding` (PRO 4×3, GAME 6×8) so a hardcoded constant
+/// can't get this right for both.
+const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
+const CONTAINER_OUTER_MARGIN_TOTAL: f32 = 6.0; // 3 px each side
+/// Pane frame's `inner_margin` (2 px each side, total 4 per axis).
+const PANE_FRAME_CHROME: f32 = 4.0;
+
+/// Compute the pane's animated openness 0..=1 for `pane_id`. Both
+/// `Pane2` and `Normal` call this with the same id so they lerp in
+/// lockstep and the pane size is known in-frame (no anchor drift).
+pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
+    let open: bool = ctx
+        .data_mut(|d| *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true));
+    ctx.animate_bool_with_time(pane_id.with("body_open").with("anim"), open, BODY_ANIMATION_TIME)
+}
+
+/// Toggle the pane's body open state. Called from the container's
+/// title-strip click handler.
+pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
+    let key = pane_id.with("body_open");
+    ctx.data_mut(|d| {
+        let cur: bool = d.get_persisted(key).unwrap_or(true);
+        d.insert_persisted(key, !cur);
+    });
+}
 
 /// Inset from each screen edge: `EDGE_GAP + SIDE_BTN_SIZE +
 /// RAIL_PANEL_GAP`. The pane sits 4 px past the rail's button
@@ -53,7 +89,7 @@ pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP
     + RAIL_PANEL_GAP;
 
 /// Visual gap between the ribbon's button strip and the pane edge.
-const RAIL_PANEL_GAP: f32 = 4.0;
+const RAIL_PANEL_GAP: f32 = 8.0;
 
 // ─── Builder ───────────────────────────────────────────────────────
 
@@ -96,18 +132,107 @@ impl Pane2 {
     pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui)) {
         let (align, offset) = layout::anchor_align(self.anchor);
         let area_id = self.id.with("pane2_area");
+
+        let title_side = self.anchor.title_side();
+        let horizontal_strip = title_side.is_horizontal_strip();
+        let cross_outer = if horizontal_strip {
+            if self.anchor.is_vertical_pane() { VERTICAL_PANE_X } else { HORIZONTAL_PANE_X }
+        } else {
+            if self.anchor.is_vertical_pane() { VERTICAL_PANE_Y } else { HORIZONTAL_PANE_Y }
+        };
+
+        // Compute pane main from the body's animation state in
+        // THIS frame. Both `Pane2` and `Normal` call
+        // `body_openness(ctx, pane_id)` with the same `pane_id`, so
+        // egui returns the same value to both — meaning the pane's
+        // size and the container's content are in lockstep, with
+        // ZERO 1-frame lag. egui::Area's anchor math then uses this
+        // `state.size` (we lock it via set_min/max_size) and the
+        // anchored corner stays pixel-pinned during the animation.
+        let openness = body_openness(ctx, self.id);
+        // Container's collapsed outer size differs per theme (PRO
+        // uses section_padding 4×3, GAME uses 6×8). Compute from
+        // the active theme so the pane main lerp matches the
+        // container's actual rendered size on both axes.
+        let pad = style::section_padding();
+        let container_pad_main = if horizontal_strip {
+            (pad.top as f32) + (pad.bottom as f32)
+        } else {
+            (pad.left as f32) + (pad.right as f32)
+        };
+        let body_main_collapsed = CONTAINER_TITLE_THICKNESS
+            + container_pad_main
+            + CONTAINER_OUTER_MARGIN_TOTAL;
+        let collapsed_main =
+            TITLE_STRIP_THICKNESS + body_main_collapsed + PANE_FRAME_CHROME;
+        let expanded_main =
+            TITLE_STRIP_THICKNESS + DEFAULT_BODY_MAIN_OPEN + PANE_FRAME_CHROME;
+        let pane_main =
+            collapsed_main + (expanded_main - collapsed_main) * openness;
+
+        let outer_size = if horizontal_strip {
+            vec2(cross_outer, pane_main)
+        } else {
+            vec2(pane_main, cross_outer)
+        };
+
+        // Compute position MANUALLY from `outer_size` using the
+        // anchor + offset + screen rect. egui's `Area::anchor()`
+        // would use `state.size` from the previous frame, which
+        // lags during animation by the per-frame size delta — that
+        // was the visible drift on right/bottom-anchored panes.
+        // With `fixed_pos`, position is computed in-frame from
+        // our just-computed size, so the anchored corner is
+        // pinned with ZERO lag.
+        let screen = ctx.content_rect();
+        let pane_pos = layout::compute_pane_pos(align, offset, screen, outer_size);
+
+
         egui::Area::new(area_id)
-            // `Order::Middle` (not Foreground) — same layer egui's
-            // ribbon buttons live on, so the pane and buttons share
-            // a stacking context.
-            .order(egui::Order::Middle)
-            // `anchor(align, offset)` pins the corresponding corner /
-            // edge centre of the Area to a fixed screen position;
-            // egui sizes the Area to its content, so as the body
-            // grows the pinned corner stays put and the opposite
-            // edge moves.
-            .anchor(align, offset)
-            .show(ctx, |ui| {
+            // `Order::Background` keeps the pane's drop shadow
+            // BELOW the ribbon buttons — buttons paint over any
+            // shadow bleed. Removes the need for a tight clip_rect
+            // (which was slicing the title strip on the rail-side
+            // edge by a couple of pixels).
+            .order(egui::Order::Background)
+            .fixed_pos(pane_pos)
+            .movable(false)
+            .interactable(true)
+            .fade_in(false)
+            .default_size(outer_size)
+            .show(ctx, |outer_ui| {
+                // egui's Area constrains its content_ui.max_rect to
+                // `state.size` from the PREVIOUS frame. During
+                // animation that prev value is smaller than this
+                // frame's `outer_size`, so anything that uses
+                // `available_size` (e.g. `allocate_ui_with_layout`)
+                // would clamp content too small and clip it.
+                // Workaround: bypass `outer_ui` and create a child
+                // with EXPLICIT `max_rect = pane_rect`, then
+                // `allocate_rect` on the parent so its `min_rect`
+                // reaches `pane_rect` and `state.size` (next frame)
+                // matches our computed value.
+                let pane_rect = egui::Rect::from_min_size(
+                    outer_ui.cursor().min,
+                    outer_size,
+                );
+                let layout = if horizontal_strip {
+                    egui::Layout::top_down(egui::Align::Min)
+                } else {
+                    egui::Layout::left_to_right(egui::Align::Min)
+                };
+                let mut child_ui = outer_ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(pane_rect)
+                        .layout(layout),
+                );
+                // No clip_rect — the pane is on `Order::Background`
+                // (below the ribbon buttons), so any shadow bleed
+                // is painted over by the buttons. Content is laid
+                // out tight to `pane_rect` (item_spacing = 0), so
+                // there's nothing to clip anyway.
+                {
+                let ui = &mut child_ui;
                 let theme = style::theme();
                 let fill = if theme.pane_fill_visible {
                     style::glass_fill(
@@ -138,6 +263,8 @@ impl Pane2 {
                 .show(ui, |ui| {
                     self.lay_out_flex(ui, body);
                 });
+                }
+                let _ = outer_ui.allocate_rect(pane_rect, egui::Sense::hover());
             });
     }
 
@@ -189,95 +316,53 @@ impl Pane2 {
         } else {
             vec2(TITLE_STRIP_THICKNESS, cross_inner)
         };
-        // Lock the body slot's CROSS axis (only) at min_size. Without
-        // this, `ui.available_width()` (or `available_height()`) read
-        // inside the body closure differs between flex's intrinsic-
-        // measurement pass and its final-layout pass — egui detects
-        // the unstable size, calls `request_discard` every frame, and
-        // paints the red "PERF WARNING: request_discard has been
-        // called N frames in a row" overlay. The `0.0` on the main
-        // axis preserves content-driven growth there.
-        let body_min = if horizontal_strip {
-            vec2(cross_inner, 0.0)
-        } else {
-            vec2(0.0, cross_inner)
-        };
         let title_at_end = title_side.is_at_end();
 
-        let mut flex = if horizontal_strip {
-            Flex::vertical().width(Size::Points(cross_inner))
-        } else {
-            Flex::horizontal().height(Size::Points(cross_inner))
+        // Plain-egui layout (no flex). Cross axis is locked via
+        // `set_max_*` so `ui.available_*` is stable for child
+        // widgets; main axis is content-driven by `body(ui)`. Title
+        // strip and body are placed in the natural reading order
+        // dictated by `title_at_end`.
+        let title_text = title.clone();
+        let paint_title_strip = |ui: &mut egui::Ui| {
+            let (alloc_rect, _) =
+                ui.allocate_exact_size(title_size, Sense::hover());
+            title::paint_pane_title(ui, alloc_rect, id, &title_text, anchor, accent);
         };
-        flex = flex
-            .gap(Vec2::ZERO)
-            .align_items(FlexAlign::Stretch)
-            .id_salt(id.with("pane2_flex"));
 
-        flex.show(ui, |flex| {
-                let title_text = title.clone();
-                let title_paint = move |ui: &mut egui::Ui| {
-                    // Allocate the EXACT expected strip size — not
-                    // `ui.available_size_before_wrap()`. Using
-                    // available_size is wrong because flex makes
-                    // multiple measurement passes (intrinsic-size
-                    // first, then final layout). On the intrinsic
-                    // pass `available_size` is the whole pane
-                    // interior, so we'd paint stripes across the
-                    // entire pane before the final pass overpaints
-                    // the correct strip — visible as collapsed
-                    // 25×25 paints elsewhere or a giant stripe
-                    // bleed in the user's screenshots.
-                    let (alloc_rect, _) =
-                        ui.allocate_exact_size(title_size, egui::Sense::hover());
-                    title::paint_pane_title(
-                        ui,
-                        alloc_rect,
-                        id,
-                        &title_text,
-                        anchor,
-                        accent,
-                    );
-                };
-                let body_paint = move |ui: &mut egui::Ui| {
-                    // Clamp the body ui's CROSS axis before running
-                    // the user's closure. Without this, a flex
-                    // intrinsic-measurement pass hands the body an
-                    // inner `Ui` whose max_rect spans the FULL outer
-                    // flex (often the whole egui::Area), so any body
-                    // widget that reads `ui.available_width()` /
-                    // `available_height()` sees a screen-sized value
-                    // on the intrinsic pass and a slot-sized value
-                    // on the final pass. egui_flex stores the
-                    // measured intrinsic_size on the body item, the
-                    // value differs across passes, the flex calls
-                    // `request_discard` every frame, and egui paints
-                    // the red "PERF WARNING: request_discard…"
-                    // overlay. Locking max_width / max_height to the
-                    // pane's known cross axis stabilises the value.
-                    // Main axis stays free so body content drives
-                    // pane growth.
-                    if horizontal_strip {
-                        ui.set_max_width(cross_inner);
-                    } else {
-                        ui.set_max_height(cross_inner);
-                    }
-                    body(ui);
-                };
-
+        if horizontal_strip {
+            ui.set_max_width(cross_inner);
+            ui.vertical(|ui| {
+                // Zero `item_spacing` — egui defaults to ~3 px
+                // vertical / ~8 px horizontal between widgets, which
+                // would push our title strip + container past
+                // `pane_rect` (the pane gets visibly clipped). The
+                // pane chrome is layout-tight by design.
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 if title_at_end {
-                    flex.add_ui(item().min_size(body_min), body_paint);
-                    flex.add_ui(
-                        item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
-                        title_paint,
-                    );
+                    body(ui);
+                    paint_title_strip(ui);
                 } else {
-                    flex.add_ui(
-                        item().basis(TITLE_STRIP_THICKNESS).min_size(title_size),
-                        title_paint,
-                    );
-                    flex.add_ui(item().min_size(body_min), body_paint);
+                    paint_title_strip(ui);
+                    body(ui);
                 }
             });
+        } else {
+            ui.set_max_height(cross_inner);
+            // `ui.horizontal` initialises height = `interact_size.y`
+            // (~20 px) — too small for a vertical title strip. Use
+            // `with_layout(Layout::left_to_right(Align::Min))` which
+            // takes the full `available_size_before_wrap` instead.
+            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                if title_at_end {
+                    body(ui);
+                    paint_title_strip(ui);
+                } else {
+                    paint_title_strip(ui);
+                    body(ui);
+                }
+            });
+        }
     }
 }

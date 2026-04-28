@@ -147,14 +147,31 @@ const CLOUD_ALTITUDE_M: f32 = 4_000.0;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "newui — Phase 2".into(),
-                resolution: (1280u32, 800u32).into(),
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "newui — Phase 2".into(),
+                        resolution: (1280u32, 800u32).into(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                // Surface egui's debug-level chatter (request_discard
+                // reasons, id-collision diagnostics, etc.) on stdout
+                // so we can see WHY a particular frame triggered a
+                // PERF overlay or an id-clash 🔥 marker. Bevy's
+                // default filter is INFO, which hides everything
+                // egui logs below WARN. Override with `RUST_LOG=...`
+                // at runtime if you want even more.
+                .set(bevy::log::LogPlugin {
+                    level: bevy::log::Level::DEBUG,
+                    filter: "info,wgpu=error,bevy_render=error,bevy_winit=error,naga=warn,\
+                             egui=debug,egui_flex=debug,corekit=debug,bevy_frost=debug"
+                        .into(),
+                    ..default()
+                }),
+        )
         .add_plugins(bevy_egui::EguiPlugin::default())
         // No `FrostPlugin` — that wires `frostcore`'s theme runtime
         // and ribbon resources, which would shadow the ones we
@@ -444,6 +461,28 @@ fn ui_system(
     corekit::style::set_theme(active_theme);
     corekit::style::apply_theme(ctx, *accent, *glass);
 
+    // Surface egui's request_discard reasons + multipass-in-row
+    // count to the terminal. egui only paints these as a red
+    // PERF-WARNING overlay (see `Context::end_pass`), it doesn't
+    // log them — so without this we couldn't see what's triggering
+    // the overlay during animation.
+    let (discard_reasons, multipass) = ctx.output(|o| {
+        (
+            o.request_discard_reasons.clone(),
+            o.num_completed_passes,
+        )
+    });
+    if !discard_reasons.is_empty() {
+        eprintln!(
+            "[egui] frame had {} request_discard call(s) ({} pass(es))",
+            discard_reasons.len(),
+            multipass,
+        );
+        for r in &discard_reasons {
+            eprintln!("  └─ {r}");
+        }
+    }
+
     // F12 → toggle egui's "show interactive widget bounds" overlay
     // (matches `bevy_frost::debug_toggle_system` in the legacy
     // crate). Renders a coloured outline + hit-rect around every
@@ -510,7 +549,7 @@ fn ui_system(
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
                 .show(ctx, |body_ui| {
-                    Normal::new(label, anchor, accent_col).show(body_ui, |inner_ui| {
+                    Normal::new(label, anchor, accent_col, button_id).show(body_ui, |inner_ui| {
                         // Persist the buffer in egui's data so it
                         // survives the closure's per-frame rebuild.
                         let key = egui::Id::new(("newui_text_input", button_id));
