@@ -87,6 +87,20 @@ impl PaneAnchor {
                 | PaneAnchor::BottomRail(RailZone::End)
         )
     }
+
+    /// `true` for the four Middle-zone anchors (LM, RM, TM, BM).
+    /// Middle panes don't sit next to either end of the rail —
+    /// the title text is centred on the strip and (in GAME) the
+    /// blinking pip appears at BOTH ends of the strip.
+    fn is_middle(self) -> bool {
+        matches!(
+            self,
+            PaneAnchor::LeftRail(RailZone::Middle)
+                | PaneAnchor::RightRail(RailZone::Middle)
+                | PaneAnchor::TopRail(RailZone::Middle)
+                | PaneAnchor::BottomRail(RailZone::Middle)
+        )
+    }
 }
 
 /// Which side of the pane rect carries the title strip.
@@ -459,13 +473,21 @@ fn paint_pane_title(
     let title_side = anchor.title_side();
     let is_horizontal_strip = title_side.is_horizontal_strip();
     let reversed = anchor.title_reversed();
+    let centred = anchor.is_middle();
 
     // ── 3. Title text paint ──
     if is_horizontal_strip {
-        // Horizontal title bar (TitleSide::Top or Bottom). Default
-        // text starts at LEFT; reversed (TE / RE) starts at RIGHT
-        // so the first letter is closest to the pane's own button.
-        if reversed {
+        // Horizontal title bar (TitleSide::Top or Bottom).
+        //   centred (TM/BM)             → CENTER_CENTER
+        //   reversed (TE/RE)            → RIGHT-aligned
+        //   default                     → LEFT-aligned
+        if centred {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                displayed, font, text_col,
+            );
+        } else if reversed {
             let pos = egui::pos2(
                 (rect.max.x - TITLE_INSET).round(),
                 rect.center().y.round(),
@@ -481,23 +503,34 @@ fn paint_pane_title(
                 .text(pos, egui::Align2::LEFT_CENTER, displayed, font, text_col);
         }
     } else {
-        // Vertical title strip (TitleSide::Left or Right). Reading
-        // direction follows which side the strip is on (and `reversed`
-        // flips it for TS / BE):
-        //   • Left,  not reversed → bottom-to-top (`-π/2`), first
-        //                            letter at strip BOTTOM.
-        //   • Left,  reversed     → top-to-bottom (`+π/2`), first
-        //                            letter at strip TOP (TS).
-        //   • Right, not reversed → top-to-bottom (`+π/2`), first
-        //                            letter at strip TOP.
-        //   • Right, reversed     → bottom-to-top (`-π/2`), first
-        //                            letter at strip BOTTOM (BE).
+        // Vertical title strip (TitleSide::Left or Right). For
+        // Middle-zone (LM/RM) the rotated text is centred along
+        // the strip; for corner Start/End the first letter sits
+        // at the rail-near edge (with `reversed` flipping the
+        // direction for TS / BE).
         let galley = ui.painter().layout_no_wrap(displayed, font, text_col);
         let g = galley.size();
         let cx = rect.center().x;
         let on_right_side = title_side == TitleSide::Right;
-        let top_to_bottom = on_right_side ^ reversed; // ⊕: same direction unless reversed
-        let (pos, angle) = if top_to_bottom {
+        let top_to_bottom = on_right_side ^ reversed;
+        let (pos, angle) = if centred {
+            // Place the rotated bbox at the strip's centre.
+            //   +π/2: bbox extends LEFT of pos by g.y, DOWN by g.x.
+            //         centre = (pos.x - g.y/2, pos.y + g.x/2).
+            //   -π/2: bbox extends RIGHT by g.y, UP by g.x.
+            //         centre = (pos.x + g.y/2, pos.y - g.x/2).
+            if top_to_bottom {
+                (
+                    egui::pos2((cx + g.y * 0.5).round(), (rect.center().y - g.x * 0.5).round()),
+                    std::f32::consts::FRAC_PI_2,
+                )
+            } else {
+                (
+                    egui::pos2((cx - g.y * 0.5).round(), (rect.center().y + g.x * 0.5).round()),
+                    -std::f32::consts::FRAC_PI_2,
+                )
+            }
+        } else if top_to_bottom {
             (
                 egui::pos2((cx + g.y * 0.5).round(), (rect.min.y + TITLE_INSET).round()),
                 std::f32::consts::FRAC_PI_2,
@@ -513,7 +546,10 @@ fn paint_pane_title(
         ui.painter().add(shape);
     }
 
-    // ── 4. Blinking pip at the OPPOSITE strip end (GAME only) ──
+    // ── 4. Blinking pip(s) (GAME only) ──
+    // Default: ONE pip at the END opposite the text. Middle anchors
+    // have centred text → paint TWO pips, one at each end of the
+    // strip, so both sides pulse symmetrically.
     if stripes_on {
         const PIP_INSET: f32 = TITLE_INSET;
         let time = ui.ctx().input(|i| i.time) as f32;
@@ -522,32 +558,39 @@ fn paint_pane_title(
         let pip_color = Color32::from_rgba_unmultiplied(
             text_col.r(), text_col.g(), text_col.b(), alpha,
         );
-        let pip_rect = if is_horizontal_strip {
-            // Horizontal strip → pip at the END opposite the text.
-            let pip_x = if reversed {
-                rect.min.x + PIP_INSET // text on right → pip on left
+
+        let paint_pip = |rect: Rect| {
+            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, pip_color);
+        };
+
+        if is_horizontal_strip {
+            // Pip at the right end (or both ends if centred).
+            let cy = (rect.center().y - PIP_SIZE * 0.5).round();
+            let right_x = (rect.max.x - PIP_INSET - PIP_SIZE).round();
+            let left_x  = (rect.min.x + PIP_INSET).round();
+            if centred {
+                paint_pip(Rect::from_min_size(pos2(left_x,  cy), egui::vec2(PIP_SIZE, PIP_SIZE)));
+                paint_pip(Rect::from_min_size(pos2(right_x, cy), egui::vec2(PIP_SIZE, PIP_SIZE)));
+            } else if reversed {
+                paint_pip(Rect::from_min_size(pos2(left_x,  cy), egui::vec2(PIP_SIZE, PIP_SIZE)));
             } else {
-                rect.max.x - PIP_INSET - PIP_SIZE // text on left → pip on right
-            };
-            Rect::from_min_size(
-                pos2(pip_x.round(), (rect.center().y - PIP_SIZE * 0.5).round()),
-                egui::vec2(PIP_SIZE, PIP_SIZE),
-            )
+                paint_pip(Rect::from_min_size(pos2(right_x, cy), egui::vec2(PIP_SIZE, PIP_SIZE)));
+            }
         } else {
-            // Vertical strip → pip opposite the reading-start.
+            let cx = (rect.center().x - PIP_SIZE * 0.5).round();
+            let top_y    = (rect.min.y + PIP_INSET).round();
+            let bottom_y = (rect.max.y - PIP_INSET - PIP_SIZE).round();
             let on_right_side = title_side == TitleSide::Right;
             let top_to_bottom = on_right_side ^ reversed;
-            let pip_y = if top_to_bottom {
-                rect.max.y - PIP_INSET - PIP_SIZE // text starts at top → pip at bottom
+            if centred {
+                paint_pip(Rect::from_min_size(pos2(cx, top_y),    egui::vec2(PIP_SIZE, PIP_SIZE)));
+                paint_pip(Rect::from_min_size(pos2(cx, bottom_y), egui::vec2(PIP_SIZE, PIP_SIZE)));
+            } else if top_to_bottom {
+                paint_pip(Rect::from_min_size(pos2(cx, bottom_y), egui::vec2(PIP_SIZE, PIP_SIZE)));
             } else {
-                rect.min.y + PIP_INSET // text starts at bottom → pip at top
-            };
-            Rect::from_min_size(
-                pos2((rect.center().x - PIP_SIZE * 0.5).round(), pip_y.round()),
-                egui::vec2(PIP_SIZE, PIP_SIZE),
-            )
-        };
-        ui.painter().rect_filled(pip_rect, egui::CornerRadius::ZERO, pip_color);
+                paint_pip(Rect::from_min_size(pos2(cx, top_y),    egui::vec2(PIP_SIZE, PIP_SIZE)));
+            }
+        }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     }
 
