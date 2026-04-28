@@ -22,6 +22,7 @@ use egui::{
 };
 
 use super::body::Body;
+use crate::icons::Icon;
 use crate::pane::{self, PaneAnchor, TitleSide};
 use crate::style;
 
@@ -67,6 +68,13 @@ pub struct Normal {
     /// `body_open` state and the animation's `openness`, so
     /// `Pane2` and the container animate in lockstep.
     pane_id: Id,
+    /// Optional title icon. Either a Fluent name or raw SVG markup.
+    /// In PRO theme (`section_icon_at_end = false`) the icon is
+    /// inlined into the title `LayoutJob` at the reading-start. In
+    /// GAME theme (`section_icon_at_end = true`) it floats at the
+    /// strip's far end and grows when the body unfolds — matching
+    /// `frostcore::widgets::foldable::section_tracked`.
+    icon: Option<Icon<'static>>,
 }
 
 impl Normal {
@@ -81,7 +89,16 @@ impl Normal {
             anchor,
             accent,
             pane_id: pane_id.into(),
+            icon: None,
         }
+    }
+
+    /// Attach a title icon. Accepts a Fluent icon name (e.g.
+    /// `"settings"`) or raw SVG markup — `Icon::from(&str)` picks
+    /// the right variant from the leading characters.
+    pub fn icon(mut self, icon: impl Into<Icon<'static>>) -> Self {
+        self.icon = Some(icon.into());
+        self
     }
 
     pub fn show(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
@@ -140,6 +157,7 @@ impl Normal {
         let title_text = self.title.clone();
         let anchor = self.anchor;
         let accent = self.accent;
+        let icon = self.icon;
 
         let banner_filled = style::theme().title_strip_filled;
 
@@ -227,7 +245,7 @@ impl Normal {
                 if resp.clicked() {
                     pane::toggle_body(ui.ctx(), pane_id);
                 }
-                paint_title(ui, rect, &title_text, anchor, accent, open);
+                paint_title(ui, rect, &title_text, anchor, accent, open, openness, icon);
             };
 
             let render_body = |ui: &mut Ui, body: Box<dyn FnOnce(&mut Ui)>| {
@@ -410,6 +428,8 @@ fn paint_title(
     anchor: PaneAnchor,
     accent: Color32,
     open: bool,
+    openness: f32,
+    icon: Option<Icon<'_>>,
 ) {
     let theme = style::theme();
     let title_side = anchor.title_side();
@@ -427,6 +447,17 @@ fn paint_title(
     let bracket_visible = theme.section_title_brackets && !open;
     let any_brackets = theme.section_title_brackets;
     let title_uc = title.to_uppercase();
+    // Inline icon dispatch:
+    //   PRO (`section_icon_at_end = false`): icon glyph is prepended
+    //     to the title `LayoutJob` so it tracks the same scramble /
+    //     glitch / rotation pipeline as the title.
+    //   GAME (`section_icon_at_end = true`): icon floats at the
+    //     strip's far end after the title text is painted, with a
+    //     smoothstep-eased size lerp keyed off `openness` (small when
+    //     folded → large overflowing the strip when open).
+    // SVG icons can't be inlined into a `LayoutJob`, so they fall
+    // through to the floating-paint path even in PRO.
+    let inline_icon = !theme.section_icon_at_end;
     // GAME theme: scramble-decode the title each time the
     // container reappears (matching the old `section_tracked`
     // recipe). The session id bumps when the parent ui's visibility
@@ -460,10 +491,72 @@ fn paint_title(
     };
 
     let mut job = egui::text::LayoutJob::default();
+    // Optional theme prefix (PRO only — drops when bracket framing
+    // is on so `▸ [ … ]` doesn't read as cluttered).
+    if let (Some(prefix), false) = (theme.section_title_prefix, any_brackets) {
+        job.append(prefix, 0.0, default_format.clone());
+        job.append(" ", 0.0, default_format.clone());
+    }
     if any_brackets {
         job.append("[ ", 0.0, bracket_format.clone());
     }
-    job.append(&displayed, 0.0, default_format);
+    // Resolve the inline-icon glyph + family ONCE, then decide
+    // whether it appears before or after the title text. The chevron
+    // paints separately at the strip's reading-start, so the icon
+    // wants to sit BETWEEN the chevron and the title text:
+    //   • horizontal non-reversed (TM, BM, BS-as-Left? actually just
+    //     anchors with `title_reversed = false`): chevron on LEFT,
+    //     LayoutJob renders LTR, so `icon, title` is correct.
+    //   • horizontal reversed (RS = RightRail Start → Top, RE =
+    //     RightRail End → Bottom): chevron on RIGHT, LayoutJob still
+    //     renders LTR, so `title, icon` puts icon adjacent to the
+    //     chevron. Without this swap the icon ended up on the FAR
+    //     left of the strip — opposite the chevron — and the user's
+    //     chevron→icon→title reading order broke.
+    //   • vertical strips: TextShape rotation places LayoutJob's
+    //     first character closest to the chevron regardless of
+    //     direction (CW for top_to_bottom, CCW otherwise), so
+    //     `icon, title` is always correct.
+    let icon_after_title = title_side.is_horizontal_strip() && anchor.title_reversed();
+    let inline_glyph: Option<(String, egui::FontFamily)> = if inline_icon {
+        match icon {
+            Some(Icon::Name(name)) => crate::icons::icon(name)
+                .map(|(g, family)| (g.to_string(), family)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    // Inline-icon glyph is rendered 20 % larger than the title text
+    // — Fluent glyphs are designed at a square optical size and
+    // visually feel small next to a same-pt UPPERCASE caption, so a
+    // small bump pulls the icon weight up to match the title.
+    let inline_icon_size = theme.section_title_size * 1.2;
+    // Px gap between the icon and the title — applied via egui's
+    // `leading_space` on the next segment, which produces a clean
+    // horizontal gap independent of the chosen separator character.
+    const ICON_TITLE_GAP: f32 = 6.0;
+    let icon_format_for = |family: egui::FontFamily| egui::TextFormat {
+        font_id: FontId::new(inline_icon_size, family),
+        color: title_col,
+        ..Default::default()
+    };
+    if !icon_after_title {
+        if let Some((glyph, family)) = &inline_glyph {
+            job.append(glyph, 0.0, icon_format_for(family.clone()));
+        }
+    }
+    let title_lead = if !icon_after_title && inline_glyph.is_some() {
+        ICON_TITLE_GAP
+    } else {
+        0.0
+    };
+    job.append(&displayed, title_lead, default_format.clone());
+    if icon_after_title {
+        if let Some((glyph, family)) = &inline_glyph {
+            job.append(glyph, ICON_TITLE_GAP, icon_format_for(family.clone()));
+        }
+    }
     if any_brackets {
         job.append(" ]", 0.0, bracket_format);
     }
@@ -563,6 +656,171 @@ fn paint_title(
             }
         }
     }
+
+    // Floating icon (GAME mode) — paints AFTER the title text so it
+    // rides on top of the banner. Same recipe as
+    // `frostcore::widgets::foldable::section_tracked`'s right-edge
+    // icon: small when folded so it tucks inside the collapsed
+    // banner, big when open so it overflows the strip and reads as a
+    // floating ornament. The growth is `smoothstep`-eased so it pops
+    // through `cubic-bezier(0.42, 0, 0.58, 1)` rather than linear.
+    if !inline_icon {
+        if let Some(icon_src) = icon {
+            paint_floating_icon(ui, rect, anchor, title_col, openness, icon_src);
+        }
+    }
+}
+
+/// Paint a "floating" icon on the title strip — small when folded,
+/// big when open. Mirrors `frostcore::widgets::foldable`'s
+/// right-edge icon: the icon overflows the strip's body-facing edge
+/// when fully open, framed by clipping +8 px around the painted
+/// rect. Vertical strips paint the icon centred (no rotation —
+/// Fluent glyphs read fine in either orientation, and rotating
+/// would require a `TextShape` round-trip just for a decoration).
+fn paint_floating_icon(
+    ui: &mut Ui,
+    strip_rect: egui::Rect,
+    anchor: PaneAnchor,
+    title_col: Color32,
+    openness: f32,
+    icon_src: Icon<'_>,
+) {
+    let theme = style::theme();
+    let base_size = theme.section_icon_size.max(0.0);
+    if base_size <= 0.0 {
+        return;
+    }
+    // Constants pulled from `frostcore::widgets::foldable`'s tuned
+    // values — keep them in sync if either gets re-tuned.
+    let folded_size = base_size * 0.85;
+    let unfolded_size = base_size * 2.9106;
+    const UNFOLDED_OFFSET: f32 = 29.294;
+    let folded_offset = folded_size * 0.5;
+    let t = smoothstep(openness);
+    let size = egui::lerp(folded_size..=unfolded_size, t);
+    let offset = egui::lerp(folded_offset..=UNFOLDED_OFFSET, t);
+
+    let title_side = anchor.title_side();
+    let reversed = anchor.title_reversed();
+    let (icon_pos, icon_align, icon_rect) = match title_side {
+        TitleSide::Top | TitleSide::Bottom => {
+            // Icon overflows UP for top-side / DOWN for bottom-side
+            // so it grows AWAY from the body. `cy` anchors the
+            // icon's top (or bottom for bottom-anchored) at
+            // `center.y ∓ offset`.
+            let cy = if title_side == TitleSide::Top {
+                (strip_rect.center().y - offset).round()
+            } else {
+                (strip_rect.center().y + offset).round()
+            };
+            let on_far_end_left = reversed;
+            if on_far_end_left {
+                let pos = pos2((strip_rect.min.x + 6.0).round(), cy);
+                let rect = if title_side == TitleSide::Top {
+                    Rect::from_min_size(pos, vec2(size, size))
+                } else {
+                    Rect::from_min_size(pos2(pos.x, pos.y - size), vec2(size, size))
+                };
+                let align = if title_side == TitleSide::Top {
+                    egui::Align2::LEFT_TOP
+                } else {
+                    egui::Align2::LEFT_BOTTOM
+                };
+                (pos, align, rect)
+            } else {
+                let pos = pos2((strip_rect.max.x - 6.0).round(), cy);
+                let rect = if title_side == TitleSide::Top {
+                    Rect::from_min_size(pos2(pos.x - size, pos.y), vec2(size, size))
+                } else {
+                    Rect::from_min_size(pos2(pos.x - size, pos.y - size), vec2(size, size))
+                };
+                let align = if title_side == TitleSide::Top {
+                    egui::Align2::RIGHT_TOP
+                } else {
+                    egui::Align2::RIGHT_BOTTOM
+                };
+                (pos, align, rect)
+            }
+        }
+        TitleSide::Left | TitleSide::Right => {
+            // Vertical strip: icon overflows AWAY from the body
+            // (LEFT for Left-anchored, RIGHT for Right-anchored).
+            let cx = if title_side == TitleSide::Left {
+                (strip_rect.center().x - offset).round()
+            } else {
+                (strip_rect.center().x + offset).round()
+            };
+            let on_right_side = title_side == TitleSide::Right;
+            let top_to_bottom = on_right_side ^ reversed;
+            if top_to_bottom {
+                let pos = pos2(cx, (strip_rect.max.y - 6.0).round());
+                let rect = if title_side == TitleSide::Left {
+                    Rect::from_min_size(pos2(pos.x, pos.y - size), vec2(size, size))
+                } else {
+                    Rect::from_min_size(pos2(pos.x - size, pos.y - size), vec2(size, size))
+                };
+                let align = if title_side == TitleSide::Left {
+                    egui::Align2::LEFT_BOTTOM
+                } else {
+                    egui::Align2::RIGHT_BOTTOM
+                };
+                (pos, align, rect)
+            } else {
+                let pos = pos2(cx, (strip_rect.min.y + 6.0).round());
+                let rect = if title_side == TitleSide::Left {
+                    Rect::from_min_size(pos, vec2(size, size))
+                } else {
+                    Rect::from_min_size(pos2(pos.x - size, pos.y), vec2(size, size))
+                };
+                let align = if title_side == TitleSide::Left {
+                    egui::Align2::LEFT_TOP
+                } else {
+                    egui::Align2::RIGHT_TOP
+                };
+                (pos, align, rect)
+            }
+        }
+    };
+
+    let clip_rect = icon_rect.expand(8.0);
+    match icon_src {
+        Icon::Name(name) => {
+            // Override the painter's clip — we WANT the icon to
+            // overflow the strip when open, but only inside the
+            // clip_rect padding. Cloning the painter and calling
+            // `set_clip_rect` (not `with_clip_rect`, which
+            // intersects) lets the glyph escape the title strip.
+            let mut p = ui.painter().clone();
+            p.set_clip_rect(clip_rect);
+            crate::icons::paint_icon(&p, icon_pos, icon_align, name, size, title_col);
+        }
+        Icon::Svg(_) => {
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(clip_rect)
+                    .layout(Layout::default()),
+            );
+            child.set_clip_rect(clip_rect);
+            crate::icons::paint_section_icon(
+                &mut child,
+                icon_pos,
+                icon_align,
+                icon_src,
+                size,
+                title_col,
+            );
+        }
+    }
+}
+
+/// Polynomial smoothstep, `t * t * (3 - 2t)`. Approximates
+/// `cubic-bezier(0.42, 0, 0.58, 1)` for a gentle ease-in-ease-out —
+/// matches the same helper in `frostcore::widgets::foldable`.
+#[inline]
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Paint a chevron at `center` rotated to match the title side and
