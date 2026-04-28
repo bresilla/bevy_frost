@@ -75,6 +75,13 @@ pub struct Normal {
     /// strip's far end and grows when the body unfolds — matching
     /// `frostcore::widgets::foldable::section_tracked`.
     icon: Option<Icon<'static>>,
+    /// Optional override for the body slot's main-axis size. Default
+    /// derives from `CONTAINER_DEFAULT_HEIGHT/WIDTH` minus chrome,
+    /// which is right for one-container-per-pane layouts. When you
+    /// stack multiple containers in a single pane, divide the pane's
+    /// available main extent and pass each container its share via
+    /// this builder so they don't all claim the full pane.
+    body_main: Option<f32>,
 }
 
 impl Normal {
@@ -90,6 +97,7 @@ impl Normal {
             accent,
             pane_id: pane_id.into(),
             icon: None,
+            body_main: None,
         }
     }
 
@@ -101,10 +109,17 @@ impl Normal {
         self
     }
 
+    /// Override the body slot's main-axis size. Use when stacking
+    /// multiple containers in a pane so each gets a slice of the
+    /// available main extent instead of all claiming the full pane.
+    pub fn body_main(mut self, main: f32) -> Self {
+        self.body_main = Some(main.max(0.0));
+        self
+    }
+
     pub fn show(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
-        let title_at_end = title_side.is_at_end();
 
         let pad = style::section_padding();
         let pad_w = (pad.left as f32) + (pad.right as f32);
@@ -175,22 +190,25 @@ impl Normal {
         let _ = id_salt; // (still kept around in case the body re-introduces flex later)
         // Body's full main-axis size when fully open. Used as the
         // child UI's `max_rect` extent so widgets ALWAYS render at
-        // their natural size; only the clip mask animates.
-        let full_body_main = if horizontal_strip {
-            (CONTAINER_DEFAULT_HEIGHT
-                - TITLE_ZONE_THICKNESS
-                - pad_h
-                - outer_h
-                - TITLE_BODY_GAP_HALF * 2.0)
-                .max(0.0)
-        } else {
-            (CONTAINER_DEFAULT_WIDTH
-                - TITLE_ZONE_THICKNESS
-                - pad_w
-                - outer_w
-                - TITLE_BODY_GAP_HALF * 2.0)
-                .max(0.0)
-        };
+        // their natural size; only the clip mask animates. Caller
+        // can override via `Normal::body_main` for stacked layouts.
+        let full_body_main = self.body_main.unwrap_or_else(|| {
+            if horizontal_strip {
+                (CONTAINER_DEFAULT_HEIGHT
+                    - TITLE_ZONE_THICKNESS
+                    - pad_h
+                    - outer_h
+                    - TITLE_BODY_GAP_HALF * 2.0)
+                    .max(0.0)
+            } else {
+                (CONTAINER_DEFAULT_WIDTH
+                    - TITLE_ZONE_THICKNESS
+                    - pad_w
+                    - outer_w
+                    - TITLE_BODY_GAP_HALF * 2.0)
+                    .max(0.0)
+            }
+        });
         // Body slot size LERPS with `openness` to match Pane2's
         // lerp (both compute openness from the SAME `animate_bool`
         // call, so they animate in lockstep — no anchor drift).
@@ -222,20 +240,25 @@ impl Normal {
             //     and the parent pane's `fixed_pos` together,
             //   • no flex item state changes, no `request_discard`
             //     storm, no PERF WARNING overlay.
-            let layout = if horizontal_strip {
-                Layout::top_down(Align::Min)
-            } else {
-                Layout::left_to_right(Align::Min)
-            };
-            let mut layout_ui = ui.new_child(
-                UiBuilder::new().max_rect(ui.max_rect()).layout(layout),
-            );
-            // Zero item_spacing — we control all gaps via
-            // `total_gap` (animated) and `allocate_exact_size`.
-            // Egui's default spacing (3 px vert / 8 px horiz)
-            // would otherwise stack on top of `total_gap` and
-            // overflow the pane.
-            layout_ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            // Inherit the parent's layout direction directly into
+            // the Frame's content_ui — DON'T create a child with a
+            // forced `top_down`. Frame computes its outer rect from
+            // `content_ui.min_rect()`, so the inner allocations
+            // determine where the Frame lands inside the pane body.
+            // Forcing `top_down` made the container always appear
+            // at the TOP of available area (since cursor starts at
+            // max_rect.min for top_down), which in a `bottom_up`
+            // pane parent left every container at the FAR edge from
+            // the rail instead of stacking against the title strip.
+            // Inheriting the parent layout makes:
+            //   • TopDown    → first allocation at top  (TopRail).
+            //   • BottomUp   → first allocation at bottom (BottomRail).
+            //   • LeftToRight→ first allocation at left  (LeftRail).
+            //   • RightToLeft→ first allocation at right (RightRail).
+            // Always render TITLE first then BODY: layout direction
+            // does the visual placement work, no `if title_at_end`
+            // swap needed at this level.
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
             let render_title = |ui: &mut Ui| {
                 let (rect, resp) = ui.allocate_exact_size(title_size, Sense::click());
@@ -252,7 +275,6 @@ impl Normal {
                 if !body_visible || full_body_main <= 0.0 {
                     return;
                 }
-                let cur_min = ui.cursor().min;
                 let visible_size = if horizontal_strip {
                     vec2(cross_inner, visible_body_main)
                 } else {
@@ -263,16 +285,42 @@ impl Normal {
                 } else {
                     vec2(full_body_main, cross_inner)
                 };
-                let visible_rect = Rect::from_min_size(cur_min, visible_size);
-                let full_rect = Rect::from_min_size(cur_min, full_size);
-                // egui's `CollapsingState` recipe: render at FULL
-                // size in a child UI, clip to the VISIBLE portion.
-                // Widgets get their natural `available_*` (no
-                // shrinking), only the clip mask animates.
-                let body_layout = if horizontal_strip {
-                    Layout::top_down(Align::Min)
-                } else {
-                    Layout::left_to_right(Align::Min)
+                // `allocate_space` respects the parent's layout
+                // direction, so `visible_rect` lands at the correct
+                // edge (bottom for BottomUp, right for RightToLeft).
+                let (_, visible_rect) = ui.allocate_space(visible_size);
+                // `full_rect` extends the visible slot to the full
+                // body size in the layout direction (so body
+                // widgets render at natural size and only the clip
+                // mask animates). For reversed layouts we anchor
+                // `full_rect`'s FAR edge to `visible_rect`'s far
+                // edge — the body grows AWAY from the title strip
+                // direction.
+                let full_rect = match ui.layout().main_dir() {
+                    egui::Direction::BottomUp => Rect::from_min_size(
+                        egui::pos2(
+                            visible_rect.min.x,
+                            visible_rect.max.y - full_size.y,
+                        ),
+                        full_size,
+                    ),
+                    egui::Direction::RightToLeft => Rect::from_min_size(
+                        egui::pos2(
+                            visible_rect.max.x - full_size.x,
+                            visible_rect.min.y,
+                        ),
+                        full_size,
+                    ),
+                    _ => Rect::from_min_size(visible_rect.min, full_size),
+                };
+                // Body's child layout matches parent direction so
+                // body widgets anchor against the title strip side
+                // (BottomRail body → widgets stack from bottom up).
+                let body_layout = match ui.layout().main_dir() {
+                    egui::Direction::TopDown    => Layout::top_down(Align::Min),
+                    egui::Direction::BottomUp   => Layout::bottom_up(Align::Min),
+                    egui::Direction::LeftToRight=> Layout::left_to_right(Align::Min),
+                    egui::Direction::RightToLeft=> Layout::right_to_left(Align::Min),
                 };
                 let mut child = ui.new_child(
                     UiBuilder::new().max_rect(full_rect).layout(body_layout),
@@ -280,32 +328,17 @@ impl Normal {
                 let parent_clip = ui.clip_rect();
                 child.set_clip_rect(parent_clip.intersect(visible_rect));
                 body_cfg.paint(&mut child, body);
-                // Allocate ONLY the visible portion in parent → the
-                // container's outer rect lerps with `openness`, in
-                // lockstep with Pane2's pre-computed outer size.
-                let _ = ui.allocate_rect(visible_rect, Sense::hover());
             };
 
-            let body_box: Box<dyn FnOnce(&mut Ui)> = Box::new(body);
-            if title_at_end {
-                render_body(&mut layout_ui, body_box);
-                if total_gap > 0.0 {
-                    layout_ui.add_space(total_gap);
-                }
-                render_title(&mut layout_ui);
-            } else {
-                render_title(&mut layout_ui);
-                if total_gap > 0.0 {
-                    layout_ui.add_space(total_gap);
-                }
-                render_body(&mut layout_ui, body_box);
+            // ALWAYS title FIRST, body SECOND. Layout direction
+            // (inherited from pane parent) handles which edge the
+            // title lands at.
+            render_title(ui);
+            if total_gap > 0.0 {
+                ui.add_space(total_gap);
             }
-
-            // After laying out, advance the parent ui's cursor
-            // past what `layout_ui` used so the Frame measures the
-            // animated extent.
-            let used = layout_ui.min_rect();
-            let _ = ui.allocate_rect(used, Sense::hover());
+            let body_box: Box<dyn FnOnce(&mut Ui)> = Box::new(body);
+            render_body(ui, body_box);
 
             // After flex is laid out, paint the GAME banner into
             // the deferred shape index. Banner extends from the

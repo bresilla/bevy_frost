@@ -549,20 +549,35 @@ fn ui_system(
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
                 .show(ctx, |body_ui| {
-                    Normal::new(label, anchor, accent_col, button_id)
-                        .icon("settings")
-                        .show(body_ui, |inner_ui| {
-                            // Persist the buffer in egui's data so it
-                            // survives the closure's per-frame rebuild.
-                            let key = egui::Id::new(("newui_text_input", button_id));
-                            let mut buf: String = inner_ui
-                                .ctx()
-                                .data(|d| d.get_temp(key).unwrap_or_default());
-                            let resp = text_input(inner_ui, &mut buf, "type something…", accent_col);
-                            if resp.changed() {
-                                inner_ui.ctx().data_mut(|d| d.insert_temp(key, buf));
-                            }
-                        });
+                    // Three independent containers, each with its own
+                    // toggle state (id derived from the pane's button
+                    // id + an index). `body_main` slices the pane's
+                    // available main extent into thirds so all three
+                    // fit without overflowing the pane chrome.
+                    const CONTAINERS_PER_PANE: usize = 3;
+                    const BODY_MAIN: f32 = 50.0;
+                    for i in 0..CONTAINERS_PER_PANE {
+                        let cid = egui::Id::new((button_id, "container", i));
+                        let title = format!("{} {}", label, i + 1);
+                        Normal::new(title, anchor, accent_col, cid)
+                            .icon("settings")
+                            .body_main(BODY_MAIN)
+                            .show(body_ui, |inner_ui| {
+                                let key = egui::Id::new(("newui_text_input", cid));
+                                let mut buf: String = inner_ui
+                                    .ctx()
+                                    .data(|d| d.get_temp(key).unwrap_or_default());
+                                let resp = text_input(
+                                    inner_ui,
+                                    &mut buf,
+                                    "type something…",
+                                    accent_col,
+                                );
+                                if resp.changed() {
+                                    inner_ui.ctx().data_mut(|d| d.insert_temp(key, buf));
+                                }
+                            });
+                    }
                 });
         }
     }

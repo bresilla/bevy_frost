@@ -27,14 +27,16 @@ use crate::style;
 
 // ─── Sizing constants ──────────────────────────────────────────────
 
-/// Cross-axis OUTER size for the pane = `CONTAINER_DEFAULT_*` +
-/// `PANE_FRAME_CHROME`. The pane's frame inner_margin steals 2 px on
-/// each side (4 total per axis), so pane inner cross = 280, which
-/// matches the container's outer cross — container fits exactly.
-pub const VERTICAL_PANE_X: f32 = 284.0;
-pub const VERTICAL_PANE_Y: f32 = 284.0;
-pub const HORIZONTAL_PANE_X: f32 = 284.0;
-pub const HORIZONTAL_PANE_Y: f32 = 284.0;
+/// Cross-axis OUTER size for the pane. Equal to the container's
+/// outer dimension — the container clamps its cross-axis to
+/// `outer_avail` inside `Normal::show`, so it always fits whatever
+/// space the pane gives it. No +chrome bump is needed; the pane's
+/// inner_margin and stroke fall over the container's `outer_margin`
+/// breathing room (3 px each side) without clipping the body.
+pub const VERTICAL_PANE_X: f32 = 280.0;
+pub const VERTICAL_PANE_Y: f32 = 280.0;
+pub const HORIZONTAL_PANE_X: f32 = 280.0;
+pub const HORIZONTAL_PANE_Y: f32 = 280.0;
 
 /// Thickness of the title strip on its main axis (perpendicular to
 /// the strip's reading direction).
@@ -330,39 +332,41 @@ impl Pane2 {
             title::paint_pane_title(ui, alloc_rect, id, &title_text, anchor, accent);
         };
 
-        if horizontal_strip {
+        // Anchor-aware layout direction: when the title strip is at
+        // the FAR end (Bottom-rail / Right-rail), use `bottom_up` /
+        // `right_to_left` so allocations grow TOWARD the rail edge.
+        // The first allocation lands at the anchor edge, and any
+        // shrinkage inside the body eats the OPPOSITE (far) edge —
+        // not the strip between the body and the title. Without
+        // this, folding a container in a Bottom-anchored pane
+        // pulled the title strip up away from the rail and left
+        // dead space between it and the screen edge.
+        let layout = if horizontal_strip {
             ui.set_max_width(cross_inner);
-            ui.vertical(|ui| {
-                // Zero `item_spacing` — egui defaults to ~3 px
-                // vertical / ~8 px horizontal between widgets, which
-                // would push our title strip + container past
-                // `pane_rect` (the pane gets visibly clipped). The
-                // pane chrome is layout-tight by design.
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                if title_at_end {
-                    body(ui);
-                    paint_title_strip(ui);
-                } else {
-                    paint_title_strip(ui);
-                    body(ui);
-                }
-            });
+            if title_at_end {
+                Layout::bottom_up(Align::Min)
+            } else {
+                Layout::top_down(Align::Min)
+            }
         } else {
             ui.set_max_height(cross_inner);
-            // `ui.horizontal` initialises height = `interact_size.y`
-            // (~20 px) — too small for a vertical title strip. Use
-            // `with_layout(Layout::left_to_right(Align::Min))` which
-            // takes the full `available_size_before_wrap` instead.
-            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                if title_at_end {
-                    body(ui);
-                    paint_title_strip(ui);
-                } else {
-                    paint_title_strip(ui);
-                    body(ui);
-                }
-            });
-        }
+            if title_at_end {
+                Layout::right_to_left(Align::Min)
+            } else {
+                Layout::left_to_right(Align::Min)
+            }
+        };
+        ui.with_layout(layout, |ui| {
+            // Zero `item_spacing` — egui defaults to ~3 px vertical
+            // / ~8 px horizontal between widgets, which would push
+            // our title strip + container past `pane_rect`.
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            // SAME order in both directions: title FIRST (lands at
+            // anchor edge), body SECOND (fills outward). Reversed
+            // layouts handle the visual placement automatically —
+            // `bottom_up` puts first-allocated at the BOTTOM, etc.
+            paint_title_strip(ui);
+            body(ui);
+        });
     }
 }
