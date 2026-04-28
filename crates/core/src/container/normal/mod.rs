@@ -132,8 +132,20 @@ impl Normal {
         let anchor = self.anchor;
         let accent = self.accent;
 
+        let banner_filled = style::theme().title_strip_filled;
         let frame = self.theme_frame();
         frame.show(ui, |ui| {
+            // Reserve a placeholder shape for the GAME-style accent
+            // banner. We need it BEFORE the flex's content paints so
+            // the title text + body widgets sit on top, and we set
+            // it AFTER the flex is laid out so we know the title
+            // strip's actual position.
+            let banner_idx = if banner_filled {
+                Some(ui.painter().add(egui::Shape::Noop))
+            } else {
+                None
+            };
+
             // Lock the CROSS axis only — main stays content-driven
             // so the pane (which sizes to its body's intrinsic) is
             // small for small content, big for big content.
@@ -182,6 +194,57 @@ impl Normal {
                         });
                     }
                 });
+
+            // After flex is laid out, paint the GAME banner into
+            // the deferred shape index. Banner extends from the
+            // frame's painted edge (= ui.min_rect() expanded by
+            // section_padding) through the title strip and into
+            // half the flex gap. Equivalent to `foldable.rs`'s
+            // banner trick — the painted accent zone covers the
+            // title slot AND the inner_margin around it.
+            if let Some(idx) = banner_idx {
+                let used = ui.min_rect();
+                let pad = style::section_padding();
+                let painted_l = used.left() - pad.left as f32;
+                let painted_r = used.right() + pad.right as f32;
+                let painted_t = used.top() - pad.top as f32;
+                let painted_b = used.bottom() + pad.bottom as f32;
+                let banner = match title_side {
+                    TitleSide::Top => egui::Rect::from_min_max(
+                        egui::pos2(painted_l, painted_t),
+                        egui::pos2(
+                            painted_r,
+                            used.top() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                        ),
+                    ),
+                    TitleSide::Bottom => egui::Rect::from_min_max(
+                        egui::pos2(
+                            painted_l,
+                            used.bottom() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                        ),
+                        egui::pos2(painted_r, painted_b),
+                    ),
+                    TitleSide::Left => egui::Rect::from_min_max(
+                        egui::pos2(painted_l, painted_t),
+                        egui::pos2(
+                            used.left() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                            painted_b,
+                        ),
+                    ),
+                    TitleSide::Right => egui::Rect::from_min_max(
+                        egui::pos2(
+                            used.right() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                            painted_t,
+                        ),
+                        egui::pos2(painted_r, painted_b),
+                    ),
+                };
+                let p = ui.painter().clone().with_clip_rect(banner.expand(2.0));
+                p.set(
+                    idx,
+                    egui::Shape::rect_filled(banner, egui::CornerRadius::ZERO, accent),
+                );
+            }
         });
     }
 
@@ -217,8 +280,19 @@ impl Normal {
 /// parent pane's title direction.
 fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, accent: Color32) {
     let theme = style::theme();
-    let title_col = style::section_title_color(accent);
     let title_side = anchor.title_side();
+    // GAME-style banner: text uses a contrast colour against the
+    // accent. The banner FILL itself is painted outside this fn
+    // (in `Normal::show`) so it can extend through the surrounding
+    // inner_margin and into half the flex gap — i.e., the padding
+    // around the title gets the same accent colour, not the body
+    // colour.
+    let filled = theme.title_strip_filled;
+    let title_col = if filled {
+        style::contrast_text_for(accent)
+    } else {
+        style::section_title_color(accent)
+    };
     // Text + galley paints clip to `rect`; the body-facing divider
     // sits ON the rect's edge so it must use the unclipped parent
     // `ui.painter()`, otherwise it gets cut by `painter_at(rect)`.
@@ -254,13 +328,16 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             // body-facing edge — so it gets equal padding on both
             // sides (title-to-divider + divider-to-body). Drawn
             // with the unclipped painter so it isn't culled by
-            // `rect`.
-            let y = match title_side {
-                TitleSide::Top => (rect.bottom() + TITLE_BODY_GAP_HALF).round() + 0.5,
-                _ => (rect.top() - TITLE_BODY_GAP_HALF).round() - 0.5,
-            };
-            let x_range = (rect.left() + DIVIDER_INSET)..=(rect.right() - DIVIDER_INSET);
-            painter.hline(x_range, y, Stroke::new(1.0, theme.border_subtle));
+            // `rect`. Skipped in GAME theme since the accent-filled
+            // banner already separates title from body.
+            if !filled {
+                let y = match title_side {
+                    TitleSide::Top => (rect.bottom() + TITLE_BODY_GAP_HALF).round() + 0.5,
+                    _ => (rect.top() - TITLE_BODY_GAP_HALF).round() - 0.5,
+                };
+                let x_range = (rect.left() + DIVIDER_INSET)..=(rect.right() - DIVIDER_INSET);
+                painter.hline(x_range, y, Stroke::new(1.0, theme.border_subtle));
+            }
         }
         TitleSide::Left | TitleSide::Right => {
             let galley = title_painter.layout_no_wrap(title.to_string(), font, title_col);
@@ -295,12 +372,15 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             title_painter.add(shape);
             // Hairline divider painted at the MIDPOINT of the flex
             // gap (see horizontal-strip branch for rationale).
-            let x = match title_side {
-                TitleSide::Left => (rect.right() + TITLE_BODY_GAP_HALF).round() + 0.5,
-                _ => (rect.left() - TITLE_BODY_GAP_HALF).round() - 0.5,
-            };
-            let y_range = (rect.top() + DIVIDER_INSET)..=(rect.bottom() - DIVIDER_INSET);
-            painter.vline(x, y_range, Stroke::new(1.0, theme.border_subtle));
+            // Skipped under GAME's filled banner.
+            if !filled {
+                let x = match title_side {
+                    TitleSide::Left => (rect.right() + TITLE_BODY_GAP_HALF).round() + 0.5,
+                    _ => (rect.left() - TITLE_BODY_GAP_HALF).round() - 0.5,
+                };
+                let y_range = (rect.top() + DIVIDER_INSET)..=(rect.bottom() - DIVIDER_INSET);
+                painter.vline(x, y_range, Stroke::new(1.0, theme.border_subtle));
+            }
         }
     }
 }
