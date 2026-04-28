@@ -11,7 +11,9 @@
 //! * [`tabbed`] — multiple labelled bodies behind a tab strip
 //!   (placeholder; not yet implemented).
 
+pub mod body;
 pub mod normal;
 pub mod tabbed;
 
+pub use body::Body;
 pub use normal::Normal;

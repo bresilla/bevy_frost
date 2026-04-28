@@ -34,6 +34,7 @@ pub mod icons;
 pub mod pane;
 pub mod ribbon;
 pub mod style;
+pub mod widget;
 
 // Re-export of the bundled `iconflow` crate so consumers can reach
 // `iconflow::list(Pack::Fluentui)`, `Pack`, etc. without their own

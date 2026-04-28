@@ -19,6 +19,7 @@ use bevy_glacial::prelude::*;
 // us `frostcore`'s parallel state, where the buttons never see the
 // PRO/GAME swap.
 use corekit::container::Normal;
+use corekit::widget::text_input;
 use corekit::pane::{PaneAnchor, Pane2, RailZone};
 use corekit::ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
@@ -509,7 +510,18 @@ fn ui_system(
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
                 .show(ctx, |body_ui| {
-                    Normal::new(label, anchor, accent_col).show(body_ui, |_inner_ui| {});
+                    Normal::new(label, anchor, accent_col).show(body_ui, |inner_ui| {
+                        // Persist the buffer in egui's data so it
+                        // survives the closure's per-frame rebuild.
+                        let key = egui::Id::new(("newui_text_input", button_id));
+                        let mut buf: String = inner_ui
+                            .ctx()
+                            .data(|d| d.get_temp(key).unwrap_or_default());
+                        let resp = text_input(inner_ui, &mut buf, "type something…", accent_col);
+                        if resp.changed() {
+                            inner_ui.ctx().data_mut(|d| d.insert_temp(key, buf));
+                        }
+                    });
                 });
         }
     }

@@ -18,6 +18,7 @@
 
 use egui::{epaint::TextShape, pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Sense, Stroke, Ui, Vec2};
 
+use super::body::Body;
 use crate::flex::{item, Flex, FlexAlign, Size};
 use crate::pane::{PaneAnchor, TitleSide};
 use crate::style;
@@ -26,14 +27,23 @@ use crate::style;
 pub const TITLE_ZONE_THICKNESS: f32 = 22.0;
 /// Inset between strip edge and the title text's reading-start.
 const TITLE_INSET: f32 = 6.0;
+/// Inset on each end of the title/body divider line so it stops
+/// short of the container's frame corners.
+const DIVIDER_INSET: f32 = 6.0;
+/// Padding on EACH side of the divider — `TITLE_BODY_GAP_HALF` of
+/// breathing space between the title text and the divider line, and
+/// the same on the body side. Total flex gap = 2 × this constant.
+const TITLE_BODY_GAP_HALF: f32 = 4.0;
 /// Padding between title strip and body (currently rendered as gap=0
 /// so the hairline divider reads cleanly; kept as a knob for later
 /// tuning).
 const _BODY_PAD: f32 = 6.0;
-/// Default body main-axis size — the dimension perpendicular to the
-/// title strip. Caps the pane's growth so an empty container doesn't
-/// inflate to fill the screen.
-pub const BODY_MAIN_SIZE: f32 = 180.0;
+/// Maximum total container width. Caps the X axis regardless of
+/// orientation so a top/bottom-rail pane (cross axis = full pane
+/// width) doesn't paint a 560 px-wide card, and a left/right-rail
+/// pane's content-driven body doesn't grow beyond a comfortable
+/// reading width.
+pub const CONTAINER_MAX_WIDTH: f32 = 280.0;
 /// Outer margin between the container's painted frame and the
 /// parent pane's body inset. Small (a few px) just so the container
 /// doesn't sit flush against the pane chrome.
@@ -79,10 +89,23 @@ impl Normal {
         // in `body_paint`) so reading available_size here is stable
         // across flex passes.
         let outer_avail = ui.available_size();
+        // CONTAINER_MAX_WIDTH caps the X axis regardless of which
+        // axis is the cross — it's the *width* cap, not a cross-
+        // axis cap.
         let cross_inner = if horizontal_strip {
-            (outer_avail.x - pad_w - outer_w).max(0.0)
+            (outer_avail.x - pad_w - outer_w)
+                .min(CONTAINER_MAX_WIDTH - pad_w - outer_w)
+                .max(0.0)
         } else {
             (outer_avail.y - pad_h - outer_h).max(0.0)
+        };
+        // For vertical-strip containers the body grows along X; cap
+        // its main-axis width so the container as a whole stays
+        // within `CONTAINER_MAX_WIDTH`.
+        let body_main_max_x = if horizontal_strip {
+            None
+        } else {
+            Some((CONTAINER_MAX_WIDTH - TITLE_ZONE_THICKNESS - pad_w - outer_w).max(0.0))
         };
 
         let title_size = if horizontal_strip {
@@ -90,11 +113,14 @@ impl Normal {
         } else {
             vec2(TITLE_ZONE_THICKNESS, cross_inner)
         };
-        let body_size = if horizontal_strip {
-            vec2(cross_inner, BODY_MAIN_SIZE)
-        } else {
-            vec2(BODY_MAIN_SIZE, cross_inner)
-        };
+
+        // Shared body recipe — used by both `Normal` and (later)
+        // `Tabbed` so the cross-axis clamp + flex-multipass-safety
+        // logic lives in one place.
+        let mut body_cfg = Body::new(horizontal_strip, cross_inner);
+        if let Some(max_x) = body_main_max_x {
+            body_cfg = body_cfg.max_main(max_x);
+        }
 
         let id_salt = ui.id().with("normal_flex");
         let title_text = self.title.clone();
@@ -108,7 +134,18 @@ impl Normal {
             } else {
                 Flex::horizontal().height(Size::Points(cross_inner))
             };
-            flex.gap(Vec2::ZERO)
+            // Main-axis gap = 2× `TITLE_BODY_GAP_HALF` so the divider
+            // (painted at the gap's MIDPOINT inside `paint_title`)
+            // gets equal breathing space on both sides — between the
+            // title text and the line, and between the line and the
+            // body's first widget.
+            let total_gap = TITLE_BODY_GAP_HALF * 2.0;
+            let gap = if horizontal_strip {
+                vec2(0.0, total_gap)
+            } else {
+                vec2(total_gap, 0.0)
+            };
+            flex.gap(gap)
                 .align_items(FlexAlign::Stretch)
                 .id_salt(id_salt)
                 .show(ui, |flex| {
@@ -118,17 +155,11 @@ impl Normal {
                         let (rect, _) = ui.allocate_exact_size(title_size, Sense::hover());
                         paint_title(ui, rect, &title_text, anchor, accent);
                     };
-                    let body_paint = move |ui: &mut Ui| {
-                        // Same recipe — pre-computed body_size.
-                        let (_, _) = ui.allocate_exact_size(body_size, Sense::hover());
-                        body(ui);
-                    };
 
                     if title_at_end {
-                        flex.add_ui(
-                            item().basis(BODY_MAIN_SIZE).min_size(body_size),
-                            body_paint,
-                        );
+                        flex.add_ui(body_cfg.flex_item(), move |ui| {
+                            body_cfg.paint(ui, body);
+                        });
                         flex.add_ui(
                             item().basis(TITLE_ZONE_THICKNESS).min_size(title_size),
                             title_paint,
@@ -138,10 +169,9 @@ impl Normal {
                             item().basis(TITLE_ZONE_THICKNESS).min_size(title_size),
                             title_paint,
                         );
-                        flex.add_ui(
-                            item().basis(BODY_MAIN_SIZE).min_size(body_size),
-                            body_paint,
-                        );
+                        flex.add_ui(body_cfg.flex_item(), move |ui| {
+                            body_cfg.paint(ui, body);
+                        });
                     }
                 });
         });
@@ -181,7 +211,11 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
     let theme = style::theme();
     let title_col = style::section_title_color(accent);
     let title_side = anchor.title_side();
-    let painter = ui.painter_at(rect);
+    // Text + galley paints clip to `rect`; the body-facing divider
+    // sits ON the rect's edge so it must use the unclipped parent
+    // `ui.painter()`, otherwise it gets cut by `painter_at(rect)`.
+    let title_painter = ui.painter_at(rect);
+    let painter = ui.painter();
     let font = FontId::proportional(13.0);
 
     match title_side {
@@ -191,7 +225,7 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             // sits next to the pane's own button on the rail —
             // RIGHT_CENTER on RightRail anchors, LEFT_CENTER otherwise.
             if anchor.title_reversed() {
-                painter.text(
+                title_painter.text(
                     rect.right_center() - vec2(TITLE_INSET, 0.0),
                     Align2::RIGHT_CENTER,
                     title,
@@ -199,7 +233,7 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
                     title_col,
                 );
             } else {
-                painter.text(
+                title_painter.text(
                     rect.left_center() + vec2(TITLE_INSET, 0.0),
                     Align2::LEFT_CENTER,
                     title,
@@ -207,15 +241,21 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
                     title_col,
                 );
             }
-            // Hairline divider on the side facing the body.
+            // Hairline divider painted at the MIDPOINT of the flex
+            // gap — `TITLE_BODY_GAP_HALF` outside the title rect's
+            // body-facing edge — so it gets equal padding on both
+            // sides (title-to-divider + divider-to-body). Drawn
+            // with the unclipped painter so it isn't culled by
+            // `rect`.
             let y = match title_side {
-                TitleSide::Top => rect.bottom().round() + 0.5,
-                _ => rect.top().round() - 0.5,
+                TitleSide::Top => (rect.bottom() + TITLE_BODY_GAP_HALF).round() + 0.5,
+                _ => (rect.top() - TITLE_BODY_GAP_HALF).round() - 0.5,
             };
-            painter.hline(rect.x_range(), y, Stroke::new(1.0, theme.border_subtle));
+            let x_range = (rect.left() + DIVIDER_INSET)..=(rect.right() - DIVIDER_INSET);
+            painter.hline(x_range, y, Stroke::new(1.0, theme.border_subtle));
         }
         TitleSide::Left | TitleSide::Right => {
-            let galley = painter.layout_no_wrap(title.to_string(), font, title_col);
+            let galley = title_painter.layout_no_wrap(title.to_string(), font, title_col);
             let g = galley.size();
             let cx = rect.center().x;
             // Matches `pane::title::paint_pane_title`'s convention so
@@ -244,12 +284,15 @@ fn paint_title(ui: &mut Ui, rect: egui::Rect, title: &str, anchor: PaneAnchor, a
             };
             let mut shape = TextShape::new(text_pos, galley, title_col);
             shape.angle = angle;
-            painter.add(shape);
+            title_painter.add(shape);
+            // Hairline divider painted at the MIDPOINT of the flex
+            // gap (see horizontal-strip branch for rationale).
             let x = match title_side {
-                TitleSide::Left => rect.right().round() + 0.5,
-                _ => rect.left().round() - 0.5,
+                TitleSide::Left => (rect.right() + TITLE_BODY_GAP_HALF).round() + 0.5,
+                _ => (rect.left() - TITLE_BODY_GAP_HALF).round() - 0.5,
             };
-            painter.vline(x, rect.y_range(), Stroke::new(1.0, theme.border_subtle));
+            let y_range = (rect.top() + DIVIDER_INSET)..=(rect.bottom() - DIVIDER_INSET);
+            painter.vline(x, y_range, Stroke::new(1.0, theme.border_subtle));
         }
     }
 }
