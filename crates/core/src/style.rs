@@ -881,9 +881,18 @@ pub fn scramble_text(
     active: bool,
 ) -> String {
     /// Staggered delay between adjacent characters' lock times.
-    const STAGGER: f64 = 0.07;
-    /// Minimum scramble duration for the leftmost character.
-    const MIN_DUR: f64 = 0.42;
+    /// `0.07` was the frostcore default, but with `Pane2`'s
+    /// per-section staggered fade-in landing the last container at
+    /// ~0.81 s, the first container's cipher finished too early —
+    /// most letters had already locked by the time the user could
+    /// see all the containers. Bumped to `0.10` so the per-letter
+    /// stagger lingers and reads as ongoing decoding when the
+    /// later containers arrive.
+    const STAGGER: f64 = 0.10;
+    /// Minimum scramble duration for the leftmost character. Bumped
+    /// from `0.42` for the same "breathing room" reason — see
+    /// `STAGGER`.
+    const MIN_DUR: f64 = 0.65;
 
     let now = ctx.input(|i| i.time);
     let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9);

@@ -229,6 +229,43 @@ impl Normal {
         let total_gap = TITLE_BODY_GAP_HALF * 2.0 * openness;
         let visible_body_main = openness * full_body_main;
 
+        // ── Per-section staggered fade-in (verbatim port of
+        //    `frostcore::PaneBuilder::section_with`) ──
+        //
+        // Look up the parent Pane2's id via the global "active
+        // pane" pointer (Normal's own `pane_id` field is the
+        // container's body-open id, NOT Pane2's id, so we can't
+        // use it for the stagger lookup). Pane2::show populates
+        // `frost_pane_open_elapsed` and resets
+        // `frost_pane_section_idx` to 0 on every frame; we
+        // post-increment to claim THIS container's index.
+        const STAGGER_BASE: f32 = 0.18;
+        const FADE_BASE: f32 = 0.45;
+        let stagger_opacity: f32 = {
+            let theme_now = style::theme();
+            let scale = theme_now.pane_fade_scale.max(0.01);
+            let stagger = STAGGER_BASE * scale;
+            let fade = FADE_BASE * scale;
+            ui.ctx().data_mut(|d| {
+                let pane2_id: Id = d
+                    .get_temp::<Id>(pane::active_pane_key())
+                    .unwrap_or(pane_id);
+                let elapsed: f32 = d
+                    .get_temp(pane2_id.with("frost_pane_open_elapsed"))
+                    .unwrap_or(99.0);
+                let idx_key = pane2_id.with("frost_pane_section_idx");
+                let idx: u32 = d.get_temp(idx_key).unwrap_or(0);
+                d.insert_temp(idx_key, idx + 1);
+                let start = (idx as f32) * stagger;
+                let raw = ((elapsed - start) / fade).clamp(0.0, 1.0);
+                raw * raw * (3.0 - 2.0 * raw) // smoothstep
+            })
+        };
+        let prev_opacity = ui.opacity();
+        if stagger_opacity < 1.0 {
+            ui.multiply_opacity(stagger_opacity);
+        }
+
         let frame = self.theme_frame();
         frame.show(ui, |ui| {
             // GAME-style banner placeholder, set AFTER the layout is
@@ -439,6 +476,9 @@ impl Normal {
             };
             paint_corner_ticks(ui, used_outer, accent, title_side, openness);
         });
+        // Restore the parent ui's opacity so subsequent containers
+        // in the same body callback start from a clean baseline.
+        ui.set_opacity(prev_opacity);
     }
 
     /// Same recipe as `frostcore::widgets::foldable::section_tracked`'s
@@ -886,14 +926,21 @@ fn paint_floating_icon(
     let _ = icon_rect;
     // Render on `Order::Foreground` so the icon sits above ribbon
     // buttons (`Order::Middle`) and the pane chrome
-    // (`Order::Background`).
+    // (`Order::Background`). Foreground-layer painters do NOT
+    // inherit the parent ui's opacity, so during the stagger fade
+    // the icon would otherwise pop in at full alpha while the
+    // container chrome was still fading. Mirror the parent's
+    // opacity onto this layer's painter so the icon fades with
+    // its container.
     let layer_id = egui::LayerId::new(
         egui::Order::Foreground,
         ui.id().with("frost_floating_icon_layer"),
     );
+    let parent_opacity = ui.opacity();
     match icon_src {
         Icon::Name(name) => {
-            let p = ui.ctx().layer_painter(layer_id);
+            let mut p = ui.ctx().layer_painter(layer_id);
+            p.set_opacity(parent_opacity);
             crate::icons::paint_icon(&p, icon_pos, icon_align, name, size, title_col);
         }
         Icon::Svg(_) => {
@@ -903,6 +950,7 @@ fn paint_floating_icon(
                     .max_rect(icon_rect)
                     .layout(Layout::default()),
             );
+            child.set_opacity(parent_opacity);
             crate::icons::paint_section_icon(
                 &mut child,
                 icon_pos,

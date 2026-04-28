@@ -74,6 +74,16 @@ pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
     ctx.animate_bool_with_time(pane_id.with("body_open").with("anim"), open, BODY_ANIMATION_TIME)
 }
 
+/// Shared ctx-data key that points to the **currently active**
+/// `Pane2`'s id. Pane2 writes this at the top of `show` so children
+/// (e.g. `Normal`) can look up their parent pane's stagger state
+/// without needing the pane id wired through their constructors.
+/// Multiple panes' bodies run sequentially within a frame so the
+/// pointer is well-defined while any one body callback runs.
+pub fn active_pane_key() -> Id {
+    Id::new("frost_active_pane_id")
+}
+
 /// Toggle the pane's body open state. Called from the container's
 /// title-strip click handler.
 pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
@@ -141,6 +151,49 @@ impl Pane2 {
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
         let cross_outer = PANE_OUTER_CROSS;
+
+        // ── Per-pane staggered fade-in clock (port of frostcore's
+        //    `PaneBuilder::pane_open_elapsed`) ──
+        //
+        // Tracks elapsed seconds since this pane became visible.
+        // The `cumulative_pass_nr + 1 < frame_now` check detects
+        // a paint gap (= the pane was hidden last frame, e.g.
+        // user just clicked its ribbon button) and resets the
+        // clock to 0. Stored under `self.id.with(...)` so each
+        // pane has its own independent timer.
+        let pane_open_elapsed: f32 = {
+            let frame_key = self.id.with("frost_pane_anim_frame");
+            let state_key = self.id.with("frost_pane_anim_elapsed");
+            let frame_now = ctx.cumulative_pass_nr();
+            let last_frame: u64 = ctx.data(|d| d.get_temp(frame_key)).unwrap_or(0);
+            let mut elapsed: f32 = ctx.data(|d| d.get_temp(state_key)).unwrap_or(99.0);
+            if last_frame + 1 < frame_now {
+                elapsed = 0.0;
+            }
+            let dt = ctx.input(|i| i.unstable_dt).max(0.0);
+            elapsed += dt;
+            ctx.data_mut(|d| {
+                d.insert_temp(state_key, elapsed);
+                d.insert_temp(frame_key, frame_now);
+            });
+            // Repaint while any reasonably-staged section is still
+            // animating in (~12 sections × 0.18 stagger + 0.45 fade
+            // ≈ 2.6 s — keep some headroom).
+            if elapsed < 3.0 {
+                ctx.request_repaint();
+            }
+            elapsed
+        };
+        // Publish the active pane's id PLUS its current elapsed
+        // and a fresh `section_idx = 0` counter under that id.
+        // The active-pane pointer lives at a single global key so
+        // `Normal::show` (whose own `pane_id` field is the
+        // CONTAINER's id, not Pane2's) can find its parent pane.
+        ctx.data_mut(|d| {
+            d.insert_temp(active_pane_key(), self.id);
+            d.insert_temp(self.id.with("frost_pane_open_elapsed"), pane_open_elapsed);
+            d.insert_temp(self.id.with("frost_pane_section_idx"), 0u32);
+        });
 
         // Compute pane main from the body's animation state in
         // THIS frame. Both `Pane2` and `Normal` call
