@@ -474,7 +474,7 @@ impl Normal {
                     egui::pos2(r.right() + pad.right as f32, r.bottom() + pad.bottom as f32),
                 )
             };
-            paint_corner_ticks(ui, used_outer, accent, title_side, openness);
+            paint_corner_ticks(ui, used_outer, accent, title_side, openness, pane_id);
         });
         // Restore the parent ui's opacity so subsequent containers
         // in the same body callback start from a clean baseline.
@@ -1044,12 +1044,20 @@ fn paint_chevron_h(
 /// * `ease_out_back` produces a small overshoot past rest before
 ///   settling, plus a fade-in driven by the same `snap_t` so a
 ///   collapsed container doesn't have ticks "floating" outside it.
+// Per-container stable id passed in as `container_id`. `ui.id()`
+// inside the function is the Frame's content_ui id which collapses
+// to `parent.with("child")` — the SAME id for every sibling Frame
+// in the same parent — so we can't key per-container snap state on
+// it. The caller passes the Normal's own `pane_id` (= the
+// container's `cid`, unique per stack slot) and we key state under
+// that.
 fn paint_corner_ticks(
     ui: &mut Ui,
     outer_rect: egui::Rect,
     accent: Color32,
     title_side: TitleSide,
     openness: f32,
+    container_id: Id,
 ) {
     let theme = style::theme();
     let tick_len = theme.section_corner_ticks;
@@ -1057,35 +1065,70 @@ fn paint_corner_ticks(
         return;
     }
     let rest_inset = theme.section_corner_ticks_inset;
-    // Manual `time-since-last-appearance` clock. Resets every time
-    // the pane is shown again — detected via a "last paint gap":
-    // when a Pane is closed it stops painting, so on the next
-    // open the elapsed-since-last-paint exceeds `GAP_THRESHOLD`
-    // and we reset the snap clock. Without this, the timestamp
-    // would be stored once and the snap would only fire on first
-    // app start.
+    // Snap-in animation parameters. The snap clock starts only
+    // when `ui.opacity() >= 0.95` — i.e. AFTER the per-section
+    // staggered fade-in has essentially finished — so the user
+    // actually sees the brackets fly in instead of having the
+    // animation play out invisibly under the fade. Same gating
+    // pattern the cipher uses.
     const APPEAR_DUR: f32 = 0.5;
     const START_OFFSET: f32 = 10.0;
     const SNAP_RATIO: f32 = 1.2;
     const GAP_THRESHOLD: f64 = 0.2;
-    let snap_id = ui.id().with("frost_corner_snap");
+    // Gate at `1.0 - ε` (not `0.95`) so the snap starts only AFTER
+    // this container's stagger fade has fully completed, not 5 %
+    // before the end. `stagger_opacity` reaches exactly `1.0` at
+    // the end of the fade (smoothstep at `t = 1.0` is `1.0`), and
+    // `multiply_opacity` is skipped when `stagger_opacity == 1.0`
+    // → `ui.opacity()` jumps to exactly `1.0` — `0.999` is just
+    // a float-tolerance cushion against rounding.
+    const OPACITY_GATE: f32 = 0.999;
+    /// Extra delay between the fade completing and the snap
+    /// starting — the brackets sit motionless at their start
+    /// position for this long after the container becomes fully
+    /// opaque, then fly in. Gives the eye a beat to register
+    /// "container has arrived" before the next motion starts.
+    const DELAY_AFTER_FADE: f64 = 0.25;
+    let snap_id = container_id.with("frost_corner_snap");
     let last_paint_id = snap_id.with("last_paint");
     let first_seen_id = snap_id.with("first_seen");
     let now = ui.ctx().input(|i| i.time);
-    let first_seen: f64 = ui.ctx().data_mut(|d| {
+    let opacity_active = ui.opacity() >= OPACITY_GATE;
+    // `first_seen` semantics: `Some(t)` once opacity has been seen
+    // ≥ `OPACITY_GATE` at least once since the last reappearance.
+    // `None` while we're still mid-fade.
+    let first_seen: Option<f64> = ui.ctx().data_mut(|d| {
         let just_reappeared = match d.get_temp::<f64>(last_paint_id) {
             Some(t) => (now - t) > GAP_THRESHOLD,
             None => true,
         };
         d.insert_temp(last_paint_id, now);
         if just_reappeared {
-            d.insert_temp(first_seen_id, now);
-            now
-        } else {
-            d.get_temp::<f64>(first_seen_id).unwrap_or(now)
+            // Pane reopened — clear the recorded first_seen so the
+            // snap re-fires when the fade-in completes again.
+            d.remove::<f64>(first_seen_id);
+        }
+        let existing = d.get_temp::<f64>(first_seen_id);
+        match (existing, opacity_active) {
+            (Some(t), _) => Some(t),
+            (None, true) => {
+                // Bias `first_seen` into the future by
+                // `DELAY_AFTER_FADE` so `appear = now - first_seen`
+                // stays negative (clamped to 0) for that delay,
+                // pinning brackets at the start position. The
+                // snap then kicks off naturally once `now` catches
+                // up with the biased first_seen.
+                let biased = now + DELAY_AFTER_FADE;
+                d.insert_temp(first_seen_id, biased);
+                Some(biased)
+            }
+            (None, false) => None,
         }
     });
-    let appear = (((now - first_seen) as f32) / APPEAR_DUR).clamp(0.0, 1.0);
+    let appear = match first_seen {
+        Some(t) => (((now - t) as f32) / APPEAR_DUR).clamp(0.0, 1.0),
+        None => 0.0,
+    };
     if appear < 1.0 {
         ui.ctx().request_repaint();
     }
@@ -1140,7 +1183,10 @@ fn paint_corner_ticks(
         TitleSide::Left => (contrast_col, accent_col, contrast_col, accent_col),
         TitleSide::Right => (accent_col, contrast_col, accent_col, contrast_col),
     };
-    let stroke = |c: Color32| Stroke::new(1.0, c);
+    // Doubled-thickness stroke (was 1.0) so the corner ticks read
+    // as bold marks rather than hairlines — easier to spot and
+    // gives the GAME chrome more visual weight.
+    let stroke = |c: Color32| Stroke::new(2.0, c);
 
     let shapes: [egui::Shape; 8] = [
         // ┌ top-left
