@@ -1155,7 +1155,11 @@ fn paint_corner_ticks(
     // animation play out invisibly under the fade. Same gating
     // pattern the cipher uses.
     const APPEAR_DUR: f32 = 0.5;
-    const START_OFFSET: f32 = 10.0;
+    // Brackets fly in from this many pixels OUTSIDE the rest position.
+    // Reduced 10 → 7 so a fully-collapsed container's corner ticks
+    // sit 3 px closer to the frame edge (the user complained the old
+    // value left them visibly floating outside the container).
+    const START_OFFSET: f32 = 7.0;
     const SNAP_RATIO: f32 = 1.2;
     const GAP_THRESHOLD: f64 = 0.2;
     // Gate at `1.0 - ε` (not `0.95`) so the snap starts only AFTER
@@ -1222,8 +1226,17 @@ fn paint_corner_ticks(
     let inset = rest_inset + extra;
     let r = outer_rect.shrink(inset);
 
-    let snap_low = |v: f32| v.round() + 0.5;
-    let snap_high = |v: f32| v.round() - 0.5;
+    // Snap the L-bracket corner positions for a 2-px stroke. The
+    // line is drawn centred on `(snap_low|snap_high)(edge)`; with
+    // `width = 2.0` the stroke straddles ±1 px around the centre.
+    // Using `+ 0.5 / - 0.5` (the right offsets for a 1-px line)
+    // pushed half the stroke OUTSIDE the rect on the min edges
+    // (left / top) while keeping max edges flush — the visible 1-px
+    // overflow on left + bottom. `+ 1.0 / - 1.0` centres the stroke
+    // 1 px inside the rounded edge so the full 2-px bar sits inside
+    // the rect on every side.
+    let snap_low = |v: f32| v.round() + 1.0;
+    let snap_high = |v: f32| v.round() - 1.0;
     let lx = snap_low(r.min.x);
     let ty = snap_low(r.min.y);
     let rx = snap_high(r.max.x);
@@ -1262,14 +1275,28 @@ fn paint_corner_ticks(
         contrast_col.b(),
         contrast_alpha,
     );
-    // Pick the title-side colour (sits on the banner →
-    // contrast/white) vs the body-side colour (sits on the panel →
-    // accent with breathing alpha).
+    // Body-side bracket colour LERPS from contrast (folded) to
+    // accent (unfolded). Folded → all four corners paint in the
+    // contrast colour (the "other" colour against the accent panel).
+    // As the body unfolds, the body-side pair fades to the accent.
+    // Title-side ticks stay contrast throughout (they sit on the
+    // accent banner regardless of fold state, so contrast is the
+    // only readable choice there).
+    let lerp_u8 = |a: u8, b: u8, t: f32| {
+        ((a as f32) * (1.0 - t) + (b as f32) * t).round() as u8
+    };
+    let body_side_col = Color32::from_rgba_unmultiplied(
+        lerp_u8(contrast_col.r(), accent_col.r(), openness),
+        lerp_u8(contrast_col.g(), accent_col.g(), openness),
+        lerp_u8(contrast_col.b(), accent_col.b(), openness),
+        lerp_u8(contrast_col.a(), accent_col.a(), openness),
+    );
+    // Pick which corners are "title-side" vs "body-side" per anchor.
     let (tl, tr, bl, br) = match title_side {
-        TitleSide::Top => (contrast_col, contrast_col, accent_col, accent_col),
-        TitleSide::Bottom => (accent_col, accent_col, contrast_col, contrast_col),
-        TitleSide::Left => (contrast_col, accent_col, contrast_col, accent_col),
-        TitleSide::Right => (accent_col, contrast_col, accent_col, contrast_col),
+        TitleSide::Top => (contrast_col, contrast_col, body_side_col, body_side_col),
+        TitleSide::Bottom => (body_side_col, body_side_col, contrast_col, contrast_col),
+        TitleSide::Left => (contrast_col, body_side_col, contrast_col, body_side_col),
+        TitleSide::Right => (body_side_col, contrast_col, body_side_col, contrast_col),
     };
     // Doubled-thickness stroke (was 1.0) so the corner ticks read
     // as bold marks rather than hairlines — easier to spot and
