@@ -559,8 +559,25 @@ fn ui_system(
                     // fit without overflowing the pane chrome.
                     const CONTAINERS_PER_PANE: usize = 3;
                     const BODY_MAIN: f32 = 50.0;
-                    for i in 0..CONTAINERS_PER_PANE {
-                        let cid = egui::Id::new((button_id, "container", i));
+                    // Build the default id list in declaration order,
+                    // then ask the pane for the user's persisted
+                    // drag-reorder order — which preserves any drag
+                    // commits across runs and falls back to defaults
+                    // for new ids.
+                    let pane_egui_id = egui::Id::new(button_id);
+                    let defaults: Vec<egui::Id> = (0..CONTAINERS_PER_PANE)
+                        .map(|i| egui::Id::new((button_id, "container", i)))
+                        .collect();
+                    let order = corekit::pane::section_order_for(
+                        body_ui.ctx(),
+                        pane_egui_id,
+                        &defaults,
+                    );
+                    for cid in order {
+                        // Recover the original index for the title /
+                        // text-input key so renaming after a reorder
+                        // still maps each id back to "container N".
+                        let i = defaults.iter().position(|d| *d == cid).unwrap_or(0);
                         let title = format!("{} {}", label, i + 1);
                         Normal::new(title, anchor, accent_col, cid)
                             .icon("settings")

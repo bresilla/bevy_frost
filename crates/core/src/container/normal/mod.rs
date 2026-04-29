@@ -266,8 +266,58 @@ impl Normal {
             ui.multiply_opacity(stagger_opacity);
         }
 
+        // Drag-lift: if this container IS the one being dragged,
+        // bail out entirely — no layout slot, no paint. The other
+        // containers below collapse upward to fill the gap, and
+        // the floating preview painted by `Pane2`'s finalize
+        // shows what's being held. Matches frostcore's
+        // `section_with` early-return.
+        let active = pane::active_drag(ui.ctx());
+        let is_dragging_self = active
+            .and_then(|(_, s)| s.item)
+            .map(|id| id == pane_id)
+            .unwrap_or(false);
+        if is_dragging_self {
+            ui.set_opacity(prev_opacity);
+            return;
+        }
+
+        // Inline ghost gap: if the cursor's target slot equals
+        // THIS container's position in the non-dragged sequence,
+        // allocate + paint a ghost rect of the dragged size
+        // BEFORE rendering. Pushes this container (and the rest)
+        // along the stack axis so the drop slot is visible.
+        if let Some((parent_pane_id, drag_state)) = active {
+            if let (Some(dragged_id), Some(cursor)) =
+                (drag_state.item, drag_state.cursor)
+            {
+                let snap = pane::snapshot(ui.ctx(), parent_pane_id);
+                let horizontal_stack = !title_side.is_horizontal_strip();
+                let cursor_axis =
+                    if horizontal_stack { cursor.x } else { cursor.y };
+                let target_idx = pane::compute_target(
+                    &snap,
+                    dragged_id,
+                    cursor_axis,
+                    horizontal_stack,
+                );
+                let cur_idx =
+                    pane::current_cache(ui.ctx(), parent_pane_id).len();
+                if cur_idx == target_idx {
+                    if let Some(size) = pane::dragged_size(&snap, dragged_id) {
+                        pane::paint_ghost_gap_inline(
+                            ui,
+                            size,
+                            accent,
+                            horizontal_stack,
+                        );
+                    }
+                }
+            }
+        }
+
         let frame = self.theme_frame();
-        frame.show(ui, |ui| {
+        let frame_response = frame.show(ui, |ui| {
             // GAME-style banner placeholder, set AFTER the layout is
             // measured so we know where the title strip ended up.
             let banner_idx = if banner_filled {
@@ -311,12 +361,32 @@ impl Normal {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
             let render_title = |ui: &mut Ui| {
-                let (rect, resp) = ui.allocate_exact_size(title_size, Sense::click());
+                // Title strip is also the drag handle: `click_and_drag`
+                // sense reports both — `clicked()` toggles the body
+                // open state, `drag_started()` lifts this container
+                // for reorder via the parent pane's drag machine.
+                let (rect, resp) =
+                    ui.allocate_exact_size(title_size, Sense::click_and_drag());
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
                 if resp.clicked() {
                     pane::toggle_body(ui.ctx(), pane_id);
+                }
+                if resp.drag_started() {
+                    if let Some(active_pane_id) = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<Id>(pane::active_pane_key()))
+                    {
+                        pane::set_drag(
+                            ui.ctx(),
+                            active_pane_id,
+                            pane::DragState {
+                                item: Some(pane_id),
+                                cursor: ui.ctx().pointer_interact_pos(),
+                            },
+                        );
+                    }
                 }
                 paint_title(ui, rect, &title_text, anchor, accent, open, openness, icon);
             };
@@ -479,6 +549,19 @@ impl Normal {
         // Restore the parent ui's opacity so subsequent containers
         // in the same body callback start from a clean baseline.
         ui.set_opacity(prev_opacity);
+
+        // Publish the rendered Frame's outer rect to the parent
+        // pane's per-frame cache. `Pane2`'s finalize builds next
+        // frame's snapshot from this (with the dragged
+        // container's prev rect carried forward).
+        if let Some((active_pane_id, _)) = active {
+            pane::push_rect(
+                ui.ctx(),
+                active_pane_id,
+                pane_id,
+                frame_response.response.rect,
+            );
+        }
     }
 
     /// Same recipe as `frostcore::widgets::foldable::section_tracked`'s

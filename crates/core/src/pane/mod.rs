@@ -16,10 +16,17 @@
 //! * `mod.rs` (this file) — `Pane2` builder + render entry point.
 
 mod anchor;
+mod drag;
 mod layout;
 mod title;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
+pub use drag::{
+    active_drag, begin_frame as begin_drag_frame, clear_drag, compute_target,
+    current_cache, dragged_size, finalize_snapshot, paint_drag_preview,
+    paint_ghost_gap_inline, push_rect, section_order_for, set_drag,
+    set_section_order, snapshot, state as drag_state, DragState, RectEntry,
+};
 
 use egui::{vec2, Align, Color32, Id, Layout, Sense, Stroke};
 
@@ -407,7 +414,123 @@ impl Pane2 {
             // layouts handle the visual placement automatically —
             // `bottom_up` puts first-allocated at the BOTTOM, etc.
             paint_title_strip(ui);
+            // Reset per-frame drag bookkeeping (current cache +
+            // section idx counter). Snapshot from prev frame
+            // stays available for size lookups.
+            drag::begin_frame(ui.ctx(), id);
+
+            // Update cursor BEFORE body runs so `Normal::show`'s
+            // target_idx computation sees this frame's cursor.
+            let pre_body_drag = drag::state(ui.ctx(), id);
+            if let (Some(item), Some(pos)) =
+                (pre_body_drag.item, ui.ctx().pointer_interact_pos())
+            {
+                drag::set_drag(
+                    ui.ctx(),
+                    id,
+                    drag::DragState {
+                        item: Some(item),
+                        cursor: Some(pos),
+                    },
+                );
+            }
+
             body(ui);
+
+            // Stack axis: matches `body` layout direction —
+            // BottomRail / TopRail panes stack vertically (Y),
+            // LeftRail / RightRail stack horizontally (X).
+            let horizontal_stack = !title_side.is_horizontal_strip();
+
+            // ── Trailing ghost gap ──
+            //
+            // If the cursor's target slot is AFTER the last
+            // rendered container (target == total non-dragged),
+            // paint the ghost gap inline at the end of the body
+            // layout. The inline gaps inside `Normal::show`
+            // handle every other position.
+            let drag_state = drag::state(ui.ctx(), id);
+            if let Some(dragged_id) = drag_state.item {
+                let snap = drag::snapshot(ui.ctx(), id);
+                let total = drag::current_cache(ui.ctx(), id).len();
+                let cursor = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .or(drag_state.cursor);
+                if let Some(c) = cursor {
+                    let cursor_axis = if horizontal_stack { c.x } else { c.y };
+                    let target_idx = drag::compute_target(
+                        &snap,
+                        dragged_id,
+                        cursor_axis,
+                        horizontal_stack,
+                    );
+                    if target_idx >= total {
+                        if let Some(size) =
+                            drag::dragged_size(&snap, dragged_id)
+                        {
+                            drag::paint_ghost_gap_inline(
+                                ui,
+                                size,
+                                accent,
+                                horizontal_stack,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // ── Build snapshot for next frame ──
+            //
+            // current cache (this frame's renders) + dragged
+            // entry carried forward from prev snapshot.
+            drag::finalize_snapshot(ui.ctx(), id);
+
+            // ── Floating preview + cursor + release commit ──
+            if let Some(dragged_id) = drag_state.item {
+                let snap = drag::snapshot(ui.ctx(), id);
+                let cursor = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .or(drag_state.cursor);
+                if let Some(c) = cursor {
+                    drag::paint_drag_preview(
+                        ui.ctx(),
+                        id,
+                        &snap,
+                        dragged_id,
+                        c,
+                        accent,
+                    );
+                    ui.ctx()
+                        .set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+
+                if ui.ctx().input(|i| i.pointer.any_released()) {
+                    if let Some(c) = cursor {
+                        let cursor_axis =
+                            if horizontal_stack { c.x } else { c.y };
+                        let target_idx = drag::compute_target(
+                            &snap,
+                            dragged_id,
+                            cursor_axis,
+                            horizontal_stack,
+                        );
+                        let defaults: Vec<Id> =
+                            snap.iter().map(|e| e.id).collect();
+                        let mut order = drag::section_order_for(
+                            ui.ctx(),
+                            id,
+                            &defaults,
+                        );
+                        order.retain(|cid| *cid != dragged_id);
+                        let clamped = target_idx.min(order.len());
+                        order.insert(clamped, dragged_id);
+                        drag::set_section_order(ui.ctx(), id, order);
+                    }
+                    drag::clear_drag(ui.ctx(), id);
+                }
+            }
         });
     }
 }
