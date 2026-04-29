@@ -508,7 +508,15 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // light themes pull bright accents back into a readable band.
     // Conversion goes through HSL so only lightness changes — the
     // hue and saturation the user picked stay intact.
-    let accent_col = adapt_accent_to_mode(accent.0, th.is_light);
+    //
+    // Gated by `Theme::pastel_accent`: when off, the user's raw
+    // accent flows through unchanged so saturated neon picks stay
+    // pixel-for-pixel.
+    let accent_col = if th.pastel_accent {
+        adapt_accent_to_mode(accent.0, th.is_light)
+    } else {
+        accent.0
+    };
     let body_w  = font_weight();
     let title_w = title_weight();
     let body_u8  = body_w.as_u8();
@@ -1553,6 +1561,19 @@ pub struct Theme {
     /// Stroke width on the drag-ghost rect's accent border. PRO
     /// `1.5`, GAME `0.0` (no stroke — fill alone reads).
     pub ghost_stroke_width:  f32,
+
+    // ── Accent adaptation ──
+    /// `true` → run [`adapt_accent_to_mode`] on the user's raw accent
+    /// before it propagates through every surface paint. The transform
+    /// pulls accents into the readable lightness band for the active
+    /// mode (whiter accents get *less* luminance, darker ones get
+    /// *more*) — a "pastel" pull that keeps text readable on accent
+    /// fills regardless of the user's pick. `false` → use the raw
+    /// accent verbatim, no luminance / saturation tweaks. Default
+    /// `true` for both built-in profiles; flip to `false` (e.g.
+    /// `Theme { pastel_accent: false, ..theme_pro(Mode::Dark) }`) to
+    /// honour saturated neon accents pixel-for-pixel.
+    pub pastel_accent: bool,
 }
 
 /// PRO Light surface palette — paper-tinted neutrals matching
@@ -1689,6 +1710,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         snarl_pin_width:  1.0,
         ghost_fill_alpha:   28,
         ghost_stroke_width: 1.5,
+        pastel_accent: true,
     }
 }
 
@@ -1882,6 +1904,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         snarl_pin_width:  0.0,
         ghost_fill_alpha:   90,
         ghost_stroke_width: 0.0,
+        pastel_accent: true,
     }
 }
 
@@ -2146,19 +2169,22 @@ pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Colo
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    // Wide honoured zone in [0.40 .. 0.60] — every chromatic accent
-    // (yellow at 0.50, mid-blue at 0.30+, vivid red at 0.50) passes
-    // through unchanged. Only near-white / near-black accents leave
-    // the zone and get pulled.
-    // Hard cap / floor. Soft curves left yellow (HSL L 0.50) at a
-    // luma where white text on it produces a visible AA fringe.
-    // Going hard with `cap = 0.40` in Dark mode forces yellow into
-    // mustard with high enough contrast vs white that the fringe
-    // disappears. Light mode mirror.
+    // Hard band, clamped on BOTH ends per mode — so neither pure
+    // black nor pure white can slip through. Without the second
+    // bound a Dark-mode pure-black accent stayed at L = 0 (invisible
+    // on the dark panel) and a Light-mode pure-white accent stayed
+    // at L = 1 (invisible on white). The mid-range chromatic
+    // accents (yellow ≈ 0.50, mid-blue ≈ 0.30) still get yanked
+    // toward the same target the previous single-cap did, so the
+    // existing "yellow → mustard on Dark" behaviour is preserved.
+    //
+    // Pure neutrals (S = 0) end up as a flat grey at the clamped L
+    // — black on Dark becomes a dim grey ≈ #383838, white on Light
+    // becomes a soft grey ≈ #C7C7C7 — no longer invisible.
     let new_l = if is_light {
-        if l < 0.60 { 0.60 } else { l }
+        l.clamp(0.60, 0.78)
     } else {
-        if l > 0.40 { 0.40 } else { l }
+        l.clamp(0.22, 0.40)
     };
     // BOOST saturation by 12 % so colours come out more vivid, not
     // washed. Neutrals (grey, white, black) have ~0 saturation so

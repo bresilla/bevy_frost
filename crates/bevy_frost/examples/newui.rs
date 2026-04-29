@@ -47,8 +47,9 @@ const PANE_B_S: &str = "newui_pane_BS";
 const PANE_B_M: &str = "newui_pane_BM";
 const PANE_B_E: &str = "newui_pane_BE";
 
-const ACTION_THEME: &str = "newui_action_theme";
-const ACTION_MODE:  &str = "newui_action_mode";
+const ACTION_THEME:  &str = "newui_action_theme";
+const ACTION_MODE:   &str = "newui_action_mode";
+const ACTION_PASTEL: &str = "newui_action_pastel";
 
 const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
     (RIBBON_LEFT,   PANE_L_S, PaneAnchor::LeftRail(RailZone::Start),   "L START"),
@@ -117,6 +118,9 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     RibbonItem { id: ACTION_MODE,  ribbon: RIBBON_TOP, cluster: RibbonCluster::Middle, slot: 2,
                  glyph: RibbonGlyph::Text("☼"), tooltip: "Cycle mode (Dark ↔ Light)",
                  child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: ACTION_PASTEL, ribbon: RIBBON_TOP, cluster: RibbonCluster::Middle, slot: 3,
+                 glyph: RibbonGlyph::Text("◐"), tooltip: "Toggle pastel accent",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
 ];
 
 // ─── Theme + scene state ───────────────────────────────────────────
@@ -128,6 +132,14 @@ impl Default for ThemeFamily { fn default() -> Self { Self(0) } }
 #[derive(Resource, Clone, Copy, Debug)]
 struct ThemeModeRes(u8);
 impl Default for ThemeModeRes { fn default() -> Self { Self(0) } }
+
+/// Toggles `Theme::pastel_accent`. `true` (default) → accents flow
+/// through `adapt_accent_to_mode` (whiter accents pulled to less
+/// luminance, darker ones lifted) — the readable-on-any-surface
+/// pastel pull. `false` → raw user-picked accent, neon-saturated.
+#[derive(Resource, Clone, Copy, Debug)]
+struct PastelToggle(bool);
+impl Default for PastelToggle { fn default() -> Self { Self(true) } }
 
 /// Marker + per-cube data for the swatch cubes — clicking one
 /// repaints `AccentColor` and lifts the cube in the scene.
@@ -198,6 +210,7 @@ fn main() {
         .init_resource::<RibbonDrag>()
         .init_resource::<ThemeFamily>()
         .init_resource::<ThemeModeRes>()
+        .init_resource::<PastelToggle>()
         .init_resource::<SelectedSwatch>()
         .add_systems(Startup, setup_scene)
         .add_systems(Update, (pick_cube, update_swatch_selection))
@@ -445,6 +458,7 @@ fn ui_system(
     mut drag: ResMut<RibbonDrag>,
     mut family: ResMut<ThemeFamily>,
     mut mode: ResMut<ThemeModeRes>,
+    mut pastel: ResMut<PastelToggle>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
@@ -454,13 +468,14 @@ fn ui_system(
     // buttons (drawn by corekit's `draw_assembly`) and Pane2 read
     // from this same global, so PRO ↔ GAME cycles every visible
     // surface together.
-    let active_theme = match (family.0, mode.0) {
+    let mut active_theme = match (family.0, mode.0) {
         (0, 0) => corekit::style::theme_pro(Mode::Dark),
         (0, 1) => corekit::style::theme_pro(Mode::Light),
         (1, 0) => corekit::style::theme_game(Mode::Dark),
         (1, 1) => corekit::style::theme_game(Mode::Light),
         _      => corekit::style::theme_pro(Mode::Dark),
     };
+    active_theme.pastel_accent = pastel.0;
     corekit::style::set_theme(active_theme);
     corekit::style::apply_theme(ctx, *accent, *glass);
 
@@ -506,8 +521,14 @@ fn ui_system(
         }
     }
 
+    // Use the active (post-pastel-adapt) accent for every downstream
+    // paint. `apply_theme` writes this above; `Theme::pastel_accent`
+    // gates whether it differs from the raw `accent.0`. Reading the
+    // active value here means flipping the pastel toggle visibly
+    // re-tints the ribbons + panes, not just egui's built-in visuals.
+    let accent_col = corekit::style::active_accent();
     let clicks = draw_assembly(
-        ctx, accent.0, RIBBONS, RIBBON_ITEMS,
+        ctx, accent_col, RIBBONS, RIBBON_ITEMS,
         &mut open, &mut placement, &mut drag,
         |_| false,
     );
@@ -515,9 +536,9 @@ fn ui_system(
     for click in clicks {
         if click.item == ACTION_THEME { family.0 = (family.0 + 1) % 2; }
         else if click.item == ACTION_MODE { mode.0 = (mode.0 + 1) % 2; }
+        else if click.item == ACTION_PASTEL { pastel.0 = !pastel.0; }
     }
 
-    let accent_col = accent.0;
     let is_open = |id: &'static str| -> bool {
         let Some(item) = find_item(RIBBON_ITEMS, id) else { return false };
         let (rid, _, _) = placement.resolve(item);
