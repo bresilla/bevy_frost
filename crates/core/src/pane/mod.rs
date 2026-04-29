@@ -92,13 +92,30 @@ pub fn active_pane_key() -> Id {
 }
 
 /// Toggle the pane's body open state. Called from the container's
-/// title-strip click handler.
+/// title-strip click handler. Also bumps a per-pane "fold version"
+/// counter — animation effects that should retrigger on every fold
+/// or unfold (cipher decode, chromatic aberration, etc.) salt
+/// their state ids with this counter so each toggle starts a fresh
+/// cycle.
 pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
     let key = pane_id.with("body_open");
+    let ver_key = pane_id.with("body_fold_version");
     ctx.data_mut(|d| {
         let cur: bool = d.get_persisted(key).unwrap_or(true);
         d.insert_persisted(key, !cur);
+        let v: u64 = d.get_persisted(ver_key).unwrap_or(0);
+        d.insert_persisted(ver_key, v.wrapping_add(1));
     });
+}
+
+/// Read the per-pane fold-version counter. Bumped by
+/// [`toggle_body`] on every fold/unfold; widgets salt their
+/// animation state ids with it so each toggle re-triggers.
+pub fn fold_version(ctx: &egui::Context, pane_id: Id) -> u64 {
+    ctx.data_mut(|d| {
+        d.get_persisted::<u64>(pane_id.with("body_fold_version"))
+            .unwrap_or(0)
+    })
 }
 
 /// Inset from each screen edge: `EDGE_GAP + SIDE_BTN_SIZE +

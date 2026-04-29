@@ -54,16 +54,19 @@ pub(crate) fn paint_pane_title(
     };
     let font = egui::FontId::new(title_size, style::title_font_family());
     let title_uc = title.to_uppercase();
+    // Compute the scramble id up-front (always — even when
+    // `scramble_titles` is off) so the chromatic-aberration helper
+    // below can ask whether the cipher is currently running.
+    let session_id = id.with("pane2_title_session");
+    let session = style::appearance_session(ui.ctx(), session_id);
+    let scramble_id = session_id.with(session);
     let displayed = if theme.scramble_titles {
-        let session_id = id.with("pane2_title_session");
-        let session = style::appearance_session(ui.ctx(), session_id);
-        let scramble_id = session_id.with(session);
         let scrambled = style::scramble_text(ui.ctx(), scramble_id, &title_uc, true);
         // Same periodic single-letter glitch the container title
         // uses — keeps the pane title alive after its decode cycle.
         style::glitch_text(ui.ctx(), session_id.with("glitch"), &scrambled)
     } else {
-        title_uc
+        title_uc.clone()
     };
 
     let title_side = anchor.title_side();
@@ -72,17 +75,36 @@ pub(crate) fn paint_pane_title(
     let centred = anchor.is_middle();
 
     // ── 3. Title text paint ──
-    // Periodic chromatic-aberration ghosts (GAME only — gated on
-    // `theme.pane_title_chromatic_aberration`). A deterministic
-    // per-id timer fires every few seconds, ramping the offset
-    // 0→peak→0 over ~280 ms. We paint a red ghost shifted along the
-    // reading direction one way and a cyan ghost the other, then
-    // the main text on top — the overlap leaves clean coloured
-    // fringes only on the leading and trailing letter edges. PRO
-    // sets the flag to false, the helper short-circuits to 0.0,
-    // and this collapses to the original single-pass paint.
+    // Chromatic-aberration ghosts (gated on
+    // `theme.pane_title_chromatic_aberration`). Two contributing
+    // sources, taken as the MAX so they layer naturally:
+    //
+    //   • Periodic firing — `chromatic_aberration_offset` runs a
+    //     0→peak→0 triangular pulse every 5–13 s. Always on while
+    //     the flag is set.
+    //   • Cipher-driven — while the title's scramble cycle is still
+    //     decoding, paint a continuously pulsing offset so the
+    //     aberration reads as ON throughout the cipher rather than
+    //     just at random moments. Modulated by a fast sine for a
+    //     CRT-misregistration shimmer.
+    //
+    // PRO leaves the flag false → both branches collapse to 0.0.
     let aberration = if theme.pane_title_chromatic_aberration {
-        style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"))
+        let periodic =
+            style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"));
+        let cipher_offset = if theme.scramble_titles
+            && style::scramble_active(ui.ctx(), scramble_id, &title_uc)
+        {
+            const CIPHER_PEAK: f32 = 6.0;
+            let now = ui.ctx().input(|i| i.time) as f32;
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
+            let pulse = (now * 32.0).sin().abs();
+            CIPHER_PEAK * (0.55 + 0.45 * pulse)
+        } else {
+            0.0
+        };
+        periodic.max(cipher_offset)
     } else {
         0.0
     };
@@ -217,7 +239,32 @@ pub(crate) fn paint_pane_title(
             text_col.b(),
             alpha,
         );
+        // Every 3rd "ON" pulse, split the pip into red + cyan ghosts
+        // for a CRT-misregistration flash. Phase aligns with the
+        // 1 Hz blink (time.floor() ticks once per cycle).
+        let pulse_idx = time.floor() as i64;
+        let chromatic_pulse = on && pulse_idx.rem_euclid(3) == 0;
         let paint_pip = |r: Rect| {
+            if chromatic_pulse {
+                const CHROM_OFFSET: f32 = 2.0;
+                let chrom_red = Color32::from_rgba_unmultiplied(220, 60, 70, 200);
+                let chrom_cyan = Color32::from_rgba_unmultiplied(60, 220, 230, 200);
+                let (off_red, off_cyan) = if is_horizontal_strip {
+                    (egui::vec2(-CHROM_OFFSET, 0.0), egui::vec2(CHROM_OFFSET, 0.0))
+                } else {
+                    (egui::vec2(0.0, -CHROM_OFFSET), egui::vec2(0.0, CHROM_OFFSET))
+                };
+                ui.painter().rect_filled(
+                    r.translate(off_red),
+                    egui::CornerRadius::ZERO,
+                    chrom_red,
+                );
+                ui.painter().rect_filled(
+                    r.translate(off_cyan),
+                    egui::CornerRadius::ZERO,
+                    chrom_cyan,
+                );
+            }
             ui.painter()
                 .rect_filled(r, egui::CornerRadius::ZERO, pip_color);
         };

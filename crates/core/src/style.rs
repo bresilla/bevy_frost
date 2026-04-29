@@ -981,6 +981,38 @@ pub fn scramble_text(
     display
 }
 
+/// Whether the scramble cycle for `scramble_id` is still in progress
+/// for `current`. Mirrors the timing constants inside [`scramble_text`]
+/// so secondary effects — chromatic aberration ghosts, focus glows —
+/// can fire while the cipher is decoding without re-running the
+/// scramble themselves.
+///
+/// Returns `true` when the stored prev text differs from `current`
+/// (the scramble is about to start) or when elapsed is below the
+/// last-character lock time.
+pub fn scramble_active(
+    ctx: &egui::Context,
+    scramble_id: egui::Id,
+    current: &str,
+) -> bool {
+    // Keep these in sync with `scramble_text`.
+    const STAGGER: f64 = 0.10;
+    const MIN_DUR: f64 = 0.65;
+    let key_start = scramble_id.with("frost_scramble_start");
+    let key_prev = scramble_id.with("frost_scramble_prev");
+    let prev: Option<String> = ctx.data(|d| d.get_temp(key_prev));
+    if prev.as_deref() != Some(current) {
+        return true;
+    }
+    let now = ctx.input(|i| i.time);
+    let start: f64 = ctx
+        .data(|d| d.get_temp(key_start))
+        .unwrap_or(now);
+    let elapsed = now - start;
+    let total = MIN_DUR + (current.chars().count() as f64) * STAGGER;
+    elapsed < total
+}
+
 /// Periodic single-letter "glitch" overlay layered on top of the
 /// stabilised text. Once per `BUCKET_PERIOD` (5 s), a deterministic-
 /// random NON-whitespace character is replaced with a `SCRAMBLE_CHARS`

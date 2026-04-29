@@ -388,7 +388,7 @@ impl Normal {
                         );
                     }
                 }
-                paint_title(ui, rect, &title_text, anchor, accent, open, openness, icon);
+                paint_title(ui, rect, &title_text, anchor, accent, open, openness, icon, pane_id);
             };
 
             let render_body = |ui: &mut Ui, body: Box<dyn FnOnce(&mut Ui)>| {
@@ -644,6 +644,7 @@ fn paint_title(
     open: bool,
     openness: f32,
     icon: Option<Icon<'_>>,
+    pane_id: Id,
 ) {
     let theme = style::theme();
     let title_side = anchor.title_side();
@@ -672,14 +673,23 @@ fn paint_title(
     // SVG icons can't be inlined into a `LayoutJob`, so they fall
     // through to the floating-paint path even in PRO.
     let inline_icon = !theme.section_icon_at_end;
-    // GAME theme: scramble-decode the title each time the
-    // container reappears (matching the old `section_tracked`
-    // recipe). The session id bumps when the parent ui's visibility
-    // gaps, salting the scramble id so a fresh cycle plays.
+    // GAME theme: scramble-decode the title each time the container
+    // reappears (matching the old `section_tracked` recipe), AND
+    // every time the user folds / unfolds the container. The
+    // scramble id is salted with two values:
+    //   • `appearance_session(...)` — bumps when the title widget
+    //     was missing for a frame and reappeared (e.g. pane closed
+    //     and reopened).
+    //   • `pane::fold_version(pane_id)` — bumps inside `toggle_body`
+    //     on every fold / unfold click.
+    // Either one changing produces a fresh `scramble_id`, which
+    // makes `scramble_text` see no stored prev for this id and
+    // restart the decode cycle from t = 0.
     let displayed = if theme.scramble_titles {
         let session_id = ui.id().with(("frost_normal_title_session", title));
         let session = style::appearance_session(ui.ctx(), session_id);
-        let scramble_id = session_id.with(session);
+        let fold_ver = pane::fold_version(ui.ctx(), pane_id);
+        let scramble_id = session_id.with(session).with(fold_ver);
         let active = ui.opacity() >= 0.95;
         let scrambled = style::scramble_text(ui.ctx(), scramble_id, &title_uc, active);
         // Post-stabilisation glitch: every ~5 s a random letter
