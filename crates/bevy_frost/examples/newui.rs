@@ -521,11 +521,11 @@ fn ui_system(
         }
     }
 
-    // Use the active (post-pastel-adapt) accent for every downstream
-    // paint. `apply_theme` writes this above; `Theme::pastel_accent`
-    // gates whether it differs from the raw `accent.0`. Reading the
-    // active value here means flipping the pastel toggle visibly
-    // re-tints the ribbons + panes, not just egui's built-in visuals.
+    // Pastelized accent flows through chrome (ribbon paint, panel
+    // fills, borders, glass tint) so the `Theme::pastel_accent`
+    // toggle visibly retints surfaces. Title text is exempt — the
+    // text-paint helpers internally read `style::raw_accent()` so
+    // titles always show the user's literal pick.
     let accent_col = corekit::style::active_accent();
     let clicks = draw_assembly(
         ctx, accent_col, RIBBONS, RIBBON_ITEMS,

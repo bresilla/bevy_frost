@@ -28,7 +28,7 @@ pub use drag::{
     set_section_order, snapshot, state as drag_state, DragState, RectEntry,
 };
 
-use egui::{vec2, Align, Color32, Id, Layout, Sense, Stroke};
+use egui::{vec2, Color32, Id, Sense, Stroke};
 
 use crate::style;
 
@@ -281,10 +281,33 @@ impl Pane2 {
                     outer_ui.cursor().min,
                     outer_size,
                 );
+                // Use the title-at-end layout DIRECTLY on the outer
+                // child_ui — not via a `with_layout(bottom_up)` inside
+                // a top_down parent. egui tracks `min_rect` by union
+                // with the parent's initial cursor (top-left for
+                // top_down). When the title strip lands at the far
+                // edge (Bottom/Right rails) and the body folds to 0,
+                // the allocated strip sits at the bottom/right of
+                // `pane_rect`. Union-ed with the parent's top-left
+                // cursor, the resulting min_rect spans the FULL pane
+                // height/width — and the Frame paints across the
+                // whole pane instead of shrinking. Pushing the
+                // bottom_up/right_to_left layout one level up so the
+                // child_ui's cursor starts at the anchor edge keeps
+                // min_rect tight to the strip.
+                let title_at_end = title_side.is_at_end();
                 let layout = if horizontal_strip {
-                    egui::Layout::top_down(egui::Align::Min)
+                    if title_at_end {
+                        egui::Layout::bottom_up(egui::Align::Min)
+                    } else {
+                        egui::Layout::top_down(egui::Align::Min)
+                    }
                 } else {
-                    egui::Layout::left_to_right(egui::Align::Min)
+                    if title_at_end {
+                        egui::Layout::right_to_left(egui::Align::Min)
+                    } else {
+                        egui::Layout::left_to_right(egui::Align::Min)
+                    }
                 };
                 let mut child_ui = outer_ui.new_child(
                     egui::UiBuilder::new()
@@ -366,13 +389,13 @@ impl Pane2 {
         } else {
             vec2(TITLE_STRIP_THICKNESS, cross_inner)
         };
-        let title_at_end = title_side.is_at_end();
 
         // Plain-egui layout (no flex). Cross axis is locked via
         // `set_max_*` so `ui.available_*` is stable for child
         // widgets; main axis is content-driven by `body(ui)`. Title
         // strip and body are placed in the natural reading order
-        // dictated by `title_at_end`.
+        // dictated by `title_at_end` (decided in `Pane2::show` when
+        // building the outer child_ui's layout).
         let title_text = title.clone();
         let paint_title_strip = |ui: &mut egui::Ui| {
             let (alloc_rect, _) =
@@ -380,157 +403,142 @@ impl Pane2 {
             title::paint_pane_title(ui, alloc_rect, id, &title_text, anchor, accent);
         };
 
-        // Anchor-aware layout direction: when the title strip is at
-        // the FAR end (Bottom-rail / Right-rail), use `bottom_up` /
-        // `right_to_left` so allocations grow TOWARD the rail edge.
-        // The first allocation lands at the anchor edge, and any
-        // shrinkage inside the body eats the OPPOSITE (far) edge —
-        // not the strip between the body and the title. Without
-        // this, folding a container in a Bottom-anchored pane
-        // pulled the title strip up away from the rail and left
-        // dead space between it and the screen edge.
-        let layout = if horizontal_strip {
+        // The outer child_ui already carries the correct layout
+        // (top_down / bottom_up / left_to_right / right_to_left)
+        // chosen by `Pane2::show` so the cursor starts at the anchor
+        // edge — see the comment there for why we *don't* rewrap in
+        // a `with_layout(bottom_up)` here. We just clamp the cross
+        // axis and zero the item-spacing.
+        if horizontal_strip {
             ui.set_max_width(cross_inner);
-            if title_at_end {
-                Layout::bottom_up(Align::Min)
-            } else {
-                Layout::top_down(Align::Min)
-            }
         } else {
             ui.set_max_height(cross_inner);
-            if title_at_end {
-                Layout::right_to_left(Align::Min)
-            } else {
-                Layout::left_to_right(Align::Min)
-            }
-        };
-        ui.with_layout(layout, |ui| {
-            // Zero `item_spacing` — egui defaults to ~3 px vertical
-            // / ~8 px horizontal between widgets, which would push
-            // our title strip + container past `pane_rect`.
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            // SAME order in both directions: title FIRST (lands at
-            // anchor edge), body SECOND (fills outward). Reversed
-            // layouts handle the visual placement automatically —
-            // `bottom_up` puts first-allocated at the BOTTOM, etc.
-            paint_title_strip(ui);
-            // Reset per-frame drag bookkeeping (current cache +
-            // section idx counter). Snapshot from prev frame
-            // stays available for size lookups.
-            drag::begin_frame(ui.ctx(), id);
+        }
+        // Zero `item_spacing` — egui defaults to ~3 px vertical / ~8
+        // px horizontal between widgets, which would push our title
+        // strip + container past `pane_rect`.
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        // SAME order in both directions: title FIRST (lands at the
+        // anchor edge thanks to the layout direction), body SECOND
+        // (fills outward). Reversed layouts handle visual placement
+        // automatically — `bottom_up` puts first-allocated at the
+        // BOTTOM, `right_to_left` at the RIGHT, etc.
+        paint_title_strip(ui);
+        // Reset per-frame drag bookkeeping (current cache + section
+        // idx counter). Snapshot from prev frame stays available
+        // for size lookups.
+        drag::begin_frame(ui.ctx(), id);
 
-            // Update cursor BEFORE body runs so `Normal::show`'s
-            // target_idx computation sees this frame's cursor.
-            let pre_body_drag = drag::state(ui.ctx(), id);
-            if let (Some(item), Some(pos)) =
-                (pre_body_drag.item, ui.ctx().pointer_interact_pos())
-            {
-                drag::set_drag(
+        // Update cursor BEFORE body runs so `Normal::show`'s
+        // target_idx computation sees this frame's cursor.
+        let pre_body_drag = drag::state(ui.ctx(), id);
+        if let (Some(item), Some(pos)) =
+            (pre_body_drag.item, ui.ctx().pointer_interact_pos())
+        {
+            drag::set_drag(
+                ui.ctx(),
+                id,
+                drag::DragState {
+                    item: Some(item),
+                    cursor: Some(pos),
+                },
+            );
+        }
+
+        body(ui);
+
+        // Stack axis: matches `body` layout direction — BottomRail /
+        // TopRail panes stack vertically (Y), LeftRail / RightRail
+        // stack horizontally (X).
+        let horizontal_stack = !title_side.is_horizontal_strip();
+
+        // ── Trailing ghost gap ──
+        //
+        // If the cursor's target slot is AFTER the last rendered
+        // container (target == total non-dragged), paint the ghost
+        // gap inline at the end of the body layout. The inline gaps
+        // inside `Normal::show` handle every other position.
+        let drag_state = drag::state(ui.ctx(), id);
+        if let Some(dragged_id) = drag_state.item {
+            let snap = drag::snapshot(ui.ctx(), id);
+            let total = drag::current_cache(ui.ctx(), id).len();
+            let cursor = ui
+                .ctx()
+                .pointer_interact_pos()
+                .or(drag_state.cursor);
+            if let Some(c) = cursor {
+                let cursor_axis = if horizontal_stack { c.x } else { c.y };
+                let target_idx = drag::compute_target(
+                    &snap,
+                    dragged_id,
+                    cursor_axis,
+                    horizontal_stack,
+                );
+                if target_idx >= total {
+                    if let Some(size) =
+                        drag::dragged_size(&snap, dragged_id)
+                    {
+                        drag::paint_ghost_gap_inline(
+                            ui,
+                            size,
+                            accent,
+                            horizontal_stack,
+                        );
+                    }
+                }
+            }
+        }
+
+        // ── Build snapshot for next frame ──
+        //
+        // current cache (this frame's renders) + dragged entry
+        // carried forward from prev snapshot.
+        drag::finalize_snapshot(ui.ctx(), id);
+
+        // ── Floating preview + cursor + release commit ──
+        if let Some(dragged_id) = drag_state.item {
+            let snap = drag::snapshot(ui.ctx(), id);
+            let cursor = ui
+                .ctx()
+                .pointer_interact_pos()
+                .or(drag_state.cursor);
+            if let Some(c) = cursor {
+                drag::paint_drag_preview(
                     ui.ctx(),
                     id,
-                    drag::DragState {
-                        item: Some(item),
-                        cursor: Some(pos),
-                    },
+                    &snap,
+                    dragged_id,
+                    c,
+                    accent,
                 );
+                ui.ctx()
+                    .set_cursor_icon(egui::CursorIcon::Grabbing);
             }
 
-            body(ui);
-
-            // Stack axis: matches `body` layout direction —
-            // BottomRail / TopRail panes stack vertically (Y),
-            // LeftRail / RightRail stack horizontally (X).
-            let horizontal_stack = !title_side.is_horizontal_strip();
-
-            // ── Trailing ghost gap ──
-            //
-            // If the cursor's target slot is AFTER the last
-            // rendered container (target == total non-dragged),
-            // paint the ghost gap inline at the end of the body
-            // layout. The inline gaps inside `Normal::show`
-            // handle every other position.
-            let drag_state = drag::state(ui.ctx(), id);
-            if let Some(dragged_id) = drag_state.item {
-                let snap = drag::snapshot(ui.ctx(), id);
-                let total = drag::current_cache(ui.ctx(), id).len();
-                let cursor = ui
-                    .ctx()
-                    .pointer_interact_pos()
-                    .or(drag_state.cursor);
+            if ui.ctx().input(|i| i.pointer.any_released()) {
                 if let Some(c) = cursor {
-                    let cursor_axis = if horizontal_stack { c.x } else { c.y };
+                    let cursor_axis =
+                        if horizontal_stack { c.x } else { c.y };
                     let target_idx = drag::compute_target(
                         &snap,
                         dragged_id,
                         cursor_axis,
                         horizontal_stack,
                     );
-                    if target_idx >= total {
-                        if let Some(size) =
-                            drag::dragged_size(&snap, dragged_id)
-                        {
-                            drag::paint_ghost_gap_inline(
-                                ui,
-                                size,
-                                accent,
-                                horizontal_stack,
-                            );
-                        }
-                    }
-                }
-            }
-
-            // ── Build snapshot for next frame ──
-            //
-            // current cache (this frame's renders) + dragged
-            // entry carried forward from prev snapshot.
-            drag::finalize_snapshot(ui.ctx(), id);
-
-            // ── Floating preview + cursor + release commit ──
-            if let Some(dragged_id) = drag_state.item {
-                let snap = drag::snapshot(ui.ctx(), id);
-                let cursor = ui
-                    .ctx()
-                    .pointer_interact_pos()
-                    .or(drag_state.cursor);
-                if let Some(c) = cursor {
-                    drag::paint_drag_preview(
+                    let defaults: Vec<Id> =
+                        snap.iter().map(|e| e.id).collect();
+                    let mut order = drag::section_order_for(
                         ui.ctx(),
                         id,
-                        &snap,
-                        dragged_id,
-                        c,
-                        accent,
+                        &defaults,
                     );
-                    ui.ctx()
-                        .set_cursor_icon(egui::CursorIcon::Grabbing);
+                    order.retain(|cid| *cid != dragged_id);
+                    let clamped = target_idx.min(order.len());
+                    order.insert(clamped, dragged_id);
+                    drag::set_section_order(ui.ctx(), id, order);
                 }
-
-                if ui.ctx().input(|i| i.pointer.any_released()) {
-                    if let Some(c) = cursor {
-                        let cursor_axis =
-                            if horizontal_stack { c.x } else { c.y };
-                        let target_idx = drag::compute_target(
-                            &snap,
-                            dragged_id,
-                            cursor_axis,
-                            horizontal_stack,
-                        );
-                        let defaults: Vec<Id> =
-                            snap.iter().map(|e| e.id).collect();
-                        let mut order = drag::section_order_for(
-                            ui.ctx(),
-                            id,
-                            &defaults,
-                        );
-                        order.retain(|cid| *cid != dragged_id);
-                        let clamped = target_idx.min(order.len());
-                        order.insert(clamped, dragged_id);
-                        drag::set_section_order(ui.ctx(), id, order);
-                    }
-                    drag::clear_drag(ui.ctx(), id);
-                }
+                drag::clear_drag(ui.ctx(), id);
             }
-        });
+        }
     }
 }

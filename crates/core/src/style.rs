@@ -494,6 +494,10 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     static LAST_ACCENT: AtomicU32 = AtomicU32::new(u32::MAX);
     static LAST_OPACITY: AtomicU8 = AtomicU8::new(0);
     static LAST_THEME_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
+    // 0 = pastel off, 1 = pastel on, u8::MAX = never-applied. Flips
+    // here force a re-push of the Visuals because surface fills
+    // sample the toggle at paint time.
+    static LAST_PASTEL: AtomicU8 = AtomicU8::new(u8::MAX);
     // Body + title weights currently bound on the egui context.
     // `u8::MAX` is the "never-installed" sentinel; the first
     // `apply_theme` call always installs fonts, and any later
@@ -503,20 +507,23 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     static LAST_TITLE_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
 
     let th = theme();
-    // Adapt the user's raw accent to the active brightness mode:
-    // dark themes lift dark accents toward usable lightness,
-    // light themes pull bright accents back into a readable band.
-    // Conversion goes through HSL so only lightness changes — the
-    // hue and saturation the user picked stay intact.
-    //
-    // Gated by `Theme::pastel_accent`: when off, the user's raw
-    // accent flows through unchanged so saturated neon picks stay
-    // pixel-for-pixel.
+    // Two accent streams:
+    //   • `accent_col` — pastelized when `Theme::pastel_accent` is
+    //     on. Flows through every chrome derivation (panel / section
+    //     fill, glass tint, widget border, ribbon button paint).
+    //     This is what `set_active_accent` / `active_accent()`
+    //     publishes, so callers that already use that getter
+    //     automatically pick up the pastel pull.
+    //   • `accent_raw` — the user's pick verbatim. Stored under
+    //     `set_raw_accent`; `section_title_color` reads it for the
+    //     `TextColorMode::Accent` branch so titles never pastelize.
+    let accent_raw = accent.0;
     let accent_col = if th.pastel_accent {
-        adapt_accent_to_mode(accent.0, th.is_light)
+        adapt_accent_to_mode(accent_raw, th.is_light)
     } else {
-        accent.0
+        accent_raw
     };
+    set_raw_accent(accent_raw);
     let body_w  = font_weight();
     let title_w = title_weight();
     let body_u8  = body_w.as_u8();
@@ -539,15 +546,18 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // pointer equality matches name equality for built-ins and any
     // user theme using a literal.
     let theme_ptr = th.name.as_ptr() as usize;
+    let pastel_u8 = th.pastel_accent as u8;
     if LAST_ACCENT.load(Ordering::Relaxed) == packed
         && LAST_OPACITY.load(Ordering::Relaxed) == opacity.0
         && LAST_THEME_NAME_PTR.load(Ordering::Relaxed) == theme_ptr
+        && LAST_PASTEL.load(Ordering::Relaxed) == pastel_u8
     {
         return;
     }
     LAST_ACCENT.store(packed, Ordering::Relaxed);
     LAST_OPACITY.store(opacity.0, Ordering::Relaxed);
     LAST_THEME_NAME_PTR.store(theme_ptr, Ordering::Relaxed);
+    LAST_PASTEL.store(pastel_u8, Ordering::Relaxed);
     // Push into the shared atomics so glass-alpha + contrast-text
     // helpers can read these without callers having to thread them
     // through every widget signature.
@@ -1914,12 +1924,27 @@ pub const fn theme_game(mode: Mode) -> Theme {
 static ACTIVE_ACCENT: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0xE6E6E8FF);
 
+/// The user's raw, untransformed accent — what was passed to
+/// `apply_theme` before any pastel pull. Read by text helpers
+/// (e.g. `section_title_color`) so titles always paint the colour
+/// the user actually picked, regardless of `Theme::pastel_accent`.
+static RAW_ACCENT: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0xE6E6E8FF);
+
 fn set_active_accent(c: egui::Color32) {
     let p = ((c.r() as u32) << 24)
         | ((c.g() as u32) << 16)
         | ((c.b() as u32) << 8)
         | (c.a() as u32);
     ACTIVE_ACCENT.store(p, Ordering::Relaxed);
+}
+
+fn set_raw_accent(c: egui::Color32) {
+    let p = ((c.r() as u32) << 24)
+        | ((c.g() as u32) << 16)
+        | ((c.b() as u32) << 8)
+        | (c.a() as u32);
+    RAW_ACCENT.store(p, Ordering::Relaxed);
 }
 
 /// Read the current accent colour. Hosts call [`apply_theme`] each
@@ -1929,6 +1954,19 @@ fn set_active_accent(c: egui::Color32) {
 /// that don't thread accent through their signatures.
 pub fn active_accent() -> egui::Color32 {
     let p = ACTIVE_ACCENT.load(Ordering::Relaxed);
+    egui::Color32::from_rgba_premultiplied(
+        ((p >> 24) & 0xff) as u8,
+        ((p >> 16) & 0xff) as u8,
+        ((p >> 8) & 0xff) as u8,
+        (p & 0xff) as u8,
+    )
+}
+
+/// Read the user's raw, untransformed accent. Use this in text-paint
+/// paths (titles, glyphs that should match the user's pick) instead
+/// of [`active_accent`] when you don't want the pastel pull.
+pub fn raw_accent() -> egui::Color32 {
+    let p = RAW_ACCENT.load(Ordering::Relaxed);
     egui::Color32::from_rgba_premultiplied(
         ((p >> 24) & 0xff) as u8,
         ((p >> 16) & 0xff) as u8,
@@ -2082,11 +2120,15 @@ pub fn section_fill(accent: egui::Color32) -> egui::Color32 {
 /// near-black titles and a dark panel shows near-white.
 pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
+    // Title text never pastelizes — it always paints the user's
+    // raw pick. The pastel toggle is for chrome (fills, borders,
+    // ribbon paint), not for what the user reads.
+    let title_accent = raw_accent();
     let (resolved, surface) = match th.title_color_mode {
         // No luma guard, no contrast check: title literally tints
-        // with the user's accent. Trust the user; if they pick a
-        // low-contrast accent they accept the visual.
-        TextColorMode::Accent => (accent, pane_fill(accent)),
+        // with the user's raw accent. Trust the user; if they pick
+        // a low-contrast accent they accept the visual.
+        TextColorMode::Accent => (title_accent, pane_fill(accent)),
         TextColorMode::Primary => (th.text_primary, pane_fill(accent)),
         TextColorMode::Secondary => (th.text_secondary, pane_fill(accent)),
         TextColorMode::ContrastWithPanel => {
