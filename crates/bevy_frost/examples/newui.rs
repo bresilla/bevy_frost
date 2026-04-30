@@ -572,14 +572,19 @@ fn ui_system(
             // (shouldn't happen — every pane button is in RIBBON_ITEMS).
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
+                .resize(corekit::pane::PaneResize::BOTH)
                 .show(ctx, |body_ui| {
                     // Three independent containers, each with its own
                     // toggle state (id derived from the pane's button
-                    // id + an index). `body_main` slices the pane's
-                    // available main extent into thirds so all three
-                    // fit without overflowing the pane chrome.
+                    // id + an index).
                     const CONTAINERS_PER_PANE: usize = 3;
-                    const BODY_MAIN: f32 = 50.0;
+                    // Approximate per-container chrome on the main
+                    // axis (title strip + section padding + outer
+                    // margins + title-body gap). Used to convert the
+                    // pane's user-resized body main extent into a
+                    // body_flow per container so the containers
+                    // collectively fill the pane on the flow axis.
+                    const CHROME_PER_CONTAINER: f32 = 38.0;
                     // Build the default id list in declaration order,
                     // then ask the pane for the user's persisted
                     // drag-reorder order — which preserves any drag
@@ -594,6 +599,28 @@ fn ui_system(
                         pane_egui_id,
                         &defaults,
                     );
+                    // Pull the pane's user-resized body main extent
+                    // and split it across the containers, subtracting
+                    // each one's chrome. Resizing the pane on its
+                    // inner edge (drag handle) updates this value;
+                    // the next frame's body_flow_per_container grows
+                    // / shrinks accordingly so the stack of
+                    // containers always spans the pane edge-to-edge.
+                    let pane_body_flow = corekit::pane::user_flow(
+                        body_ui.ctx(),
+                        pane_egui_id,
+                    );
+                    // No artificial floor on the per-container body
+                    // slot — the pane's flow-axis resize handle
+                    // already refuses to shrink below the registered
+                    // container chrome floor, so when the user pushes
+                    // the pane to that floor `body_flow_per_container`
+                    // naturally lands at 0 and each container shows
+                    // just its title strip without overflow.
+                    let body_flow_per_container = ((pane_body_flow
+                        - CHROME_PER_CONTAINER * CONTAINERS_PER_PANE as f32)
+                        / CONTAINERS_PER_PANE as f32)
+                        .max(0.0);
                     for cid in order {
                         // Recover the original index for the title /
                         // text-input key so renaming after a reorder
@@ -602,7 +629,7 @@ fn ui_system(
                         let title = format!("{} {}", label, i + 1);
                         Normal::new(title, anchor, accent_col, cid)
                             .icon("settings")
-                            .body_main(BODY_MAIN)
+                            .body_flow(body_flow_per_container)
                             .show(body_ui, |inner_ui| {
                                 let key = egui::Id::new(("newui_text_input", cid));
                                 let mut buf: String = inner_ui

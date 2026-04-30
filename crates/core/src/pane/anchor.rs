@@ -32,6 +32,16 @@ impl PaneAnchor {
         matches!(self, PaneAnchor::LeftRail(_) | PaneAnchor::RightRail(_))
     }
 
+    /// Where on the rail the pane sits — Start / Middle / End.
+    pub fn zone(self) -> RailZone {
+        match self {
+            PaneAnchor::LeftRail(z)
+            | PaneAnchor::RightRail(z)
+            | PaneAnchor::TopRail(z)
+            | PaneAnchor::BottomRail(z) => z,
+        }
+    }
+
     /// Which screen rail the pane sits on, expressed as a [`TitleSide`].
     /// Always matches the rail (`LeftRail` → `Left`, etc.) regardless
     /// of zone — useful when you want chrome inside the pane (e.g.

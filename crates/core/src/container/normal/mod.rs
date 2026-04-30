@@ -41,19 +41,29 @@ const TITLE_BODY_GAP_HALF: f32 = 4.0;
 /// so the hairline divider reads cleanly; kept as a knob for later
 /// tuning).
 const _BODY_PAD: f32 = 6.0;
-/// Default cross-axis size. Used as the container's locked cross
+/// Default span-axis size. Used as the container's locked cross
 /// dimension — width for horizontal-title containers, height for
 /// vertical-title containers. The MAIN axis stays content-driven
-/// (capped via `Body::max_main` for vertical-title to stop a body
+/// (capped via `Body::max_flow` for vertical-title to stop a body
 /// like `text_input` from growing the pane unboundedly along X).
-/// Pane2's locked cross axis matches this constant so the pane and
+/// Pane2's locked span axis matches this constant so the pane and
 /// container share the same outer cross dimension.
 pub const CONTAINER_DEFAULT_WIDTH: f32 = 280.0;
 pub const CONTAINER_DEFAULT_HEIGHT: f32 = 280.0;
+/// Default lower bound on a container's WIDTH. Bumped 30 % above
+/// the old `frostcore::floating::MIN_PANEL_W` (= 220) so containers
+/// don't open at a cramped slim width — vertical-strip panes
+/// stack containers side-by-side, so a too-small default leaves
+/// each one barely wider than its title strip until the user
+/// drags. Used when a caller doesn't override via
+/// [`Normal::min_width`]. The parent pane's resize handles consult
+/// the maximum of its containers' min widths (span axis) or the
+/// sum (flow axis) and refuse to shrink below it.
+pub const CONTAINER_DEFAULT_MIN_WIDTH: f32 = 286.0;
 // Container outer margins now come from the active theme:
-//   `theme.section_outer_margin_main`  — main-axis (between stacked
+//   `theme.section_outer_margin_main`  — flow-axis (between stacked
 //      containers and between first container ↔ pane title strip).
-//   `theme.section_outer_margin_cross` — cross-axis (between the
+//   `theme.section_outer_margin_span` — span-axis (between the
 //      container's painted edge and the pane's left/right or
 //      top/bottom chrome). PRO ≈ 3/3, GAME ≈ 9/1.
 
@@ -77,13 +87,19 @@ pub struct Normal {
     /// strip's far end and grows when the body unfolds — matching
     /// `frostcore::widgets::foldable::section_tracked`.
     icon: Option<Icon<'static>>,
-    /// Optional override for the body slot's main-axis size. Default
+    /// Optional override for the body slot's flow-axis size. Default
     /// derives from `CONTAINER_DEFAULT_HEIGHT/WIDTH` minus chrome,
     /// which is right for one-container-per-pane layouts. When you
     /// stack multiple containers in a single pane, divide the pane's
     /// available main extent and pass each container its share via
     /// this builder so they don't all claim the full pane.
-    body_main: Option<f32>,
+    body_flow: Option<f32>,
+    /// Minimum WIDTH this container will accept. The parent pane's
+    /// user-resize handles consult the registered minimums (one per
+    /// container painted this frame) and stop shrinking once the
+    /// pane reaches that bound. Defaults to
+    /// [`CONTAINER_DEFAULT_MIN_WIDTH`] when not set.
+    min_width: Option<f32>,
 }
 
 impl Normal {
@@ -99,8 +115,19 @@ impl Normal {
             accent,
             pane_id: pane_id.into(),
             icon: None,
-            body_main: None,
+            body_flow: None,
+            min_width: None,
         }
+    }
+
+    /// Set the container's minimum WIDTH. The parent pane's resize
+    /// handles refuse to shrink the pane below the largest min
+    /// width registered by its containers (or the sum, when the
+    /// containers stack along the pane's flow axis). Defaults to
+    /// [`CONTAINER_DEFAULT_MIN_WIDTH`] (220 px) when unset.
+    pub fn min_width(mut self, w: f32) -> Self {
+        self.min_width = Some(w.max(0.0));
+        self
     }
 
     /// Attach a title icon. Accepts a Fluent icon name (e.g.
@@ -111,23 +138,84 @@ impl Normal {
         self
     }
 
-    /// Override the body slot's main-axis size. Use when stacking
+    /// Override the body slot's flow-axis size. Use when stacking
     /// multiple containers in a pane so each gets a slice of the
     /// available main extent instead of all claiming the full pane.
-    pub fn body_main(mut self, main: f32) -> Self {
-        self.body_main = Some(main.max(0.0));
+    pub fn body_flow(mut self, main: f32) -> Self {
+        self.body_flow = Some(main.max(0.0));
         self
     }
 
     pub fn show(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+        // Register this container's MIN WIDTH with the parent pane
+        // so the pane's resize handles can refuse to shrink the
+        // pane below the union of its containers' bounds. Keyed
+        // on the active pane id (`pane::active_pane_key`) which
+        // `Pane2::show` writes at the top of every frame, then
+        // clears the accumulator before running the body callback.
+        // First-frame fallback: if no active pane is set yet,
+        // register against the container's own pane_id so the
+        // entry isn't lost.
+        let parent_pane_id: Id = ui
+            .ctx()
+            .data(|d| d.get_temp(pane::active_pane_key()))
+            .unwrap_or(self.pane_id);
+        let min_w = self.min_width.unwrap_or(CONTAINER_DEFAULT_MIN_WIDTH);
+        ui.ctx().data_mut(|d| {
+            let key = parent_pane_id.with("frost_pane_container_min_widths");
+            let mut acc: Vec<f32> = d.get_temp(key).unwrap_or_default();
+            acc.push(min_w);
+            d.insert_temp(key, acc);
+        });
+
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
 
         let theme_now = style::theme();
+
+        // Register this container's MINIMUM flow-axis chrome with the
+        // parent pane so horizontal-strip pane resize handles can
+        // refuse to shrink past where containers would start
+        // overlapping. egui's `available_rect_before_wrap` collapses
+        // to zero-height once the layout cursor overshoots
+        // `max_rect`; subsequent Frame allocations still draw
+        // their content + margins, which extends below the cursor by
+        // the bottom-side chrome (inner_margin + stroke +
+        // outer_margin) and visually overlaps the previous container.
+        // Floor = sum of (TITLE_ZONE_THICKNESS + title-body gap +
+        //                 inner_margin both sides + stroke ×2 +
+        //                 outer_margin both sides) for every container,
+        // computed at the current `openness` so the floor naturally
+        // shrinks to title-only when all containers are folded.
+        let openness_for_min = pane::body_openness(ui.ctx(), self.pane_id);
+        let pad_for_min = style::section_padding();
+        let pad_flow_for_min = if horizontal_strip {
+            (pad_for_min.top as f32) + (pad_for_min.bottom as f32)
+        } else {
+            (pad_for_min.left as f32) + (pad_for_min.right as f32)
+        };
+        let outer_flow_for_min = (theme_now.section_outer_margin_flow_title as f32)
+            + (theme_now.section_outer_margin_flow_body as f32);
+        let stroke_for_min = if style::section_show_frame() {
+            theme_now.border_width * 2.0
+        } else {
+            0.0
+        };
+        let min_flow = TITLE_ZONE_THICKNESS
+            + TITLE_BODY_GAP_HALF * 2.0 * openness_for_min
+            + pad_flow_for_min
+            + outer_flow_for_min
+            + stroke_for_min;
+        ui.ctx().data_mut(|d| {
+            let key = parent_pane_id.with("frost_pane_container_min_flows");
+            let mut acc: Vec<f32> = d.get_temp(key).unwrap_or_default();
+            acc.push(min_flow);
+            d.insert_temp(key, acc);
+        });
         let pad = style::section_padding();
         let pad_w = (pad.left as f32) + (pad.right as f32);
         let pad_h = (pad.top as f32) + (pad.bottom as f32);
-        // Frame chrome that sits OUTSIDE the cross_inner slot:
+        // Frame chrome that sits OUTSIDE the span_inner slot:
         //   `pad_*` — Frame's `inner_margin` (theme `section_padding`).
         //   `outer_*` — Frame's `outer_margin`, per-axis from theme.
         //   `stroke_*` — border drawn on either side (PRO=1, GAME=0).
@@ -135,22 +223,22 @@ impl Normal {
         // inside `outer_avail` exactly — no 2-px overflow into the
         // pane's stroke or shadow when the theme has a visible border.
         // Total outer-margin on each axis. Cross-axis is symmetric
-        // (`2 × cross`); main-axis sums the per-side title-facing
+        // (`2 × cross`); flow-axis sums the per-side title-facing
         // and body-facing margins.
-        let main_outer_total = (theme_now.section_outer_margin_main_title as f32)
-            + (theme_now.section_outer_margin_main_body as f32);
-        let cross_outer_total = (theme_now.section_outer_margin_cross as f32) * 2.0;
+        let flow_outer_total = (theme_now.section_outer_margin_flow_title as f32)
+            + (theme_now.section_outer_margin_flow_body as f32);
+        let span_outer_total = (theme_now.section_outer_margin_span as f32) * 2.0;
         // X axis = cross when horizontal-strip, main when vertical-strip.
         let outer_w = if horizontal_strip {
-            cross_outer_total
+            span_outer_total
         } else {
-            main_outer_total
+            flow_outer_total
         };
         // Y axis = main when horizontal-strip, cross when vertical-strip.
         let outer_h = if horizontal_strip {
-            main_outer_total
+            flow_outer_total
         } else {
-            cross_outer_total
+            span_outer_total
         };
         let stroke_w = if style::section_show_frame() {
             theme_now.border_width * 2.0
@@ -158,30 +246,29 @@ impl Normal {
             0.0
         };
 
-        // Cross axis = the dim the title strip spans. Locked to
-        // `CONTAINER_DEFAULT_*` and clamped to `outer_avail` so the
-        // Frame's outer cross always fits its parent.
+        // Cross axis = the dim the title strip spans. Track the
+        // PARENT's available cross extent so the container grows
+        // along with the (user-resized) pane instead of staying
+        // capped at `CONTAINER_DEFAULT_*`. Subtract the Frame
+        // chrome on each side so the inner content slot fits
+        // inside the painted Frame.
         let outer_avail = ui.available_size();
-        let cross_inner = if horizontal_strip {
-            (CONTAINER_DEFAULT_WIDTH - pad_w - outer_w - stroke_w)
-                .min((outer_avail.x - pad_w - outer_w - stroke_w).max(0.0))
-                .max(0.0)
+        let span_inner = if horizontal_strip {
+            (outer_avail.x - pad_w - outer_w - stroke_w).max(0.0)
         } else {
-            (CONTAINER_DEFAULT_HEIGHT - pad_h - outer_h - stroke_w)
-                .min((outer_avail.y - pad_h - outer_h - stroke_w).max(0.0))
-                .max(0.0)
+            (outer_avail.y - pad_h - outer_h - stroke_w).max(0.0)
         };
 
         let title_size = if horizontal_strip {
-            vec2(cross_inner, TITLE_ZONE_THICKNESS)
+            vec2(span_inner, TITLE_ZONE_THICKNESS)
         } else {
-            vec2(TITLE_ZONE_THICKNESS, cross_inner)
+            vec2(TITLE_ZONE_THICKNESS, span_inner)
         };
 
-        // Shared body recipe — applies the cross-axis clamp so child
+        // Shared body recipe — applies the span-axis clamp so child
         // widgets see a stable `ui.available_*` regardless of the
         // surrounding layout's measurement passes.
-        let body_cfg = Body::new(horizontal_strip, cross_inner);
+        let body_cfg = Body::new(horizontal_strip, span_inner);
 
         let title_text = self.title.clone();
         let anchor = self.anchor;
@@ -201,11 +288,11 @@ impl Normal {
             *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true)
         });
         let openness = pane::body_openness(ui.ctx(), pane_id);
-        // Body's full main-axis size when fully open. Used as the
+        // Body's full flow-axis size when fully open. Used as the
         // child UI's `max_rect` extent so widgets ALWAYS render at
         // their natural size; only the clip mask animates. Caller
-        // can override via `Normal::body_main` for stacked layouts.
-        let full_body_main = self.body_main.unwrap_or_else(|| {
+        // can override via `Normal::body_flow` for stacked layouts.
+        let full_body_flow = self.body_flow.unwrap_or_else(|| {
             if horizontal_strip {
                 (CONTAINER_DEFAULT_HEIGHT
                     - TITLE_ZONE_THICKNESS
@@ -227,7 +314,7 @@ impl Normal {
         // call, so they animate in lockstep — no anchor drift).
         let body_visible = openness > 0.0;
         let total_gap = TITLE_BODY_GAP_HALF * 2.0 * openness;
-        let visible_body_main = openness * full_body_main;
+        let visible_body_flow = openness * full_body_flow;
 
         // ── Per-section staggered fade-in (verbatim port of
         //    `frostcore::PaneBuilder::section_with`) ──
@@ -392,18 +479,18 @@ impl Normal {
             };
 
             let render_body = |ui: &mut Ui, body: Box<dyn FnOnce(&mut Ui)>| {
-                if !body_visible || full_body_main <= 0.0 {
+                if !body_visible || full_body_flow <= 0.0 {
                     return;
                 }
                 let visible_size = if horizontal_strip {
-                    vec2(cross_inner, visible_body_main)
+                    vec2(span_inner, visible_body_flow)
                 } else {
-                    vec2(visible_body_main, cross_inner)
+                    vec2(visible_body_flow, span_inner)
                 };
                 let full_size = if horizontal_strip {
-                    vec2(cross_inner, full_body_main)
+                    vec2(span_inner, full_body_flow)
                 } else {
-                    vec2(full_body_main, cross_inner)
+                    vec2(full_body_flow, span_inner)
                 };
                 // `allocate_space` respects the parent's layout
                 // direction, so `visible_rect` lands at the correct
@@ -570,19 +657,19 @@ impl Normal {
     /// `section_show_frame = false` (GAME) we drop the visuals and
     /// keep just the inner padding so body content sits flush.
     /// `outer_margin` is per-side from the theme:
-    ///   • main-axis title-FACING side — sets the gap between the
+    ///   • flow-axis title-FACING side — sets the gap between the
     ///     pane title strip and the FIRST container.
-    ///   • main-axis body-FACING side — combines with the next
+    ///   • flow-axis body-FACING side — combines with the next
     ///     container's title-side margin to produce the
     ///     inter-container gap.
-    ///   • cross-axis sides — breathing space against the pane's
+    ///   • span-axis sides — breathing space against the pane's
     ///     left/right (or top/bottom for vertical-strip) chrome.
     fn theme_frame(&self) -> Frame {
         let theme = style::theme();
         let title_side = self.anchor.title_side();
-        let main_title = theme.section_outer_margin_main_title;
-        let main_body = theme.section_outer_margin_main_body;
-        let cross = theme.section_outer_margin_cross;
+        let main_title = theme.section_outer_margin_flow_title;
+        let main_body = theme.section_outer_margin_flow_body;
+        let cross = theme.section_outer_margin_span;
         // Each title side puts the title-facing margin on a
         // different edge of the container's outer rect; the
         // body-facing margin lives on the OPPOSITE edge. Cross-axis

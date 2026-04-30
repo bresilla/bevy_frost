@@ -36,22 +36,22 @@ use crate::style;
 
 /// Pane Frame's `inner_margin` per side. Used both literally (in the
 /// `Frame { inner_margin: … }` builder) and to compute the inner
-/// cross-axis available to the body via `cross - 2 * PANE_INNER_MARGIN`.
+/// span-axis available to the body via `cross - 2 * PANE_INNER_MARGIN`.
 /// Keep these in sync — if you change the Frame margin, recompute the
 /// available space.
 const PANE_INNER_MARGIN: f32 = 2.0;
 /// Total chrome (both sides) the pane Frame steals from the inner ui
-/// — used in the body main-axis size lerp so the pane's outer height
+/// — used in the body flow-axis size lerp so the pane's outer height
 /// includes the chrome both above and below the body.
 const PANE_FRAME_CHROME: f32 = PANE_INNER_MARGIN * 2.0;
 
-/// Pane outer cross-axis size. The pane is square in cross-axis
+/// Pane outer span-axis size. The pane is square in span-axis
 /// regardless of which rail it lives on, and the container inside
 /// clamps its own cross to `outer_avail` so it always fits — no
 /// per-orientation tuning needed.
-pub const PANE_OUTER_CROSS: f32 = 280.0;
+pub const PANE_OUTER_SPAN: f32 = 280.0;
 
-/// Thickness of the title strip on its main axis (perpendicular to
+/// Thickness of the title strip on its flow axis (perpendicular to
 /// the strip's reading direction).
 pub const TITLE_STRIP_THICKNESS: f32 = 25.0;
 
@@ -61,13 +61,27 @@ pub const TITLE_STRIP_THICKNESS: f32 = 25.0;
 /// both lerp at the same rate.
 pub const BODY_ANIMATION_TIME: f32 = 0.18;
 
-/// Container outer main-axis size when the body is fully expanded.
+/// Container outer flow-axis size when the body is fully expanded.
 /// Equal to `crate::container::Normal::CONTAINER_DEFAULT_*`, so the
 /// pane and container agree on the fully-open size.
-pub const DEFAULT_BODY_MAIN_OPEN: f32 = 280.0;
+pub const DEFAULT_FLOW_OPEN: f32 = 280.0;
+/// Hit-region thickness (in screen pixels) for the resize handles
+/// that overlay each enabled pane edge. The handles do NOT allocate
+/// layout space — they sit inside the pane's own painted rect, so
+/// the pane never grows just to expose them.
+pub const RESIZE_HANDLE_THICKNESS: f32 = 10.0;
+/// Lower bound on user-resized pane body main extent — keeps the
+/// pane from collapsing past usability.
+pub const MIN_USER_FLOW: f32 = 80.0;
+/// Upper bound on user-resized pane body main extent.
+pub const MAX_USER_FLOW: f32 = 1200.0;
+/// Lower bound on user-resized pane CROSS extent.
+pub const MIN_USER_SPAN: f32 = 120.0;
+/// Upper bound on user-resized pane CROSS extent.
+pub const MAX_USER_SPAN: f32 = 1200.0;
 /// Container's title-strip thickness and outer-margin reservation
 /// — used to compute the collapsed body main size from the active
-/// theme each frame (see `body_main_collapsed`). Themes differ in
+/// theme each frame (see `body_flow_collapsed`). Themes differ in
 /// `section_padding` (PRO 4×3, GAME 6×8) so a hardcoded constant
 /// can't get this right for both.
 const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
@@ -79,6 +93,77 @@ pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
     let open: bool = ctx
         .data_mut(|d| *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true));
     ctx.animate_bool_with_time(pane_id.with("body_open").with("anim"), open, BODY_ANIMATION_TIME)
+}
+
+/// User-controlled body main extent for `pane_id`, persisted across
+/// runs. Defaults to [`DEFAULT_FLOW_OPEN`] until the user drags
+/// the pane's inner-edge resize handle. Vertical-strip panes
+/// (LEFT/RIGHT rails) interpret this as the pane WIDTH, horizontal
+/// -strip panes (TOP/BOTTOM rails) as the pane HEIGHT — the handle
+/// always grows the pane along its flow axis.
+pub fn user_flow(ctx: &egui::Context, pane_id: Id) -> f32 {
+    ctx.data_mut(|d| {
+        d.get_persisted::<f32>(pane_id.with("frost_pane_user_body_main"))
+            .unwrap_or(DEFAULT_FLOW_OPEN)
+    })
+    .clamp(MIN_USER_FLOW, MAX_USER_FLOW)
+}
+
+/// Persist the user-set body main extent for `pane_id`. Clamped to
+/// [`MIN_USER_FLOW`] .. [`MAX_USER_FLOW`].
+pub fn set_user_flow(ctx: &egui::Context, pane_id: Id, value: f32) {
+    let clamped = value.clamp(MIN_USER_FLOW, MAX_USER_FLOW);
+    ctx.data_mut(|d| {
+        d.insert_persisted(pane_id.with("frost_pane_user_body_main"), clamped);
+    });
+}
+
+/// User-controlled CROSS extent for `pane_id`, persisted across runs.
+/// Defaults to [`PANE_OUTER_SPAN`]. Only consulted when the caller
+/// enables `PaneResize::cross` on the builder; otherwise the pane
+/// keeps its baseline cross size.
+pub fn user_span(ctx: &egui::Context, pane_id: Id) -> f32 {
+    ctx.data_mut(|d| {
+        d.get_persisted::<f32>(pane_id.with("frost_pane_user_cross_main"))
+            .unwrap_or(PANE_OUTER_SPAN)
+    })
+    .clamp(MIN_USER_SPAN, MAX_USER_SPAN)
+}
+
+/// Persist the user-set CROSS extent for `pane_id`. Clamped to
+/// [`MIN_USER_SPAN`] .. [`MAX_USER_SPAN`].
+pub fn set_user_span(ctx: &egui::Context, pane_id: Id, value: f32) {
+    let clamped = value.clamp(MIN_USER_SPAN, MAX_USER_SPAN);
+    ctx.data_mut(|d| {
+        d.insert_persisted(pane_id.with("frost_pane_user_cross_main"), clamped);
+    });
+}
+
+/// Per-pane resize affordance — opt-in via [`Pane2::resize`].
+///
+/// `flow` adds an invisible handle on the pane's inner edge (the
+/// side facing AWAY from the rail), letting the user drag the pane
+/// along its FLOW axis — the direction the body extends from the
+/// title strip. Vertical-strip panes (LEFT/RIGHT rails) resize
+/// horizontally; horizontal-strip panes (TOP/BOTTOM rails) resize
+/// vertically.
+///
+/// `span` adds an invisible handle on the pane's SPAN axis (the
+/// axis parallel to the title strip). For zone-end / zone-start
+/// anchors only one side is resizable (the unanchored side); for
+/// `Middle` anchors both span sides are resizable and the pane
+/// grows symmetrically about its centre.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct PaneResize {
+    pub flow: bool,
+    pub span: bool,
+}
+
+impl PaneResize {
+    pub const NONE: PaneResize = PaneResize { flow: false, span: false };
+    pub const FLOW: PaneResize = PaneResize { flow: true,  span: false };
+    pub const SPAN: PaneResize = PaneResize { flow: false, span: true  };
+    pub const BOTH: PaneResize = PaneResize { flow: true,  span: true  };
 }
 
 /// Shared ctx-data key that points to the **currently active**
@@ -118,6 +203,48 @@ pub fn fold_version(ctx: &egui::Context, pane_id: Id) -> u64 {
     })
 }
 
+fn container_mins_key(pane_id: Id) -> Id {
+    pane_id.with("frost_pane_container_min_widths")
+}
+
+fn container_min_flows_key(pane_id: Id) -> Id {
+    pane_id.with("frost_pane_container_min_flows")
+}
+
+/// Read the list of container min widths registered against `pane_id`
+/// during the previous frame's body callback. Returned in container
+/// order. Empty when no [`crate::container::Normal`] children
+/// painted under this pane.
+pub fn container_min_widths(ctx: &egui::Context, pane_id: Id) -> Vec<f32> {
+    ctx.data(|d| d.get_temp::<Vec<f32>>(container_mins_key(pane_id)))
+        .unwrap_or_default()
+}
+
+/// Read the list of container minimum FLOW-axis chrome sizes
+/// registered against `pane_id` during the previous frame's body
+/// callback. Each entry is what the container needs along the pane's
+/// flow axis at body-flow = 0 (title strip + title/body gap + section
+/// padding + stroke + outer margins). Used by horizontal-strip pane
+/// resize handlers as the shrink floor: the pane can collapse until
+/// each container is body-empty, then stops — preventing the
+/// "containers overlap" artefact that comes from egui's
+/// `available_rect_before_wrap` collapsing to zero when the pane body
+/// runs out of space.
+pub fn container_min_flows(ctx: &egui::Context, pane_id: Id) -> Vec<f32> {
+    ctx.data(|d| d.get_temp::<Vec<f32>>(container_min_flows_key(pane_id)))
+        .unwrap_or_default()
+}
+
+/// Clear both per-pane container-min accumulators. Called by
+/// `Pane2::show` at the top of every frame so containers can
+/// re-register fresh on the body callback.
+fn clear_container_min_widths(ctx: &egui::Context, pane_id: Id) {
+    ctx.data_mut(|d| {
+        d.remove::<Vec<f32>>(container_mins_key(pane_id));
+        d.remove::<Vec<f32>>(container_min_flows_key(pane_id));
+    });
+}
+
 /// Inset from each screen edge: `EDGE_GAP + SIDE_BTN_SIZE +
 /// RAIL_PANEL_GAP`. The pane sits 4 px past the rail's button
 /// strip on top/left edges; bottom/right add a wider `far` inset
@@ -140,9 +267,16 @@ pub struct Pane2 {
     title: String,
     anchor: PaneAnchor,
     accent: Color32,
+    resize: PaneResize,
 }
 
 impl Pane2 {
+    /// Enable user-resize on the pane's edges. See [`PaneResize`].
+    pub fn resize(mut self, resize: PaneResize) -> Self {
+        self.resize = resize;
+        self
+    }
+
     /// Construct a pane builder. `id` is used to scope the
     /// `egui::Area` and any title-strip animations.
     pub fn new(
@@ -156,6 +290,7 @@ impl Pane2 {
             title: title.into(),
             anchor,
             accent,
+            resize: PaneResize::NONE,
         }
     }
 
@@ -166,7 +301,7 @@ impl Pane2 {
     /// pane to JUST the title strip thickness, and adding content
     /// extends the pane along the title's perpendicular axis (a
     /// horizontal title bar grows down with stacked containers; a
-    /// vertical title strip grows right). The cross axis (the one
+    /// vertical title strip grows right). The span axis (the one
     /// the title spans) is fixed per anchor.
     pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui)) {
         let (align, offset) = layout::anchor_align(self.anchor);
@@ -174,7 +309,13 @@ impl Pane2 {
 
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
-        let cross_outer = PANE_OUTER_CROSS;
+        // Cross extent: user-resized when `PaneResize::cross` is on,
+        // baseline `PANE_OUTER_SPAN` otherwise.
+        let span_outer = if self.resize.span {
+            user_span(ctx, self.id)
+        } else {
+            PANE_OUTER_SPAN
+        };
 
         // ── Per-pane staggered fade-in clock (port of frostcore's
         //    `PaneBuilder::pane_open_elapsed`) ──
@@ -218,6 +359,41 @@ impl Pane2 {
             d.insert_temp(self.id.with("frost_pane_open_elapsed"), pane_open_elapsed);
             d.insert_temp(self.id.with("frost_pane_section_idx"), 0u32);
         });
+        // Auto-grow the user-resized extents to satisfy the previous
+        // frame's container min widths. Without this, a vertical-strip
+        // pane (LEFT / RIGHT rail) opens at the baseline
+        // `DEFAULT_FLOW_OPEN` (= 280) — way too narrow to fit
+        // 3 containers × `CONTAINER_DEFAULT_MIN_WIDTH` (= 286). The
+        // user would have to drag the pane wider FIRST before any
+        // container could reach its declared min, and then the
+        // shrink-floor would lock them at the cramped width. Reading
+        // the accumulator BEFORE the clear gives us last frame's
+        // values; on the very first open the accumulator is empty
+        // and no auto-grow happens (default sizes apply).
+        let title_side_for_pane = self.anchor.title_side();
+        let horizontal_strip_pane = title_side_for_pane.is_horizontal_strip();
+        let prev_mins = container_min_widths(ctx, self.id);
+        if !prev_mins.is_empty() {
+            if self.resize.flow && !horizontal_strip_pane {
+                let need_main: f32 = prev_mins.iter().sum();
+                let cur_main = user_flow(ctx, self.id);
+                if cur_main < need_main {
+                    set_user_flow(ctx, self.id, need_main);
+                }
+            }
+            if self.resize.span && horizontal_strip_pane {
+                let need_cross: f32 = prev_mins.iter().copied().fold(0.0, f32::max);
+                let cur_cross = user_span(ctx, self.id);
+                if cur_cross < need_cross {
+                    set_user_span(ctx, self.id, need_cross);
+                }
+            }
+        }
+        // Reset the container-min-width accumulator before the body
+        // callback runs — `Normal::show` (called from inside the
+        // body) appends each container's min width to it. The
+        // resize handles read the result AFTER the body finishes.
+        clear_container_min_widths(ctx, self.id);
 
         // Compute pane main from the body's animation state in
         // THIS frame. Both `Pane2` and `Normal` call
@@ -235,27 +411,38 @@ impl Pane2 {
         // actual rendered size on both axes.
         let theme_now = style::theme();
         let pad = style::section_padding();
-        let container_pad_main = if horizontal_strip {
+        let container_pad_flow = if horizontal_strip {
             (pad.top as f32) + (pad.bottom as f32)
         } else {
             (pad.left as f32) + (pad.right as f32)
         };
-        let container_outer_main_total = (theme_now.section_outer_margin_main_title as f32)
-            + (theme_now.section_outer_margin_main_body as f32);
-        let body_main_collapsed = CONTAINER_TITLE_THICKNESS
-            + container_pad_main
+        let container_outer_main_total = (theme_now.section_outer_margin_flow_title as f32)
+            + (theme_now.section_outer_margin_flow_body as f32);
+        let body_flow_collapsed = CONTAINER_TITLE_THICKNESS
+            + container_pad_flow
             + container_outer_main_total;
-        let collapsed_main =
-            TITLE_STRIP_THICKNESS + body_main_collapsed + PANE_FRAME_CHROME;
-        let expanded_main =
-            TITLE_STRIP_THICKNESS + DEFAULT_BODY_MAIN_OPEN + PANE_FRAME_CHROME;
-        let pane_main =
-            collapsed_main + (expanded_main - collapsed_main) * openness;
+        let collapsed_flow =
+            TITLE_STRIP_THICKNESS + body_flow_collapsed + PANE_FRAME_CHROME;
+        // Pane main when fully open = title + body + frame chrome.
+        // The user-resize body main is consulted only when
+        // `PaneResize::main` is enabled — otherwise the pane keeps
+        // its baseline `DEFAULT_FLOW_OPEN`. Either way the
+        // resize handle itself takes ZERO layout space (it's an
+        // invisible interact rect overlaying the inner edge inside
+        // the painted pane).
+        let body_flow_open = if self.resize.flow {
+            user_flow(ctx, self.id)
+        } else {
+            DEFAULT_FLOW_OPEN
+        };
+        let expanded_flow = TITLE_STRIP_THICKNESS + body_flow_open + PANE_FRAME_CHROME;
+        let pane_flow =
+            collapsed_flow + (expanded_flow - collapsed_flow) * openness;
 
         let outer_size = if horizontal_strip {
-            vec2(cross_outer, pane_main)
+            vec2(span_outer, pane_flow)
         } else {
-            vec2(pane_main, cross_outer)
+            vec2(pane_flow, span_outer)
         };
 
         // Compute position MANUALLY from `outer_size` using the
@@ -268,7 +455,26 @@ impl Pane2 {
         // pinned with ZERO lag.
         let screen = ctx.content_rect();
         let pane_pos = layout::compute_pane_pos(align, offset, screen, outer_size);
-
+        // Outer pane rect — used as the initial / fallback rect for
+        // the resize handles. The Frame inside the Area shrinks
+        // when containers fold; we capture its real rendered rect
+        // below so the handles track the painted edge instead of
+        // the (always-expanded) Area bounds.
+        let pane_rect = egui::Rect::from_min_size(pane_pos, outer_size);
+        // Capture fields needed AFTER `self` is moved into the Area's
+        // body closure (which moves `self` into `lay_out_flex`).
+        let pane_id = self.id;
+        let pane_anchor = self.anchor;
+        let pane_resize = self.resize;
+        let pane_accent = self.accent;
+        // Slot for the Frame's actual rendered rect. The pane Area
+        // closure writes this after `Frame::show` returns; the
+        // resize-handle Area below reads it so the flow-axis
+        // handle (which sits at the inner edge of the painted
+        // pane) follows the Frame as it shrinks / grows with the
+        // open / fold animation. Cross handles also benefit when
+        // span-axis is animating.
+        let painted_rect = std::cell::Cell::new(pane_rect);
 
         egui::Area::new(area_id)
             // `Order::Background` keeps the pane's drop shadow
@@ -294,6 +500,9 @@ impl Pane2 {
                 // `allocate_rect` on the parent so its `min_rect`
                 // reaches `pane_rect` and `state.size` (next frame)
                 // matches our computed value.
+                // Same rect as the outer `pane_rect`; recompute here
+                // from `outer_ui.cursor()` so the inside of the
+                // closure doesn't depend on the outer capture order.
                 let pane_rect = egui::Rect::from_min_size(
                     outer_ui.cursor().min,
                     outer_size,
@@ -354,7 +563,7 @@ impl Pane2 {
                     spread: 0,
                     color: Color32::from_black_alpha(115),
                 };
-                egui::Frame {
+                let frame_response = egui::Frame {
                     inner_margin: egui::Margin::same(PANE_INNER_MARGIN as i8),
                     outer_margin: egui::Margin::ZERO,
                     fill,
@@ -368,8 +577,39 @@ impl Pane2 {
                 .show(ui, |ui| {
                     self.lay_out_flex(ui, body);
                 });
+                // The Frame's response.rect IS the painted outer
+                // rect (= content_min_rect + frame margins). Use it
+                // to position the resize handles below — they sit
+                // exactly on the painted edge, even when fold
+                // animation has shrunk the frame.
+                painted_rect.set(frame_response.response.rect);
                 }
                 let _ = outer_ui.allocate_rect(pane_rect, egui::Sense::hover());
+
+                // ── Resize handles (in-Area) ──
+                //
+                // Registered directly on the pane's own `outer_ui`
+                // (`Order::Background`) instead of a separate Area.
+                // Within a single layer, egui's hit-test prefers
+                // LATER-registered widgets — so these `interact`
+                // calls (added after the Frame's title widgets)
+                // win for clicks at the handle rects, while clicks
+                // at non-handle positions fall through to the
+                // earlier-registered title widgets and trigger the
+                // fold toggle as expected. Putting the handles in a
+                // separate `Order::Middle` Area broke this on
+                // corner-anchored panes whose Area state collapsed
+                // to a degenerate clip.
+                if pane_resize.flow || pane_resize.span {
+                    paint_resize_handles_inline(
+                        outer_ui,
+                        pane_id,
+                        pane_accent,
+                        pane_anchor,
+                        pane_resize,
+                        painted_rect.get(),
+                    );
+                }
             });
     }
 
@@ -378,8 +618,8 @@ impl Pane2 {
     /// `title_side` (per-anchor) — horizontal strips need a vertical
     /// flex, vertical strips need a horizontal flex.
     ///
-    /// Sizing is content-driven: the cross axis (the dimension the
-    /// title spans) is locked per anchor, while the main axis (the
+    /// Sizing is content-driven: the span axis (the dimension the
+    /// title spans) is locked per anchor, while the flow axis (the
     /// dimension perpendicular to the title) is left free so the
     /// pane is exactly tall/wide enough to fit the title strip plus
     /// whatever the body closure allocates. Empty body → pane is
@@ -390,26 +630,37 @@ impl Pane2 {
             title,
             anchor,
             accent,
+            resize,
         } = self;
         let title_side = anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
 
-        // Cross axis = the dimension the title strip spans. Locked.
-        // Main axis = perpendicular; grows with body content.
-        // Subtract the pane Frame's inner_margin (both sides) so the
-        // child ui's max_width/height matches the area inside the
-        // frame chrome — what's actually available to the body.
-        let cross_inner = PANE_OUTER_CROSS - PANE_FRAME_CHROME;
+        // Cross axis = the dimension the title strip spans. Tracks
+        // the SAME `span_outer` value `Pane2::show` used to size
+        // the pane Area: the user-resized one when `resize.span`
+        // is enabled, otherwise the baseline `PANE_OUTER_SPAN`.
+        // Hardcoding `PANE_OUTER_SPAN` here was the bug — the pane
+        // Area grew to the user-resized cross but the Frame inside
+        // stayed clamped to 280, leaving a transparent strip on
+        // the cross-max side and visually orphaning the cross
+        // resize handle (which always sits at the Area's true
+        // edge, not the Frame's edge).
+        let span_outer = if resize.span {
+            user_span(ui.ctx(), id)
+        } else {
+            PANE_OUTER_SPAN
+        };
+        let span_inner = span_outer - PANE_FRAME_CHROME;
 
         let title_size = if horizontal_strip {
-            vec2(cross_inner, TITLE_STRIP_THICKNESS)
+            vec2(span_inner, TITLE_STRIP_THICKNESS)
         } else {
-            vec2(TITLE_STRIP_THICKNESS, cross_inner)
+            vec2(TITLE_STRIP_THICKNESS, span_inner)
         };
 
         // Plain-egui layout (no flex). Cross axis is locked via
         // `set_max_*` so `ui.available_*` is stable for child
-        // widgets; main axis is content-driven by `body(ui)`. Title
+        // widgets; flow axis is content-driven by `body(ui)`. Title
         // strip and body are placed in the natural reading order
         // dictated by `title_at_end` (decided in `Pane2::show` when
         // building the outer child_ui's layout).
@@ -427,9 +678,9 @@ impl Pane2 {
         // a `with_layout(bottom_up)` here. We just clamp the cross
         // axis and zero the item-spacing.
         if horizontal_strip {
-            ui.set_max_width(cross_inner);
+            ui.set_max_width(span_inner);
         } else {
-            ui.set_max_height(cross_inner);
+            ui.set_max_height(span_inner);
         }
         // Zero `item_spacing` — egui defaults to ~3 px vertical / ~8
         // px horizontal between widgets, which would push our title
@@ -555,6 +806,327 @@ impl Pane2 {
                     drag::set_section_order(ui.ctx(), id, order);
                 }
                 drag::clear_drag(ui.ctx(), id);
+            }
+        }
+    }
+}
+
+/// Overlay drag-handles on the pane's resizable edges. Each handle
+/// is a `Sense::drag` rect of `RESIZE_HANDLE_THICKNESS` thickness
+/// sitting INSIDE the pane's painted rect — no layout space taken.
+/// A subtle accent strip paints only on hover / drag so the user
+/// can see what they're grabbing without the chrome cluttering the
+/// pane edge at rest. Drag deltas mutate the persistent
+/// `user_flow` / `user_span` so subsequent frames pick
+/// up the new size.
+///
+/// The handles live in their own `egui::Area` on `Order::Middle`
+/// (above the pane's `Order::Background` Area). Without this split,
+/// hover / drag events on the handle rect were absorbed by the
+/// pane's underlying Background layer and never reached the handle.
+#[allow(dead_code)]
+fn paint_resize_handles(
+    ctx: &egui::Context,
+    pane_id: Id,
+    accent: Color32,
+    anchor: PaneAnchor,
+    resize: PaneResize,
+    pane_rect: egui::Rect,
+) {
+    let title_side = anchor.title_side();
+    let horizontal_strip = title_side.is_horizontal_strip();
+    let zone = anchor.zone();
+    egui::Area::new(pane_id.with("frost_pane_resize_handles_area"))
+        .order(egui::Order::Middle)
+        .fixed_pos(pane_rect.min)
+        // Force the Area to cover the WHOLE pane every frame.
+        // Without this the Area's `state.size` defaults to a tiny
+        // (degenerate) rect on the first paint — only widgets
+        // registered via `ui.interact()` whose rects fall inside
+        // that initial rect register hover / click. Centre-anchored
+        // panes happened to accumulate state across frames and end
+        // up with a usable rect, while corner-anchored panes
+        // (TopRail::End, BottomRail::Start, etc.) silently lost
+        // their resize handles. `default_size` seeds it; the
+        // `allocate_rect` inside the show closure forces the
+        // current-frame rect every paint regardless of any prior
+        // shrink.
+        .default_size(pane_rect.size())
+        .movable(false)
+        .interactable(true)
+        .show(ctx, |ui| {
+            // Expand the Area's `min_rect` (and therefore its clip
+            // rect) to cover the full pane WITHOUT registering an
+            // interactive widget. Using `allocate_rect(_, Sense::hover())`
+            // here was eating the container-title clicks that fold /
+            // unfold the containers — even though `Sense::hover` is
+            // not a click sense, the widget rect still wins the
+            // hit-test because it sits on `Order::Middle` (above the
+            // pane Area's `Order::Background`). `expand_to_include_rect`
+            // just grows `min_rect` for layout / clip purposes.
+            ui.expand_to_include_rect(pane_rect);
+            paint_resize_handles_inner(
+                ui,
+                pane_id,
+                accent,
+                anchor,
+                resize,
+                pane_rect,
+                title_side,
+                horizontal_strip,
+                zone,
+            );
+        });
+}
+
+/// Register the resize handles directly on the pane's own `Ui`
+/// (Order::Background), skipping the separate `Order::Middle` Area
+/// used by [`paint_resize_handles`]. Within a single layer egui's
+/// hit-test prefers later-registered widgets, so the drag handles
+/// take precedence at their small edge rects without intercepting
+/// clicks anywhere else (which would break the container title-
+/// strip clicks that fold / unfold).
+fn paint_resize_handles_inline(
+    ui: &mut egui::Ui,
+    pane_id: Id,
+    accent: Color32,
+    anchor: PaneAnchor,
+    resize: PaneResize,
+    pane_rect: egui::Rect,
+) {
+    let title_side = anchor.title_side();
+    let horizontal_strip = title_side.is_horizontal_strip();
+    let zone = anchor.zone();
+    paint_resize_handles_inner(
+        ui,
+        pane_id,
+        accent,
+        anchor,
+        resize,
+        pane_rect,
+        title_side,
+        horizontal_strip,
+        zone,
+    );
+}
+
+fn paint_resize_handles_inner(
+    ui: &mut egui::Ui,
+    pane_id: Id,
+    accent: Color32,
+    anchor: PaneAnchor,
+    resize: PaneResize,
+    pane_rect: egui::Rect,
+    title_side: TitleSide,
+    horizontal_strip: bool,
+    _zone: RailZone,
+) {
+    // Container-derived lower bounds, computed once per call.
+    //
+    //   * Horizontal-strip pane (TOP / BOTTOM rail): containers stack
+    //     along the pane's flow axis, all sharing the same cross
+    //     extent. Min cross = max of registered container widths.
+    //     Min main has no container contribution → keep the global
+    //     [`MIN_USER_FLOW`] floor.
+    //   * Vertical-strip pane (LEFT / RIGHT rail): containers stack
+    //     along the pane's flow axis (horizontal). Each one takes
+    //     a slice, so min main = SUM of registered widths. Cross
+    //     keeps the global [`MIN_USER_SPAN`] floor.
+    let container_mins = container_min_widths(ui.ctx(), pane_id);
+    let container_min_flows_v = container_min_flows(ui.ctx(), pane_id);
+    let max_min = container_mins
+        .iter()
+        .copied()
+        .fold(0.0_f32, f32::max);
+    let sum_min: f32 = container_mins.iter().sum();
+    let sum_min_flow: f32 = container_min_flows_v.iter().sum();
+    let min_flow_bound = if horizontal_strip {
+        // Horizontal-strip pane: containers stack along the pane's
+        // flow axis. Floor = sum of each container's chrome-only
+        // flow extent (title + title/body gap + padding + stroke +
+        // outer margins) — already pre-computed at the active
+        // openness, so a pane with all containers folded can still
+        // shrink almost to title-only. Below this, egui's
+        // `available_rect_before_wrap` collapses to zero-height and
+        // subsequent Frame allocations overhang their starting
+        // cursor by their bottom-side chrome, making the last
+        // container paint over the previous one.
+        sum_min_flow.max(MIN_USER_FLOW)
+    } else {
+        sum_min.max(MIN_USER_FLOW)
+    };
+    let min_span_bound = if horizontal_strip {
+        max_min.max(MIN_USER_SPAN)
+    } else {
+        MIN_USER_SPAN
+    };
+    let strip_color = |alpha: u8| {
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha)
+    };
+    let paint_indicator = |ui: &egui::Ui, rect: egui::Rect, hovered: bool, dragged: bool| {
+        let alpha: u8 = if dragged {
+            180
+        } else if hovered {
+            110
+        } else {
+            return; // fully invisible at rest
+        };
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::ZERO,
+            strip_color(alpha),
+        );
+    };
+
+    // ── Main-axis handle (inner edge) ──
+    if resize.flow {
+        let t = RESIZE_HANDLE_THICKNESS;
+        let handle_rect = match title_side {
+            // Title at the top → inner edge is the bottom.
+            TitleSide::Top => egui::Rect::from_min_max(
+                egui::pos2(pane_rect.min.x, pane_rect.max.y - t),
+                pane_rect.max,
+            ),
+            // Title at the bottom → inner edge is the top.
+            TitleSide::Bottom => egui::Rect::from_min_max(
+                pane_rect.min,
+                egui::pos2(pane_rect.max.x, pane_rect.min.y + t),
+            ),
+            // Title at the left → inner edge is the right.
+            TitleSide::Left => egui::Rect::from_min_max(
+                egui::pos2(pane_rect.max.x - t, pane_rect.min.y),
+                pane_rect.max,
+            ),
+            // Title at the right → inner edge is the left.
+            TitleSide::Right => egui::Rect::from_min_max(
+                pane_rect.min,
+                egui::pos2(pane_rect.min.x + t, pane_rect.max.y),
+            ),
+        };
+        let id = pane_id.with("frost_pane_resize_main");
+        let resp = ui.interact(handle_rect, id, Sense::click_and_drag());
+        let hovered = resp.hovered();
+        let dragged = resp.dragged();
+        if hovered || dragged {
+            let icon = if horizontal_strip {
+                egui::CursorIcon::ResizeVertical
+            } else {
+                egui::CursorIcon::ResizeHorizontal
+            };
+            ui.ctx().set_cursor_icon(icon);
+        }
+        paint_indicator(ui, handle_rect, hovered, dragged);
+        if dragged {
+            let delta = resp.drag_delta();
+            let flow_delta = if horizontal_strip { delta.y } else { delta.x };
+            // Whether the main-anchored edge is at the FAR side of
+            // the pane (so the handle sits at the NEAR side and
+            // dragging it OUTWARD means a negative delta). This is
+            // a property of the title side — `Bottom` / `Right`
+            // titles always pin the main-max edge, regardless of
+            // which rail the pane lives on.
+            let invert = matches!(title_side, TitleSide::Bottom | TitleSide::Right);
+            let signed = if invert { -flow_delta } else { flow_delta };
+            let cur = user_flow(ui.ctx(), pane_id);
+            // Container-derived floor: vertical-strip panes (LEFT /
+            // RIGHT rails) refuse to shrink below the SUM of their
+            // containers' min widths so each container fits.
+            let new_v = (cur + signed).max(min_flow_bound);
+            set_user_flow(ui.ctx(), pane_id, new_v);
+        }
+    }
+
+    // ── Cross-axis handle(s) ──
+    //
+    // The pane's span axis is parallel to the rail. Which cross
+    // edges are resizable depends on the anchor zone:
+    //   * `Start` is anchored at the cross-min edge, so only the
+    //     cross-max side is resizable.
+    //   * `End` is anchored at the cross-max edge, so only the
+    //     cross-min side is resizable.
+    //   * `Middle` is centred — both cross sides are resizable and
+    //     the pane grows symmetrically about its centre.
+    if resize.span {
+        let t = RESIZE_HANDLE_THICKNESS;
+        // For horizontal-strip panes (TOP / BOTTOM rails) the cross
+        // axis is X; for vertical-strip panes (LEFT / RIGHT rails)
+        // the span axis is Y.
+        let span_min_rect;
+        let span_max_rect;
+        if horizontal_strip {
+            span_min_rect = egui::Rect::from_min_max(
+                pane_rect.min,
+                egui::pos2(pane_rect.min.x + t, pane_rect.max.y),
+            );
+            span_max_rect = egui::Rect::from_min_max(
+                egui::pos2(pane_rect.max.x - t, pane_rect.min.y),
+                pane_rect.max,
+            );
+        } else {
+            span_min_rect = egui::Rect::from_min_max(
+                pane_rect.min,
+                egui::pos2(pane_rect.max.x, pane_rect.min.y + t),
+            );
+            span_max_rect = egui::Rect::from_min_max(
+                egui::pos2(pane_rect.min.x, pane_rect.max.y - t),
+                pane_rect.max,
+            );
+        }
+
+        let icon = if horizontal_strip {
+            egui::CursorIcon::ResizeHorizontal
+        } else {
+            egui::CursorIcon::ResizeVertical
+        };
+
+        let handle_one = |rect: egui::Rect, salt: &'static str, sign: f32, factor: f32| {
+            let id = pane_id.with(salt);
+            let resp = ui.interact(rect, id, Sense::click_and_drag());
+            let hovered = resp.hovered();
+            let dragged = resp.dragged();
+            if hovered || dragged {
+                ui.ctx().set_cursor_icon(icon);
+            }
+            paint_indicator(ui, rect, hovered, dragged);
+            if dragged {
+                let delta = resp.drag_delta();
+                let span_delta = if horizontal_strip { delta.x } else { delta.y };
+                let signed = sign * span_delta * factor;
+                let cur = user_span(ui.ctx(), pane_id);
+                // Container-derived floor: horizontal-strip panes
+                // (TOP / BOTTOM rails) refuse to shrink below the
+                // largest container min width so the widest
+                // container still fits cross-wise.
+                let new_v = (cur + signed).max(min_span_bound);
+                set_user_span(ui.ctx(), pane_id, new_v);
+            }
+        };
+
+        // Pick which cross side(s) are user-resizable from the
+        // pane's actual anchor alignment, not from the rail zone.
+        // `LeftRail::End` for instance has a horizontal-strip title
+        // (cross = X), and its X-min edge is anchored to the LEFT
+        // rail — so the resizable side is the X-MAX (right edge),
+        // even though the rail zone is `End`.
+        let (align, _offset) = layout::anchor_align(anchor);
+        let span_align = if horizontal_strip { align.x() } else { align.y() };
+        match span_align {
+            egui::Align::Min => {
+                // cross-min anchored → grow from cross-max edge.
+                handle_one(span_max_rect, "frost_pane_resize_cross_max", 1.0, 1.0);
+            }
+            egui::Align::Max => {
+                // cross-max anchored → grow from cross-min edge
+                // (drag in the negative direction = grow → flip
+                // sign).
+                handle_one(span_min_rect, "frost_pane_resize_cross_min", -1.0, 1.0);
+            }
+            egui::Align::Center => {
+                // Centred on cross — both edges move symmetrically
+                // about the centre, so each handle's drag delta
+                // contributes 2× to the cross extent.
+                handle_one(span_max_rect, "frost_pane_resize_cross_max", 1.0, 2.0);
+                handle_one(span_min_rect, "frost_pane_resize_cross_min", -1.0, 2.0);
             }
         }
     }
