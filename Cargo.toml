@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/frostcore",
-    "crates/egui_frost",
     "crates/bevy_frost",
     "crates/core",
 ]
@@ -16,24 +14,17 @@ repository = "https://github.com/bresilla/bevy_frost"
 
 [workspace.dependencies]
 # Shared egui / egui-ecosystem dependency versions — every member
-# crate pulls egui through `workspace = true` so the three crates
-# compile against a single resolved egui.
+# crate pulls egui through `workspace = true` so the workspace
+# compiles against a single resolved egui.
 egui = { version = "0.33", default-features = false }
-# egui-snarl and egui_code_editor are now vendored inside
-# `frostcore/src/features/` — see `ACKNOWLEDGEMENTS.md`. No
-# external dep on them any more.
 # bevy + bevy_egui are only used by `bevy_frost`; listed here so
 # the version is managed in one place.
 bevy = { version = "0.18", default-features = false }
 bevy_egui = { version = "0.39", default-features = false }
 
-# Internal crates — kept in the workspace `dependencies` table so a
-# member can say `frostcore = { workspace = true }` without repeating
-# the path.
-frostcore = { path = "crates/frostcore", version = "0.0.1" }
-# Directory is `crates/core/`; package id is `corekit` (avoids
-# shadowing Rust's std `core`). Successor to `frostcore` —
-# see `PLAN_NEWUI.md`.
+# Internal crates — directory is `crates/core/`; package id is
+# `corekit` (avoids shadowing Rust's std `core`). Hosts the entire
+# UI core: panes, ribbons, containers, pods, widgets, theme.
 corekit = { path = "crates/core", version = "0.0.1" }
 
 # `mimalloc` — drop-in global allocator. egui's tessellator + shape

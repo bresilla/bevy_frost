@@ -5,14 +5,15 @@
 //! use bevy_frost::prelude::*;
 //! ```
 //!
-//! Brings in everything `frostcore` exports (widgets, ribbons,
-//! floating panels, node-graph wrapper, code editor, theme
-//! primitives) plus the Bevy-specific additions from this crate —
-//! `FrostPlugin`, `ThemePlugin`, `RibbonPlugin`, `RibbonGhostSet`,
-//! and `GizmoMaterial`.
+//! Brings in everything `corekit` exports (panes, ribbons,
+//! containers, pods, widgets, theme primitives) plus the
+//! Bevy-specific additions from this crate — `FrostPlugin`,
+//! `ThemePlugin`, `RibbonPlugin`, `RibbonGhostSet`, and
+//! `GizmoMaterial`.
 
-pub use frostcore::prelude::*;
+pub use corekit::*;
 
 pub use crate::{
-    gizmo_material::GizmoMaterial, FrostPlugin, RibbonGhostSet, RibbonPlugin, ThemePlugin,
+    gizmo_material::GizmoMaterial, EguiInputAbsorbPlugin, FrostPlugin, RibbonGhostSet,
+    RibbonPlugin, ThemePlugin,
 };

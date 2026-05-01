@@ -32,9 +32,9 @@
 pub mod gizmo_material;
 pub mod prelude;
 
-// Re-export all of frostcore under `bevy_frost::*` so existing
-// consumers don't notice the workspace split.
-pub use frostcore::*;
+// Re-export `corekit` so apps can keep going through `bevy_frost::*`
+// for state types, widgets, the pane / ribbon / pod systems, etc.
+pub use corekit::*;
 
 use bevy::ecs::message::{MessageReader, Messages};
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
@@ -46,71 +46,56 @@ use std::collections::HashSet;
 
 // ─── Theme ──────────────────────────────────────────────────────────
 
-/// Registers [`frostcore::AccentColor`] + [`frostcore::GlassOpacity`]
-/// as Bevy resources and runs [`frostcore::apply_theme`] every frame.
+/// Registers [`corekit::style::AccentColor`] +
+/// [`corekit::style::GlassOpacity`] as Bevy resources and runs
+/// [`corekit::style::apply_theme`] every frame.
 pub struct ThemePlugin;
 
 impl Plugin for ThemePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<frostcore::AccentColor>()
-            .init_resource::<frostcore::GlassOpacity>()
+        app.init_resource::<corekit::style::AccentColor>()
+            .init_resource::<corekit::style::GlassOpacity>()
             .add_systems(PreUpdate, sync_glass_opacity_system)
             .add_systems(EguiPrimaryContextPass, apply_theme_system);
     }
 }
 
-fn sync_glass_opacity_system(opacity: Res<frostcore::GlassOpacity>) {
-    frostcore::set_glass_opacity(opacity.0);
+fn sync_glass_opacity_system(opacity: Res<corekit::style::GlassOpacity>) {
+    corekit::style::set_glass_opacity(opacity.0);
 }
 
 fn apply_theme_system(
     mut contexts: EguiContexts,
-    accent: Res<frostcore::AccentColor>,
-    opacity: Res<frostcore::GlassOpacity>,
+    accent: Res<corekit::style::AccentColor>,
+    opacity: Res<corekit::style::GlassOpacity>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
-    frostcore::apply_theme(ctx, *accent, *opacity);
+    corekit::style::apply_theme(ctx, *accent, *opacity);
 }
 
 // ─── Ribbons ────────────────────────────────────────────────────────
 
-/// SystemSet the ribbon ghost paint lives in. Downstream plugins
-/// can pin their own ribbon-painting panels `.before(RibbonGhostSet)`
-/// to keep the ghost on top of their ribbons.
+/// SystemSet the ribbon paint pipeline lives in. Downstream plugins
+/// can order their own ribbon-painting panels around this set.
 #[derive(SystemSet, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct RibbonGhostSet;
 
-/// Registers the ribbon `Resource`s and the ghost drop-preview
-/// system. [`FrostPlugin`] installs this transitively.
+/// Registers the corekit ribbon `Resource`s + the F12 debug toggle.
+/// [`FrostPlugin`] installs this transitively.
 pub struct RibbonPlugin;
 
 impl Plugin for RibbonPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<frostcore::RibbonLayout>()
-            .init_resource::<frostcore::SideActive>()
-            .init_resource::<frostcore::RibbonOpen>()
-            .init_resource::<frostcore::RibbonWidth>()
-            .init_resource::<frostcore::RibbonPlacement>()
-            .init_resource::<frostcore::RibbonDrag>()
+        app.init_resource::<corekit::ribbon::RibbonOpen>()
+            .init_resource::<corekit::ribbon::RibbonWidth>()
+            .init_resource::<corekit::ribbon::RibbonPlacement>()
+            .init_resource::<corekit::ribbon::RibbonDrag>()
             .configure_sets(
                 EguiPrimaryContextPass,
                 RibbonGhostSet.after(apply_theme_system),
             )
-            .add_systems(
-                EguiPrimaryContextPass,
-                paint_drop_ghost_system.in_set(RibbonGhostSet),
-            )
             .add_systems(EguiPrimaryContextPass, debug_toggle_system);
     }
-}
-
-fn paint_drop_ghost_system(
-    mut contexts: EguiContexts,
-    layout: Res<frostcore::RibbonLayout>,
-    accent: Res<frostcore::AccentColor>,
-) {
-    let Ok(ctx) = contexts.ctx_mut() else { return };
-    frostcore::paint_drop_ghost(ctx, &*layout, *accent);
 }
 
 /// **F12** — toggle egui's "show interactive widget bounds" overlay.

@@ -1,6 +1,6 @@
 [package]
 name = "bevy_frost"
-description = "Bevy integration for the frost glass-themed editor UI kit. Wraps `frostcore` with `Resource`s, a `Plugin` that installs the theme, and the transform-gizmo always-on-top material."
+description = "Bevy integration for the frost glass-themed editor UI kit. Wraps `corekit` with `Resource`s, a `Plugin` that installs the theme, and the transform-gizmo always-on-top material."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,10 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
-frostcore = { workspace = true, features = ["bevy"] }
-# corekit — successor crate (PLAN_NEWUI.md). Used by the `newui`
-# example for the new flex-based pane system.
+# `corekit` is the entire UI core — pane / ribbon / container / pod
+# systems, widgets, theme runtime, vendored fonts. `bevy_frost` is
+# now just the Bevy-specific glue (resource registration, input
+# firewall, gizmo material).
 corekit = { workspace = true, features = ["bevy"] }
 bevy = { workspace = true, features = [
     "std",
@@ -48,8 +49,8 @@ bevy_egui = { workspace = true, features = [
 
 # Faster allocator for the example/demo binary — see the
 # `mimalloc` workspace dep doc for rationale. Pulled into
-# `bevy_frost` directly (not `frostcore`) so the framework-agnostic
-# core stays allocator-neutral.
+# `bevy_frost` directly so the framework-agnostic `corekit` stays
+# allocator-neutral.
 mimalloc = { workspace = true }
 
 [dev-dependencies]
@@ -61,7 +62,3 @@ bevy_glacial = { git = "https://github.com/bresilla/bevy_glacial.git", rev = "d7
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
-
-[[example]]
-name = "newui"
-path = "examples/newui.rs"

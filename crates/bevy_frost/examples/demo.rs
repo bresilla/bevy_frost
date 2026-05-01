@@ -1,978 +1,236 @@
-//! `bevy_frost` widget gallery + layout showcase.
+//! newui — Phase 2 deliverable for `PLAN_NEWUI.md`, plus the same
+//! Bevy 3D scene the existing demo ships (planet + cloud shell +
+//! swatch cubes + sun + chase camera). Clicking a swatch cube
+//! repaints the accent across every visible Pane2 — gives us a way
+//! to verify theme tinting before we add real widgets.
 //!
-//! What this demonstrates:
-//!
-//! * [`FrostPlugin`] install on top of a stock Bevy + `bevy_egui`
-//!   app.
-//! * An empty 3D scene (ground plane + accent cube + light) — a
-//!   stand-in for whatever real application would render into the
-//!   viewport.
-//! * Left / Right [`SideRibbon`] rails, each with **multiple buttons
-//!   that share one panel slot**: clicking any button on a side
-//!   opens its panel *in place* and auto-closes whichever panel was
-//!   already open on that side. Exclusivity is driven by the
-//!   [`SideActive`] resource the crate already ships with.
-//! * Every stateless widget module the crate ships — toggles, drag
-//!   values, sliders, progress bars, colour pickers, buttons,
-//!   subsections, readouts, the whole lot.
-//!
-//! Run with
-//!
-//! ```text
-//! cargo run --example demo
-//! ```
-//!
-//! or `make run` from the repo root once direnv has loaded the flake
-//! (wraps `cargo run --example demo` in `nixVulkan`).
+//! Run with `make run-newui`.
 
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::window::{PresentMode, PrimaryWindow};
-use bevy::winit::WinitSettings;
-use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy::window::PrimaryWindow;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_glacial::prelude::*;
-
-// Drop-in faster allocator. egui's tessellator hammers the global
-// allocator with `Vec::push` / `Vec::reserve`; mimalloc keeps small-
-// allocation throughput much higher under heavy UI heap pressure.
-// Cited measurements (egui#5587): ~120 ms/frame → ~13 ms/frame in
-// degenerate cases. Native-only — wasm uses the system allocator
-// regardless.
-#[cfg(not(target_arch = "wasm32"))]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-use bevy_frost::prelude::*;
-use bevy_frost::code::{frost_code_editor, Syntax};
-use bevy_frost::snarl::{
-    frost_snarl, InPin, InPinId, OutPin, OutPinId, PinInfo, Snarl, SnarlPin, SnarlViewer,
+// Everything UI-side comes from `corekit` now — ribbon types,
+// resources, draw_assembly, theme runtime, pane. That way the
+// ribbon buttons and the panes share a single global theme state
+// (corekit's). Going through `bevy_frost::prelude::*` would hand
+// us `frostcore`'s parallel state, where the buttons never see the
+// PRO/GAME swap.
+use corekit::container::Normal;
+use corekit::pane::{PaneAnchor, Pane2, RailZone};
+use corekit::ribbon::{
+    draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
+    RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,
 };
-use bevy_frost::style::srgb_to_egui;
+use corekit::style::{AccentColor, GlassOpacity, Mode};
 
-// Ribbon + menu identifiers. `RibbonOpen` indexes by ribbon id and
-// holds at most one open menu per ribbon; `draw_assembly` dispatches
-// button clicks using these constants.
-const RIBBON_LEFT: &str = "demo_ribbon_left";
-const RIBBON_RIGHT: &str = "demo_ribbon_right";
-const RIBBON_TOP: &str = "demo_ribbon_top";
-const RIBBON_BOTTOM: &str = "demo_ribbon_bottom";
+// ─── Ribbon / pane ids ──────────────────────────────────────────────
 
-// ─── Command-palette item slices ───────────────────────────────
-//
-// Three slices, picked in `update` based on which (if any)
-// maximizable widget is currently full-window:
-//
-// * `GENERAL_PALETTE_ITEMS` — pane switchers + theme actions.
-//   Used when no widget is maximised; picking an "open_…" item
-//   closes every other open pane so the user lands on a single-
-//   pane layout.
-// * `GRAPH_PALETTE_ITEMS` — scoped to the node graph widget;
-//   active when the graph is maximised (Ctrl+K routes here).
-// * `CODE_PALETTE_ITEMS` — scoped to the code editor; active
-//   when the editor is maximised.
+const RIBBON_LEFT:   &str = "newui_ribbon_left";
+const RIBBON_RIGHT:  &str = "newui_ribbon_right";
+const RIBBON_TOP:    &str = "newui_ribbon_top";
+const RIBBON_BOTTOM: &str = "newui_ribbon_bottom";
 
-const GENERAL_PALETTE_ITEMS: &[PaletteItem] = &[
-    PaletteItem { id: "open_widgets",    label: "Open Widgets pane",    hint: Some("W") },
-    PaletteItem { id: "open_containers", label: "Open Containers pane", hint: Some("C") },
-    PaletteItem { id: "open_scene",      label: "Open Scene pane",      hint: Some("S") },
-    PaletteItem { id: "open_editor",     label: "Open Editor pane",     hint: Some("E") },
-    PaletteItem { id: "open_theme",      label: "Open Theme pane",      hint: Some("T") },
-    PaletteItem { id: "open_keys",       label: "Open Keys pane",       hint: Some("K") },
-    PaletteItem { id: "open_about",      label: "Open About pane",      hint: Some("?") },
-    PaletteItem { id: "close_all",       label: "Close all panes",      hint: None      },
-    PaletteItem { id: "reset_accent",    label: "Reset Accent colour",  hint: None      },
-    PaletteItem { id: "full_glass",      label: "Glass opacity: 100",   hint: None      },
-    PaletteItem { id: "half_glass",      label: "Glass opacity: 50",    hint: None      },
+const PANE_L_S: &str = "newui_pane_LS";
+const PANE_L_M: &str = "newui_pane_LM";
+const PANE_L_E: &str = "newui_pane_LE";
+const PANE_R_S: &str = "newui_pane_RS";
+const PANE_R_M: &str = "newui_pane_RM";
+const PANE_R_E: &str = "newui_pane_RE";
+const PANE_T_S: &str = "newui_pane_TS";
+const PANE_T_M: &str = "newui_pane_TM";
+const PANE_T_E: &str = "newui_pane_TE";
+const PANE_B_S: &str = "newui_pane_BS";
+const PANE_B_M: &str = "newui_pane_BM";
+const PANE_B_E: &str = "newui_pane_BE";
+
+const ACTION_THEME:  &str = "newui_action_theme";
+const ACTION_MODE:   &str = "newui_action_mode";
+const ACTION_PASTEL: &str = "newui_action_pastel";
+
+const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
+    (RIBBON_LEFT,   PANE_L_S, PaneAnchor::LeftRail(RailZone::Start),   "L START"),
+    (RIBBON_LEFT,   PANE_L_M, PaneAnchor::LeftRail(RailZone::Middle),  "L MIDDLE"),
+    (RIBBON_LEFT,   PANE_L_E, PaneAnchor::LeftRail(RailZone::End),     "L END"),
+    (RIBBON_RIGHT,  PANE_R_S, PaneAnchor::RightRail(RailZone::Start),  "R START"),
+    (RIBBON_RIGHT,  PANE_R_M, PaneAnchor::RightRail(RailZone::Middle), "R MIDDLE"),
+    (RIBBON_RIGHT,  PANE_R_E, PaneAnchor::RightRail(RailZone::End),    "R END"),
+    (RIBBON_TOP,    PANE_T_S, PaneAnchor::TopRail(RailZone::Start),    "T START"),
+    (RIBBON_TOP,    PANE_T_M, PaneAnchor::TopRail(RailZone::Middle),   "T MIDDLE"),
+    (RIBBON_TOP,    PANE_T_E, PaneAnchor::TopRail(RailZone::End),      "T END"),
+    (RIBBON_BOTTOM, PANE_B_S, PaneAnchor::BottomRail(RailZone::Start), "B START"),
+    (RIBBON_BOTTOM, PANE_B_M, PaneAnchor::BottomRail(RailZone::Middle),"B MIDDLE"),
+    (RIBBON_BOTTOM, PANE_B_E, PaneAnchor::BottomRail(RailZone::End),   "B END"),
 ];
 
-const GRAPH_PALETTE_ITEMS: &[PaletteItem] = &[
-    PaletteItem { id: "graph_add_number", label: "Graph · Add Number node", hint: None },
-    PaletteItem { id: "graph_add_add",    label: "Graph · Add Add node",    hint: None },
-    PaletteItem { id: "graph_add_output", label: "Graph · Add Output node", hint: None },
-];
-
-const CODE_PALETTE_ITEMS: &[PaletteItem] = &[
-    PaletteItem { id: "code_wipe",  label: "Source · Clear buffer", hint: None },
-    PaletteItem { id: "code_reset", label: "Source · Reset to seed", hint: None },
-];
-
-const MENU_WIDGETS: &str = "demo_menu_widgets";
-const MENU_CONTAINERS: &str = "demo_menu_containers";
-const MENU_SCENE: &str = "demo_menu_scene";
-const MENU_GRAPH: &str = "demo_menu_graph";
-const MENU_THEME: &str = "demo_menu_theme";
-const MENU_KEYS: &str = "demo_menu_keys";
-const MENU_ABOUT: &str = "demo_menu_about";
-
-// One-shot ribbon-button ids — these don't open panels; they cycle
-// the selected swatch cube backward / forward. They demonstrate the
-// per-item `role` override on `RibbonItem`: a single
-// `RibbonRole::Icon` button living inside an otherwise
-// `RibbonRole::Panel` ribbon.
-const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
-const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
-
-/// Four ribbons, one per screen edge — every edge is `ThreeSided`
-/// so each gives three drop slots (`Start` corner, `Middle`, `End`
-/// corner). Each ribbon accepts drops from EVERY other ribbon, so
-/// any button can be dragged to any edge / cluster on the fly. All
-/// `Panel` role here; the kit also supports `Bar` for one-shot
-/// command rows. Mix-and-match per ribbon if needed.
+// All four ribbons accept buttons dragged from each other. With
+// `draggable: true` + the `accepts` list filled in, `draw_assembly`
+// lets the user pick up any button and drop it on any rail/cluster.
+// The pane that opens for that button re-anchors automatically to
+// wherever the button currently lives — drag a "TS" button to the
+// LEFT rail and clicking it now opens at the LEFT rail's start.
 const RIBBONS: &[RibbonDef] = &[
-    RibbonDef {
-        id: RIBBON_LEFT,
-        edge: RibbonEdge::Left,
-        role: RibbonRole::Panel,
-        mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM],
-    },
-    RibbonDef {
-        id: RIBBON_RIGHT,
-        edge: RibbonEdge::Right,
-        role: RibbonRole::Panel,
-        mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
-    },
-    RibbonDef {
-        id: RIBBON_TOP,
-        edge: RibbonEdge::Top,
-        role: RibbonRole::Panel,
-        mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
-    },
-    RibbonDef {
-        id: RIBBON_BOTTOM,
-        edge: RibbonEdge::Bottom,
-        role: RibbonRole::Panel,
-        mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP],
-    },
+    RibbonDef { id: RIBBON_LEFT,   edge: RibbonEdge::Left,   role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM] },
+    RibbonDef { id: RIBBON_RIGHT,  edge: RibbonEdge::Right,  role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM] },
+    RibbonDef { id: RIBBON_TOP,    edge: RibbonEdge::Top,    role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM] },
+    RibbonDef { id: RIBBON_BOTTOM, edge: RibbonEdge::Bottom, role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: true,
+                accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP] },
 ];
 
-/// Initial button layout — each of the four ribbons starts with at
-/// least one button so the user can experiment with dragging across
-/// edges from frame 0. Every entry is movable by the user once
-/// rendered (`draggable: true` on every `RibbonDef`); these are
-/// just first-frame defaults.
 const RIBBON_ITEMS: &[RibbonItem] = &[
-    // LEFT rail — primary navigation cluster.
-    RibbonItem {
-        id: MENU_WIDGETS,
-        ribbon: RIBBON_LEFT,
-        cluster: RibbonCluster::Start,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("apps"),
-        tooltip: "Widgets gallery",
-        child_ribbon: None,
-        role: None,
-    },
-    RibbonItem {
-        id: MENU_CONTAINERS,
-        ribbon: RIBBON_LEFT,
-        cluster: RibbonCluster::Start,
-        slot: 1,
-        glyph: RibbonGlyph::Icon("box"),
-        tooltip: "Containers showcase",
-        child_ribbon: None,
-        role: None,
-    },
-    RibbonItem {
-        id: MENU_SCENE,
-        ribbon: RIBBON_LEFT,
-        cluster: RibbonCluster::Start,
-        slot: 2,
-        glyph: RibbonGlyph::Icon("folder"),
-        tooltip: "Scene outliner",
-        child_ribbon: None,
-        role: None,
-    },
-    // RIGHT rail — theme + input.
-    RibbonItem {
-        id: MENU_THEME,
-        ribbon: RIBBON_RIGHT,
-        cluster: RibbonCluster::Start,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("color"),
-        tooltip: "Theme & colour",
-        child_ribbon: None,
-        role: None,
-    },
-    RibbonItem {
-        id: MENU_KEYS,
-        ribbon: RIBBON_RIGHT,
-        cluster: RibbonCluster::Start,
-        slot: 1,
-        glyph: RibbonGlyph::Icon("keyboard"),
-        tooltip: "Keys & gestures",
-        child_ribbon: None,
-        role: None,
-    },
-    // TOP rail — meta.
-    RibbonItem {
-        id: MENU_ABOUT,
-        ribbon: RIBBON_TOP,
-        cluster: RibbonCluster::Start,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("info"),
-        tooltip: "About this demo",
-        child_ribbon: None,
-        role: None,
-    },
-    // BOTTOM rail — editor surface (graph + code).
-    RibbonItem {
-        id: MENU_GRAPH,
-        ribbon: RIBBON_BOTTOM,
-        cluster: RibbonCluster::Start,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("flowchart"),
-        tooltip: "Editor (graph + source)",
-        child_ribbon: None,
-        role: None,
-    },
-    // ── One-shot cube-cycle buttons ─────────────────────────────────
-    //
-    // Both live in the BOTTOM rail's `End` cluster so they sit at the
-    // opposite corner from the editor button. Each carries a
-    // `role: Some(RibbonRole::Icon)` override — even though
-    // `RIBBON_BOTTOM` is declared `RibbonRole::Panel`, these two
-    // dispatch through the icon path: no panel toggles, no
-    // selected-state, just a one-shot click that fires an action.
-    RibbonItem {
-        id: ACTION_PREV_CUBE,
-        ribbon: RIBBON_BOTTOM,
-        cluster: RibbonCluster::End,
-        slot: 0,
-        glyph: RibbonGlyph::Icon("arrow-left"),
-        tooltip: "Select previous cube",
-        child_ribbon: None,
-        role: Some(RibbonRole::Icon),
-    },
-    RibbonItem {
-        id: ACTION_NEXT_CUBE,
-        ribbon: RIBBON_BOTTOM,
-        cluster: RibbonCluster::End,
-        slot: 1,
-        glyph: RibbonGlyph::Icon("arrow-right"),
-        tooltip: "Select next cube",
-        child_ribbon: None,
-        role: Some(RibbonRole::Icon),
-    },
+    RibbonItem { id: PANE_L_S, ribbon: RIBBON_LEFT,   cluster: RibbonCluster::Start,  slot: 0,
+                 glyph: RibbonGlyph::Text("LS"), tooltip: "Left rail · Start", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_L_M, ribbon: RIBBON_LEFT,   cluster: RibbonCluster::Middle, slot: 0,
+                 glyph: RibbonGlyph::Text("LM"), tooltip: "Left rail · Middle", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_L_E, ribbon: RIBBON_LEFT,   cluster: RibbonCluster::End,    slot: 0,
+                 glyph: RibbonGlyph::Text("LE"), tooltip: "Left rail · End", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_R_S, ribbon: RIBBON_RIGHT,  cluster: RibbonCluster::Start,  slot: 0,
+                 glyph: RibbonGlyph::Text("RS"), tooltip: "Right rail · Start", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_R_M, ribbon: RIBBON_RIGHT,  cluster: RibbonCluster::Middle, slot: 0,
+                 glyph: RibbonGlyph::Text("RM"), tooltip: "Right rail · Middle", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_R_E, ribbon: RIBBON_RIGHT,  cluster: RibbonCluster::End,    slot: 0,
+                 glyph: RibbonGlyph::Text("RE"), tooltip: "Right rail · End", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_T_S, ribbon: RIBBON_TOP,    cluster: RibbonCluster::Start,  slot: 0,
+                 glyph: RibbonGlyph::Text("TS"), tooltip: "Top rail · Start", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_T_M, ribbon: RIBBON_TOP,    cluster: RibbonCluster::Middle, slot: 0,
+                 glyph: RibbonGlyph::Text("TM"), tooltip: "Top rail · Middle", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_T_E, ribbon: RIBBON_TOP,    cluster: RibbonCluster::End,    slot: 0,
+                 glyph: RibbonGlyph::Text("TE"), tooltip: "Top rail · End", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_B_S, ribbon: RIBBON_BOTTOM, cluster: RibbonCluster::Start,  slot: 0,
+                 glyph: RibbonGlyph::Text("BS"), tooltip: "Bottom rail · Start", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_B_M, ribbon: RIBBON_BOTTOM, cluster: RibbonCluster::Middle, slot: 0,
+                 glyph: RibbonGlyph::Text("BM"), tooltip: "Bottom rail · Middle", child_ribbon: None, role: None },
+    RibbonItem { id: PANE_B_E, ribbon: RIBBON_BOTTOM, cluster: RibbonCluster::End,    slot: 0,
+                 glyph: RibbonGlyph::Text("BE"), tooltip: "Bottom rail · End", child_ribbon: None, role: None },
+    RibbonItem { id: ACTION_THEME, ribbon: RIBBON_TOP, cluster: RibbonCluster::Middle, slot: 1,
+                 glyph: RibbonGlyph::Text("⊕"), tooltip: "Cycle theme (PRO ↔ GAME)",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: ACTION_MODE,  ribbon: RIBBON_TOP, cluster: RibbonCluster::Middle, slot: 2,
+                 glyph: RibbonGlyph::Text("☼"), tooltip: "Cycle mode (Dark ↔ Light)",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: ACTION_PASTEL, ribbon: RIBBON_TOP, cluster: RibbonCluster::Middle, slot: 3,
+                 glyph: RibbonGlyph::Text("◐"), tooltip: "Toggle pastel accent",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
 ];
 
-fn main() {
-    let mut window = WindowGeometry::load("bevy_frost_demo").to_window("bevy_frost demo");
-    // `Mailbox` swap-chain — vsync still on (no tearing) but the GPU
-    // always presents the newest frame instead of stalling on a queue.
-    window.present_mode = PresentMode::Mailbox;
+// ─── Theme + scene state ───────────────────────────────────────────
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(window),
-            ..default()
-        }))
-        .add_plugins(EguiPlugin::default())
-        .add_plugins(FrostPlugin)
-        .add_plugins(WindowSettingsPlugin::new("bevy_frost_demo"))
-        // bevy_glacial — the demo's camera, grid, selection ring,
-        // and gizmo helpers all come from this crate. Replaces
-        // the demo's previously hand-rolled `ChaseCamera`,
-        // `GroundGrid`, `update_grid`, `camera_control`,
-        // `camera_zoom`, and `apply_rig`.
-        .add_plugins(GlacialPlugins)
-        // Match the sky (fog) tone: deep dusk blue. `ClearColor`
-        // is what pixels hit when nothing else is rendered, so it
-        // sets the visible "sky" beyond the cloud shell.
-        .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
-        // Darker grid lines — slate-blue at lower alpha so the
-        // grid reads as "soft contour map" against the dusk sky
-        // instead of glowing white.
-        .insert_resource(GroundGrid {
-            visible: true,
-            color: Color::srgba(0.30, 0.38, 0.50, 0.42),
-        })
-        // Reactive runner — Bevy stops polling at full speed when
-        // nothing's changing. Frames fire on input events, window
-        // events, or whenever egui requests a redraw (which our
-        // animations do via `request_repaint_after`). Idle CPU
-        // drops to near zero; the GPU stays cool; battery life
-        // and thermal headroom both improve. When the user
-        // actually does something, the next frame fires
-        // immediately so input-to-paint latency stays at one
-        // frame. Best fit for an editor / tool app like this.
-        .insert_resource(WinitSettings::desktop_app())
-        .add_systems(Startup, trim_egui_systems)
-        .init_resource::<DemoState>()
-        .init_resource::<SelectedSwatch>()
-        // `GroundGrid` resource is auto-inserted by
-        // `GroundGridPlugin`; camera control + grid follow
-        // systems likewise come from `GlacialPlugins`. Demo
-        // only keeps the cube-picking + swatch-selection bits.
-        .add_systems(Startup, setup_scene)
-        .add_systems(
-            Update,
-            (
-                pick_cube,
-                update_swatch_selection,
-            )
-                .chain(),
-        )
-        .add_systems(EguiPrimaryContextPass, (draw_ribbons, draw_panels).chain())
-        .run();
-}
+#[derive(Resource, Clone, Copy, Debug)]
+struct ThemeFamily(u8);
+impl Default for ThemeFamily { fn default() -> Self { Self(0) } }
 
-/// Trim bevy_egui's per-frame work for our use case — single
-/// primary context, no file drag-and-drop, no non-window pointer
-/// devices. Each disabled subsystem skips a `PreUpdate` translation
-/// pass from Bevy events into egui events.
-fn trim_egui_systems(
-    mut globals: ResMut<bevy_egui::EguiGlobalSettings>,
-    mut contexts: Query<&mut bevy_egui::EguiContextSettings>,
-) {
-    // We only ever spawn the primary context — no off-screen render
-    // targets, no secondary windows. Drops the per-frame system
-    // that polls non-window contexts for focus updates.
-    globals.enable_focused_non_window_context_updates = false;
-    for mut s in &mut contexts {
-        // Drop input subsystems we don't use:
-        //   - file DnD (no drop targets in this app)
-        //   - pointer events from non-window devices (we only have
-        //     the primary cursor)
-        //   - touch on non-window devices
-        s.input_system_settings
-            .run_write_file_dnd_messages_system = false;
-        s.input_system_settings
-            .run_write_non_window_pointer_moved_messages_system = false;
-        s.input_system_settings
-            .run_write_non_window_touch_messages_system = false;
-    }
-}
+#[derive(Resource, Clone, Copy, Debug)]
+struct ThemeModeRes(u8);
+impl Default for ThemeModeRes { fn default() -> Self { Self(0) } }
 
-// ─── Demo state — the values the widgets actually bind to ───────────
+/// Toggles `Theme::pastel_accent`. `true` (default) → accents flow
+/// through `adapt_accent_to_mode` (whiter accents pulled to less
+/// luminance, darker ones lifted) — the readable-on-any-surface
+/// pastel pull. `false` → raw user-picked accent, neon-saturated.
+#[derive(Resource, Clone, Copy, Debug)]
+struct PastelToggle(bool);
+impl Default for PastelToggle { fn default() -> Self { Self(true) } }
 
-#[derive(Resource)]
-struct DemoState {
-    // Sample values.
-    power: bool,
-    headlights: bool,
-    gravity: f64,
-    speed_limit: f64,
-    engine_power: f64,
-    throttle: f64,
-    brake: f64,
-    fuel_fraction: f32,
-    position: [f64; 3],
-    rotation_deg: [f64; 3],
-
-    // Scene outliner — list of fake entities, a transient
-    // `selected` (set by row click), and a durable `following`
-    // (set by the right-edge radio only).
-    scene_entities: Vec<String>,
-    scene_selected: Option<usize>,
-    scene_following: Option<usize>,
-    /// Bumped every time you double-click a row — demo readout that
-    /// proves the body's double-click is independent of the radio.
-    scene_double_click_count: u32,
-
-    // Scene-graph outliner (tree widget) — a recursive fake USD
-    // stage with per-node visibility / lock / select-restrict flags
-    // and a filter dropdown at the top of the panel.
-    scene_tree: Vec<SceneNode>,
-    scene_tree_selected: Option<String>,
-    scene_filter: usize,
-
-    // Per-section scroll heights — each scroll area has its own
-    // drag grip at its bottom edge that mutates its height
-    // independently (like the bottom border handle on a resizable
-    // panel). Lets the user grow whichever list they're working in.
-    scene_scroll_h: f32,
-    flat_scroll_h: f32,
-
-    // RGBA demo colour — bound to `color_rgba` in the Theme panel to
-    // showcase the alpha-capable variant of the inline colour picker.
-    tint_rgba: [f32; 4],
-
-    // Node-graph state for the Graph panel — the `Snarl<GraphNode>`
-    // holds the graph data (nodes + connections) and `GraphViewer`
-    // is the frost-styled viewer that drives rendering.
-    graph: Snarl<GraphNode>,
-    graph_viewer: GraphViewer,
-
-    // Code-editor buffer for the Code panel. Seed text shows off
-    // the Rust syntax highlighter.
-    code: String,
-
-    // Scene-tree filter text — bound to `search_field` at the top
-    // of the Elements pane. Case-insensitively matches node names
-    // and paths; passed into `draw_scene_tree` each frame.
-    scene_query: String,
-
-    // Buffer for the last path the user copied via the tree's
-    // right-click "Copy path" context-menu action. Shown in the
-    // status bar so the demo proves the menu wired up.
-    copied_path: Option<String>,
-
-    // Cmd-K / Ctrl-K command palette. Caller owns the state so
-    // the key handler opens it; the widget toggles `open` back off
-    // on escape / selection.
-    palette: CommandPaletteState,
-}
-
-impl Default for DemoState {
-    fn default() -> Self {
-        Self {
-            power: true,
-            headlights: false,
-            gravity: 9.81,
-            speed_limit: 24.0,
-            engine_power: 180.0,
-            throttle: 0.35,
-            brake: 0.0,
-            fuel_fraction: 0.72,
-            position: [0.0, 1.5, 0.0],
-            rotation_deg: [0.0, 45.0, 0.0],
-            scene_entities: vec![
-                "Planet".to_string(),
-                "CloudShell".to_string(),
-                "Sun".to_string(),
-                "Grid[L0]".to_string(),
-                "Grid[L1]".to_string(),
-                "Grid[L2]".to_string(),
-                "OriginCube".to_string(),
-            ],
-            scene_selected: Some(0),
-            scene_following: None,
-            scene_double_click_count: 0,
-            scene_tree: default_scene_tree(),
-            scene_tree_selected: Some("/World/Robot/base_link".into()),
-            scene_filter: 0,
-            // Default = 8 visible rows worth of height. Anything
-            // past that scrolls; the user can drag the grip down to
-            // reveal more at once, up to the content's natural
-            // height (the widget clamps — can't pad with empty
-            // space past the content end).
-            scene_scroll_h: TREE_ROW_H * 8.0,
-            flat_scroll_h: HYBRID_SELECT_ROW_H * 8.0,
-            tint_rgba: [0.30, 0.70, 0.95, 0.60],
-            graph: default_graph(),
-            graph_viewer: GraphViewer,
-            code: default_code(),
-            scene_query: String::new(),
-            copied_path: None,
-            palette: CommandPaletteState::default(),
-        }
-    }
-}
-
-// ─── Graph (egui-snarl) data + viewer ──────────────────────────────
-
-/// Nodes in the demo graph. Kept deliberately small so the focus is
-/// on wiring / UI — Number sources a value, Add sums two inputs,
-/// Output shows the arriving value.
-#[derive(Clone)]
-enum GraphNode {
-    Number(f64),
-    Add,
-    Output,
-}
-
-impl GraphNode {
-    fn title(&self) -> &'static str {
-        match self {
-            GraphNode::Number(_) => "Number",
-            GraphNode::Add => "Add",
-            GraphNode::Output => "Output",
-        }
-    }
-    fn inputs(&self) -> usize {
-        match self {
-            GraphNode::Number(_) => 0,
-            GraphNode::Add => 2,
-            GraphNode::Output => 1,
-        }
-    }
-    fn outputs(&self) -> usize {
-        match self {
-            GraphNode::Number(_) => 1,
-            GraphNode::Add => 1,
-            GraphNode::Output => 0,
-        }
-    }
-}
-
-fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
-    match snarl.get_node(pin.id.node) {
-        Some(GraphNode::Number(v)) => *v,
-        Some(GraphNode::Add) => {
-            let mut sum = 0.0;
-            for i in 0..2 {
-                let in_pin = snarl.in_pin(InPinId {
-                    node: pin.id.node,
-                    input: i,
-                });
-                for remote in &in_pin.remotes {
-                    let out_pin = snarl.out_pin(*remote);
-                    sum += eval_output(snarl, &out_pin);
-                }
-            }
-            sum
-        }
-        _ => 0.0,
-    }
-}
-
-fn eval_input(snarl: &Snarl<GraphNode>, pin: &InPin) -> f64 {
-    pin.remotes
-        .iter()
-        .map(|remote| eval_output(snarl, &snarl.out_pin(*remote)))
-        .sum()
-}
-
-#[derive(Default)]
-struct GraphViewer;
-
-impl SnarlViewer<GraphNode> for GraphViewer {
-    fn title(&mut self, node: &GraphNode) -> String {
-        node.title().into()
-    }
-    fn inputs(&mut self, node: &GraphNode) -> usize {
-        node.inputs()
-    }
-    fn outputs(&mut self, node: &GraphNode) -> usize {
-        node.outputs()
-    }
-
-    fn show_input(
-        &mut self,
-        pin: &InPin,
-        ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
-    ) -> impl SnarlPin + 'static {
-        match snarl.get_node(pin.id.node) {
-            Some(GraphNode::Add) => {
-                let name = if pin.id.input == 0 { "a" } else { "b" };
-                if pin.remotes.is_empty() {
-                    ui.label(format!("{name} = 0"));
-                } else {
-                    ui.label(format!("{name} = {:.2}", eval_input(snarl, pin)));
-                }
-            }
-            Some(GraphNode::Output) => {
-                let v = eval_input(snarl, pin);
-                ui.label(format!("= {v:.3}"));
-            }
-            _ => {}
-        }
-        PinInfo::circle()
-    }
-
-    fn show_output(
-        &mut self,
-        pin: &OutPin,
-        ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
-    ) -> impl SnarlPin + 'static {
-        if let Some(GraphNode::Number(v)) = snarl.get_node_mut(pin.id.node) {
-            ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
-        } else if let Some(GraphNode::Add) = snarl.get_node(pin.id.node) {
-            let v = eval_output(snarl, pin);
-            ui.label(format!("= {v:.3}"));
-        }
-        PinInfo::circle()
-    }
-
-    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<GraphNode>) -> bool {
-        true
-    }
-
-    fn show_graph_menu(
-        &mut self,
-        pos: egui::Pos2,
-        ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
-    ) {
-        ui.label("Add node");
-        if ui.button("Number").clicked() {
-            snarl.insert_node(pos, GraphNode::Number(0.0));
-            ui.close();
-        }
-        if ui.button("Add").clicked() {
-            snarl.insert_node(pos, GraphNode::Add);
-            ui.close();
-        }
-        if ui.button("Output").clicked() {
-            snarl.insert_node(pos, GraphNode::Output);
-            ui.close();
-        }
-    }
-}
-
-/// Seed: `2 + 3 → Output` so the panel opens with something to look
-/// at. Right-click the canvas for `Add node` to extend.
-fn default_graph() -> Snarl<GraphNode> {
-    let mut g = Snarl::new();
-    let a = g.insert_node(egui::pos2(30.0, 40.0), GraphNode::Number(2.0));
-    let b = g.insert_node(egui::pos2(30.0, 130.0), GraphNode::Number(3.0));
-    let add = g.insert_node(egui::pos2(220.0, 80.0), GraphNode::Add);
-    let out = g.insert_node(egui::pos2(420.0, 80.0), GraphNode::Output);
-    g.connect(
-        OutPinId { node: a, output: 0 },
-        InPinId { node: add, input: 0 },
-    );
-    g.connect(
-        OutPinId { node: b, output: 0 },
-        InPinId { node: add, input: 1 },
-    );
-    g.connect(
-        OutPinId { node: add, output: 0 },
-        InPinId { node: out, input: 0 },
-    );
-    g
-}
-
-/// A stand-in for a USD prim or Bevy entity — one row in the scene
-/// outliner tree. Mirrors the shape the tree widget expects: caller
-/// owns `children` + `expanded`, and the filter/visibility/lock
-/// flags are state the widget presents but doesn't store.
-#[derive(Clone)]
-struct SceneNode {
-    path: String,
-    name: String,
-    kind: NodeKind,
-    visible: bool,
-    locked: bool,
-    expanded: bool,
-    children: Vec<SceneNode>,
-    /// Bound-material colour — painted as a `TreeIconKind::Color`
-    /// swatch in the row gutter so "where is the red thing"
-    /// is answerable at a glance.
-    material: egui::Color32,
-    /// Small set of categorical flags rendered as chips /
-    /// `badge_row` entries alongside the path readout.
-    flags: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum NodeKind {
-    Group,
-    Mesh,
-    Light,
-    Camera,
-}
-
-impl NodeKind {
-    fn glyph(self) -> &'static str {
-        match self {
-            NodeKind::Group => "folder",
-            NodeKind::Mesh => "cube",
-            NodeKind::Light => "lightbulb",
-            NodeKind::Camera => "camera",
-        }
-    }
-}
-
-/// Options shown in the filter dropdown. Index 0 = no filter.
-const SCENE_FILTERS: &[&str] = &["All kinds", "Meshes only", "Lights only", "Cameras only"];
-
-fn default_scene_tree() -> Vec<SceneNode> {
-    fn node(
-        path: &str,
-        name: &str,
-        kind: NodeKind,
-        expanded: bool,
-        material: egui::Color32,
-        flags: &'static [&'static str],
-        children: Vec<SceneNode>,
-    ) -> SceneNode {
-        SceneNode {
-            path: path.into(),
-            name: name.into(),
-            kind,
-            visible: true,
-            locked: false,
-            expanded,
-            children,
-            material,
-            flags,
-        }
-    }
-    let red = egui::Color32::from_rgb(0xE0, 0x43, 0x3B);
-    let green = egui::Color32::from_rgb(0x7F, 0xB4, 0x35);
-    let blue = egui::Color32::from_rgb(0x2E, 0x83, 0xE6);
-    let yellow = egui::Color32::from_rgb(0xF5, 0xA5, 0x24);
-    let grey = egui::Color32::from_rgb(0x70, 0x70, 0x70);
-    vec![node(
-        "/World",
-        "World",
-        NodeKind::Group,
-        true,
-        grey,
-        &[],
-        vec![
-            node(
-                "/World/Robot",
-                "Robot",
-                NodeKind::Group,
-                true,
-                red,
-                &["rig"],
-                vec![
-                    node("/World/Robot/base_link", "base_link", NodeKind::Mesh, false, red, &[], vec![]),
-                    node(
-                        "/World/Robot/arm",
-                        "arm",
-                        NodeKind::Group,
-                        false,
-                        red,
-                        &["anim"],
-                        vec![
-                            node("/World/Robot/arm/shoulder", "shoulder", NodeKind::Mesh, false, red, &["anim"], vec![]),
-                            node("/World/Robot/arm/elbow", "elbow", NodeKind::Mesh, false, red, &["anim"], vec![]),
-                            node("/World/Robot/arm/gripper", "gripper", NodeKind::Mesh, false, red, &["anim", "inst"], vec![]),
-                        ],
-                    ),
-                ],
-            ),
-            node(
-                "/World/Environment",
-                "Environment",
-                NodeKind::Group,
-                true,
-                grey,
-                &[],
-                vec![
-                    node("/World/Environment/Ground", "Ground", NodeKind::Mesh, false, green, &["subdiv"], vec![]),
-                    node(
-                        "/World/Environment/Lights",
-                        "Lights",
-                        NodeKind::Group,
-                        false,
-                        yellow,
-                        &[],
-                        vec![
-                            node("/World/Environment/Lights/Key", "KeyLight", NodeKind::Light, false, yellow, &["anim"], vec![]),
-                            node("/World/Environment/Lights/Fill", "FillLight", NodeKind::Light, false, yellow, &[], vec![]),
-                        ],
-                    ),
-                    node("/World/Environment/SkyDome", "SkyDome", NodeKind::Mesh, false, blue, &["var"], vec![]),
-                ],
-            ),
-            node("/World/Camera", "Camera", NodeKind::Camera, false, grey, &["linked"], vec![]),
-        ],
-    )]
-}
-
-/// Walk one node + its descendants and render a [`tree_row`] per
-/// visible entry. Children are only painted when the parent's
-/// `expanded` flag is set. `filter` (0 = no filter) hides nodes
-/// whose kind doesn't match; `query` (case-insensitive substring)
-/// further filters by name — group nodes stay visible when any
-/// descendant passes either filter so the path to a leaf is
-/// never hidden. Shift-click on the chevron expands / collapses
-/// the whole subtree at once.
-fn draw_scene_tree(
-    ui: &mut egui::Ui,
-    nodes: &mut [SceneNode],
-    depth: u32,
-    selected: &mut Option<String>,
-    filter: usize,
-    query: &str,
-    accent: egui::Color32,
-    copied_path: &mut Option<String>,
-) {
-    // A single "dummy" bool reused across every row for the
-    // read-only `Color` slot — its state is ignored but the API
-    // wants a `&mut bool`.
-    for node in nodes.iter_mut() {
-        if !node_passes_filters(node, filter, query) {
-            continue;
-        }
-        let is_branch = !node.children.is_empty();
-        let is_selected = selected.as_deref() == Some(node.path.as_str());
-        let path_for_click = node.path.clone();
-        // Split the borrow: `material` is the `Color32` we want to
-        // paint in the gutter, `slots` mutates only the two bool
-        // flags. Rust's disjoint-field rule lets us do both.
-        let mat = node.material;
-        // Per-row uniform gutter: eye + lock + material colour
-        // swatch. Every row has exactly these three slots in the
-        // same order.
-        let mut swatch_dummy = false;
-        let mut slots = [
-            TreeIconSlot::new(TreeIconKind::Eye, &mut node.visible)
-                .with_tooltip("visibility"),
-            TreeIconSlot::new(TreeIconKind::Lock, &mut node.locked)
-                .with_tooltip("lock transform"),
-            TreeIconSlot::new(TreeIconKind::Color(mat), &mut swatch_dummy)
-                .with_tooltip("material colour"),
-        ];
-        let resp = tree_row(
-            ui,
-            node.path.as_str(),
-            depth,
-            if is_branch { Some(&mut node.expanded) } else { None },
-            Some(node.kind.glyph()),
-            &node.name,
-            is_selected,
-            accent,
-            &mut slots,
-        );
-        if resp.body.clicked() {
-            *selected = Some(path_for_click.clone());
-        }
-        // Shift-click the chevron → recursively expand /
-        // collapse the whole subtree under this node.
-        if resp.chevron_shift_clicked {
-            let new_state = !node.expanded;
-            node.expanded = new_state;
-            set_subtree_expanded(&mut node.children, new_state);
-        }
-        // Right-click the row body → frost-styled context menu
-        // with actions scoped to this prim.
-        let path_for_menu = node.path.clone();
-        context_menu_frost(&resp.body, accent, |ui| {
-            if wide_button(ui, "Copy path", accent).clicked() {
-                *copied_path = Some(path_for_menu.clone());
-                ui.close();
-            }
-            if wide_button(ui, "Expand subtree", accent).clicked() {
-                // Handled here instead of via `chevron_shift_clicked`
-                // so the user can also reach this from the menu.
-                // We flip the OUTER node's flag + descendants.
-                ui.close();
-            }
-        });
-        if is_branch && node.expanded {
-            draw_scene_tree(
-                ui,
-                &mut node.children,
-                depth + 1,
-                selected,
-                filter,
-                query,
-                accent,
-                copied_path,
-            );
-        }
-    }
-}
-
-/// Recursively set `expanded` on every node in the subtree.
-/// Called when the user shift-clicks a chevron.
-fn set_subtree_expanded(nodes: &mut [SceneNode], open: bool) {
-    for n in nodes.iter_mut() {
-        n.expanded = open;
-        set_subtree_expanded(&mut n.children, open);
-    }
-}
-
-/// Walk the tree and return the node whose path matches — used
-/// to resolve the currently-selected prim back to its `flags` for
-/// `badge_row` rendering.
-fn find_node<'a>(nodes: &'a [SceneNode], path: &str) -> Option<&'a SceneNode> {
-    for n in nodes {
-        if n.path == path {
-            return Some(n);
-        }
-        if let Some(found) = find_node(&n.children, path) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// Does this node (or any descendant) match the filter? Group nodes
-/// pass when *any* of their children pass, so the path to a leaf is
-/// never hidden by the filter.
-fn node_passes_filters(node: &SceneNode, filter: usize, query: &str) -> bool {
-    let kind_ok = match filter {
-        1 => matches!(node.kind, NodeKind::Mesh),
-        2 => matches!(node.kind, NodeKind::Light),
-        3 => matches!(node.kind, NodeKind::Camera),
-        _ => true,
-    };
-    let query_ok = query.is_empty()
-        || node.name.to_lowercase().contains(query)
-        || node.path.to_lowercase().contains(query);
-    if kind_ok && query_ok {
-        return true;
-    }
-    // Groups pass when any descendant does — keeps the path to a
-    // matching leaf visible instead of hiding the parent chain.
-    if matches!(node.kind, NodeKind::Group)
-        && node.children.iter().any(|c| node_passes_filters(c, filter, query))
-    {
-        return true;
-    }
-    false
-}
-
-// Kept as a thin wrapper for any old caller — delegates to the
-// new two-arg filter with an empty query.
-#[allow(dead_code)]
-fn node_passes_filter(node: &SceneNode, filter: usize) -> bool {
-    let kind_ok = match filter {
-        1 => matches!(node.kind, NodeKind::Mesh),
-        2 => matches!(node.kind, NodeKind::Light),
-        3 => matches!(node.kind, NodeKind::Camera),
-        _ => true,
-    };
-    if kind_ok {
-        return true;
-    }
-    // Groups are kept if any descendant matches.
-    matches!(node.kind, NodeKind::Group)
-        && node.children.iter().any(|c| node_passes_filter(c, filter))
-}
-
-// ─── Scene setup ────────────────────────────────────────────────────
-//
-// Stripped-down copy of gearbox's "globe" scene: a curved, Earth-
-// sized tan planet sphere for ground, a translucent cloud shell a
-// few km above it, a LOD line-grid that tracks the camera with
-// per-level fade + major/minor line emphasis + radial edge fade,
-// atmospheric distance fog for horizon falloff, and a cascaded sun.
-
-/// Earth radius in metres.
-const PLANET_RADIUS: f32 = 6_371_000.0;
-/// How high above the ground the cloud shell sits.
-const CLOUD_ALTITUDE_M: f32 = 4_000.0;
-
-// ── Grid LOD constants (copied from gearbox_viz::grid) ──────────────
-
-/// Tag + swatch colour carried on each clickable cube — picked up
-/// by [`pick_cube`] when the user left-clicks one. `base_color` is
-/// the Bevy material colour we reinstate when deselected, so the
-/// selection effect can mutate the material's emissive without
-/// stomping on the base tint.
+/// Marker + per-cube data for the swatch cubes — clicking one
+/// repaints `AccentColor` and lifts the cube in the scene.
 #[derive(Component)]
 struct ColorCube {
     egui_col: egui::Color32,
     base_color: Color,
 }
 
-/// Which swatch is currently selected — updated by [`pick_cube`]
-/// and read by [`update_swatch_selection`] to lift + glow the
-/// winning cube.
 #[derive(Resource, Default)]
 struct SelectedSwatch(Option<Entity>);
 
-// `ChaseCamera`, `GroundGrid`, `LocalGrid`, `apply_rig`,
-// `build_level_mesh`, `update_grid`, `camera_control`, and
-// `camera_zoom` — all hand-rolled in earlier versions of this demo —
-// have been replaced by the equivalents in `bevy_glacial`. The
-// `GlacialPlugins` plugin group registered above wires them up.
+const PLANET_RADIUS: f32 = 6_371_000.0;
+const CLOUD_ALTITUDE_M: f32 = 4_000.0;
+
+// ─── App ───────────────────────────────────────────────────────────
+
+fn main() {
+    // `bevy_glacial::WindowSettingsPlugin` persists the primary
+    // window's size + position to
+    // `${XDG_CONFIG_HOME:-~/.config}/newui/window.txt`. Load the
+    // saved geometry up-front so the first paint uses it; the
+    // plugin (registered below) writes back on resize / move.
+    let geometry = WindowGeometry::load("newui");
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(geometry.to_window("newui — Phase 2")),
+                    ..default()
+                })
+                // Surface egui's debug-level chatter (request_discard
+                // reasons, id-collision diagnostics, etc.) on stdout
+                // so we can see WHY a particular frame triggered a
+                // PERF overlay or an id-clash 🔥 marker. Bevy's
+                // default filter is INFO, which hides everything
+                // egui logs below WARN. Override with `RUST_LOG=...`
+                // at runtime if you want even more.
+                .set(bevy::log::LogPlugin {
+                    level: bevy::log::Level::DEBUG,
+                    filter: "info,wgpu=error,bevy_render=error,bevy_winit=error,naga=warn,\
+                             egui=debug,egui_flex=debug,corekit=debug,bevy_frost=debug"
+                        .into(),
+                    ..default()
+                }),
+        )
+        .add_plugins(bevy_egui::EguiPlugin::default())
+        // No `FrostPlugin` — that wires `frostcore`'s theme runtime
+        // and ribbon resources, which would shadow the ones we
+        // initialise from `corekit` below. We register corekit's
+        // resources manually and run `apply_theme` inside
+        // `ui_system`, which is enough to drive PRO/GAME for both
+        // the ribbon buttons (corekit's draw_assembly + paint) AND
+        // the panes (Pane2).
+        //
+        // We DO add `EguiInputAbsorbPlugin` — drains
+        // `Messages<MouseWheel>` whenever the cursor sits over a
+        // frost pane, so scrolling inside a pane doesn't also
+        // drive `bevy_glacial`'s chase-camera zoom.
+        .add_plugins(bevy_frost::EguiInputAbsorbPlugin)
+        .add_plugins(GlacialPlugins)
+        .add_plugins(WindowSettingsPlugin::new("newui"))
+        .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
+        .insert_resource(GroundGrid {
+            visible: true,
+            color: Color::srgba(0.30, 0.38, 0.50, 0.42),
+        })
+        // corekit ribbon resources (the bevy feature derives Resource
+        // on each via cfg_attr).
+        .init_resource::<AccentColor>()
+        .init_resource::<GlassOpacity>()
+        .init_resource::<RibbonOpen>()
+        .init_resource::<RibbonPlacement>()
+        .init_resource::<RibbonDrag>()
+        .init_resource::<ThemeFamily>()
+        .init_resource::<ThemeModeRes>()
+        .init_resource::<PastelToggle>()
+        .init_resource::<SelectedSwatch>()
+        .add_systems(Startup, setup_scene)
+        .add_systems(Update, (pick_cube, update_swatch_selection))
+        .add_systems(EguiPrimaryContextPass, ui_system)
+        .run();
+}
+
+// ─── Scene setup (mirrors the demo's planet + cube grid + sun) ─────
 
 fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // ── Planet sphere — huge, warm tan ground. y=-radius so tangent
-    //    point (the local "floor") is at world y=0.
+    // Planet sphere — warm tan ground, tangent at world y=0.
     let planet_mesh = meshes.add(Sphere::new(PLANET_RADIUS).mesh().uv(1024, 512));
     let planet_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.62, 0.48, 0.33),
@@ -988,9 +246,7 @@ fn setup_scene(
         NotShadowReceiver,
     ));
 
-    // ── Cloud shell — translucent white sphere slightly larger than
-    //    the planet, gives you a sky to look at without requiring a
-    //    full textured cloud layer.
+    // Cloud shell — translucent white sphere.
     let shell_radius = PLANET_RADIUS + CLOUD_ALTITUDE_M;
     let cloud_mesh = meshes.add(Sphere::new(shell_radius).mesh().uv(64, 32));
     let cloud_mat = materials.add(StandardMaterial {
@@ -1010,22 +266,15 @@ fn setup_scene(
         NotShadowCaster,
     ));
 
-    // The LOD ground grid is spawned + driven by
-    // `bevy_glacial::GroundGridPlugin` (registered above via
-    // `GlacialPlugins`). No manual setup needed here.
-
-    // ── Swatch cubes — 3 × 2 grid of 1×1×1 m cubes, each a
-    //    different colour. Clicking one sets the app's `AccentColor`
-    //    (whole UI re-tints) and marks it as selected so it lifts +
-    //    glows in the scene.
+    // Swatch cubes — 3 × 2 grid, click to repaint the accent.
     let cube_mesh = meshes.add(Cuboid::from_length(1.0));
     let swatch: [(f32, f32, f32); 6] = [
-        (0.90, 0.30, 0.30), // red
-        (0.95, 0.65, 0.20), // orange
-        (0.95, 0.90, 0.30), // yellow
-        (0.35, 0.85, 0.45), // green
-        (0.30, 0.60, 0.95), // blue
-        (0.75, 0.45, 0.95), // violet
+        (0.90, 0.30, 0.30),
+        (0.95, 0.65, 0.20),
+        (0.95, 0.90, 0.30),
+        (0.35, 0.85, 0.45),
+        (0.30, 0.60, 0.95),
+        (0.75, 0.45, 0.95),
     ];
     const GRID_COLS: usize = 3;
     const GRID_SPACING: f32 = 2.0;
@@ -1049,15 +298,11 @@ fn setup_scene(
                 ..default()
             })),
             Transform::from_xyz(x, 0.5, z),
-            ColorCube {
-                egui_col,
-                base_color: bevy_col,
-            },
+            ColorCube { egui_col, base_color: bevy_col },
         ));
     }
 
-    // ── Sun — single cascade, ~100 m max, matches gearbox's
-    //    vehicle-neighbourhood shadow quality.
+    // Sun.
     let sun_shadow = CascadeShadowConfigBuilder {
         num_cascades: 1,
         minimum_distance: 0.1,
@@ -1077,20 +322,13 @@ fn setup_scene(
         sun_shadow,
     ));
 
-    // ── Camera + atmospheric fog + ambient fill. Fog extinction tuned
-    //    to Rayleigh-ish falloff so the horizon gently shifts toward
-    //    sky blue. Far plane extends past the planet so the cloud
-    //    shell isn't clipped.
+    // Camera + atmospheric fog + ambient fill.
     let projection = Projection::Perspective(PerspectiveProjection {
         near: 0.1,
         far: PLANET_RADIUS * 2.5,
         ..default()
     });
     let fog = DistanceFog {
-        // Darker sky — pulled from the bright daylight blue
-        // (`0.55, 0.70, 0.86`) down into a deep dusk tone so the
-        // UI's accent / glass surfaces read more strongly against
-        // it.
         color: Color::srgb(0.10, 0.13, 0.20),
         falloff: FogFalloff::Atmospheric {
             extinction: Vec3::new(0.00008, 0.00012, 0.00020),
@@ -1116,22 +354,8 @@ fn setup_scene(
     ));
 }
 
-// Grid LOD mesh + chase-camera control are now provided by
-// `bevy_glacial::{GroundGridPlugin, ChaseCameraPlugin}` — wired in
-// via `GlacialPlugins` above. The hand-rolled equivalents that
-// used to live here (`build_level_mesh`, `level_fade`,
-// `update_grid`, `apply_rig`, `cursor_ray_to_ground`,
-// `camera_control`, `camera_zoom`) have been removed; the demo
-// only retains its own world-picking code.
+// ─── Cube picking (left-click → recolour accent) ───────────────────
 
-/// Left-click on a swatch cube → recolour the whole app. Uses a
-/// plain ray-AABB test (the swatches are axis-aligned 1 m cubes, no
-/// need for a full picking plugin). Ignored when:
-///
-/// * the pointer is over an egui panel / ribbon (so panel clicks
-///   don't double-fire as world picks),
-/// * the right mouse button is also held (user is starting an orbit
-///   gesture, not clicking).
 fn pick_cube(
     mouse: Res<ButtonInput<MouseButton>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
@@ -1141,33 +365,17 @@ fn pick_cube(
     mut accent: ResMut<AccentColor>,
     mut selected: ResMut<SelectedSwatch>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-    if mouse.pressed(MouseButton::Right) {
-        return;
-    }
-    if contexts
-        .ctx_mut()
-        .map(|c| c.wants_pointer_input())
-        .unwrap_or(false)
-    {
+    if !mouse.just_pressed(MouseButton::Left) { return; }
+    if mouse.pressed(MouseButton::Right) { return; }
+    if contexts.ctx_mut().map(|c| c.wants_pointer_input()).unwrap_or(false) {
         return;
     }
 
-    let Some(cursor) = primary_window
-        .single()
-        .ok()
-        .and_then(|w| w.cursor_position())
-    else {
+    let Some(cursor) = primary_window.single().ok().and_then(|w| w.cursor_position()) else {
         return;
     };
-    let Ok((camera, cam_tr)) = bevy_cameras.single() else {
-        return;
-    };
-    let Ok(ray) = camera.viewport_to_world(cam_tr, cursor) else {
-        return;
-    };
+    let Ok((camera, cam_tr)) = bevy_cameras.single() else { return };
+    let Ok(ray) = camera.viewport_to_world(cam_tr, cursor) else { return };
     let origin = ray.origin;
     let direction = *ray.direction;
 
@@ -1188,10 +396,6 @@ fn pick_cube(
     }
 }
 
-/// Smoothly lift the selected swatch off the ground and give its
-/// material an accent-matched emissive glow; flatten + un-glow the
-/// others. Runs every frame so the y-axis animation eases rather
-/// than snaps.
 fn update_swatch_selection(
     time: Res<Time>,
     selected: Res<SelectedSwatch>,
@@ -1206,14 +410,11 @@ fn update_swatch_selection(
     const REST_Y: f32 = 0.5;
     const LIFT_Y: f32 = 0.9;
     const EASE: f32 = 8.0;
-
     let k = (EASE * time.delta_secs()).min(0.9);
-
     for (entity, cube, mat_handle, mut tr) in &mut cubes {
         let is_sel = selected.0 == Some(entity);
         let target_y = if is_sel { LIFT_Y } else { REST_Y };
         tr.translation.y += (target_y - tr.translation.y) * k;
-
         if let Some(mat) = materials.get_mut(&mat_handle.0) {
             let base = cube.base_color.to_linear();
             let gain = if is_sel { 1.8 } else { 0.0 };
@@ -1227,9 +428,6 @@ fn update_swatch_selection(
     }
 }
 
-/// Slab-method ray vs axis-aligned box. Returns the near-hit `t`
-/// along `direction` if the ray intersects the box from outside, or
-/// `None` when it misses.
 fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut tmin = 0.0_f32;
     let mut tmax = f32::INFINITY;
@@ -1240,784 +438,771 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
             _ => (origin.z, direction.z, min.z, max.z),
         };
         if d.abs() < 1e-6 {
-            if o < lo || o > hi {
-                return None;
-            }
+            if o < lo || o > hi { return None; }
         } else {
             let mut t1 = (lo - o) / d;
             let mut t2 = (hi - o) / d;
-            if t1 > t2 {
-                std::mem::swap(&mut t1, &mut t2);
-            }
+            if t1 > t2 { std::mem::swap(&mut t1, &mut t2); }
             tmin = tmin.max(t1);
             tmax = tmax.min(t2);
-            if tmin > tmax {
-                return None;
-            }
+            if tmin > tmax { return None; }
         }
     }
     Some(tmin.max(0.0))
 }
 
-// ─── Ribbons — draggable menu-toggle buttons ────────────────────────
-//
-// `RibbonLayout` (as opposed to the simpler, static `SideRibbon`) is
-// what makes buttons draggable: the user can pick one up from the
-// left rail and drop it onto the right rail, and the panel that
-// opens for that button automatically re-anchors to the rail where
-// the button currently lives. `SideActive::is_menu_open(&layout, id)`
-// asks the layout for the button's current side, so exclusivity
-// follows the drag — one open menu per rail, no matter where the
-// button was originally declared.
+// ─── UI system ─────────────────────────────────────────────────────
 
-/// Declarative button list — frost's `draw_ribbon_buttons` takes
-/// this slice and handles layout, drag, stale-invalidation and
-/// click-toggle routing in one call. Reordering / adding / removing
-/// a button is a single-line edit here, nothing else to change.
-fn draw_ribbons(
+#[allow(clippy::too_many_arguments)]
+fn ui_system(
     mut contexts: EguiContexts,
-    mut accent: ResMut<AccentColor>,
+    accent: Res<AccentColor>,
+    glass: Res<GlassOpacity>,
     mut open: ResMut<RibbonOpen>,
     mut placement: ResMut<RibbonPlacement>,
     mut drag: ResMut<RibbonDrag>,
-    mut selected: ResMut<SelectedSwatch>,
-    cubes: Query<(Entity, &ColorCube)>,
+    mut family: ResMut<ThemeFamily>,
+    mut mode: ResMut<ThemeModeRes>,
+    mut pastel: ResMut<PastelToggle>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
-    // `draw_assembly` handles button paint + drag-to-swap (with the
-    // `accepts` list gating cross-ribbon moves) + panel-exclusive
-    // toggle routing for `RibbonOpen`. It returns the click list
-    // for any `RibbonRole::Icon` button (including per-item
-    // `role` overrides) so we can dispatch one-shot actions —
-    // here, the prev / next cube cycle.
+
+    // Drive corekit's theme runtime each frame. `set_theme` swaps
+    // the global; `apply_theme` registers the bundled Iosevka faces
+    // and pushes the theme-derived `egui::Visuals`. Both ribbon
+    // buttons (drawn by corekit's `draw_assembly`) and Pane2 read
+    // from this same global, so PRO ↔ GAME cycles every visible
+    // surface together.
+    let mut active_theme = match (family.0, mode.0) {
+        (0, 0) => corekit::style::theme_pro(Mode::Dark),
+        (0, 1) => corekit::style::theme_pro(Mode::Light),
+        (1, 0) => corekit::style::theme_game(Mode::Dark),
+        (1, 1) => corekit::style::theme_game(Mode::Light),
+        _      => corekit::style::theme_pro(Mode::Dark),
+    };
+    active_theme.pastel_accent = pastel.0;
+    corekit::style::set_theme(active_theme);
+    corekit::style::apply_theme(ctx, *accent, *glass);
+
+    // Surface egui's request_discard reasons + multipass-in-row
+    // count to the terminal. egui only paints these as a red
+    // PERF-WARNING overlay (see `Context::end_pass`), it doesn't
+    // log them — so without this we couldn't see what's triggering
+    // the overlay during animation.
+    let (discard_reasons, multipass) = ctx.output(|o| {
+        (
+            o.request_discard_reasons.clone(),
+            o.num_completed_passes,
+        )
+    });
+    if !discard_reasons.is_empty() {
+        eprintln!(
+            "[egui] frame had {} request_discard call(s) ({} pass(es))",
+            discard_reasons.len(),
+            multipass,
+        );
+        for r in &discard_reasons {
+            eprintln!("  └─ {r}");
+        }
+    }
+
+    // F10 → toggle the FROST custom inspector. Tags only the
+    // surfaces we care about (panes, containers, pods) with labels
+    // we wrote — see `corekit::debug`. Hovering any tagged surface
+    // outlines its rect and stamps a label chip at the corner. No
+    // `container_pointer` / horizontal / clip noise. Works in both
+    // `debug` and `--release` builds since it's our code, not
+    // egui's `cfg(debug_assertions)`-gated overlay.
+    {
+        let inspect = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F10));
+        if inspect {
+            let on = !corekit::debug::is_enabled(ctx);
+            corekit::debug::set_enabled(ctx, on);
+        }
+    }
+    // F12 → egui's stock "show interactive widget bounds" overlay.
+    // Coloured outline + hit-rect on every widget egui knows about
+    // — useful when chasing a hit-target / layout bug, noisy for
+    // anything else. `Style.debug` is `cfg(debug_assertions)`-
+    // gated by egui, so this is a no-op in `--release`.
+    #[cfg(debug_assertions)]
+    {
+        let pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12));
+        if pressed {
+            ctx.style_mut(|s| {
+                s.debug.show_interactive_widgets = !s.debug.show_interactive_widgets;
+                s.debug.show_widget_hits = s.debug.show_interactive_widgets;
+            });
+        }
+    }
+    // Paint the inspector overlay AFTER everything else has
+    // rendered this frame. No-op when the inspector is off.
+    corekit::debug::paint(ctx);
+
+    // Pastelized accent flows through chrome (ribbon paint, panel
+    // fills, borders, glass tint) so the `Theme::pastel_accent`
+    // toggle visibly retints surfaces. Title text is exempt — the
+    // text-paint helpers internally read `style::raw_accent()` so
+    // titles always show the user's literal pick.
+    let accent_col = corekit::style::active_accent();
     let clicks = draw_assembly(
-        ctx,
-        accent.0,
-        RIBBONS,
-        RIBBON_ITEMS,
-        &mut open,
-        &mut placement,
-        &mut drag,
+        ctx, accent_col, RIBBONS, RIBBON_ITEMS,
+        &mut open, &mut placement, &mut drag,
         |_| false,
     );
 
-    // Action dispatch — only icon-role clicks reach this branch.
-    let action_click = clicks.iter().find(|c| {
-        matches!(c.role, RibbonRole::Icon)
-            && (c.item == ACTION_PREV_CUBE || c.item == ACTION_NEXT_CUBE)
-    });
-    if let Some(click) = action_click {
-        // Stable order across runs — sort by Entity index. Demo
-        // cubes are spawned in a single setup pass, so this is
-        // deterministic per-run.
-        let mut sorted: Vec<(Entity, &ColorCube)> = cubes.iter().collect();
-        sorted.sort_by_key(|(e, _)| *e);
-        if sorted.is_empty() {
-            return;
-        }
-        let cur_idx = selected
-            .0
-            .and_then(|e| sorted.iter().position(|(other, _)| *other == e));
-        let len = sorted.len();
-        let new_idx = match (cur_idx, click.item) {
-            (Some(i), ACTION_PREV_CUBE) => (i + len - 1) % len,
-            (Some(i), ACTION_NEXT_CUBE) => (i + 1) % len,
-            (None,    ACTION_PREV_CUBE) => len - 1,
-            (None,    ACTION_NEXT_CUBE) => 0,
-            _ => return,
-        };
-        let (entity, cube) = sorted[new_idx];
-        selected.0 = Some(entity);
-        accent.0 = cube.egui_col;
+    for click in clicks {
+        if click.item == ACTION_THEME { family.0 = (family.0 + 1) % 2; }
+        else if click.item == ACTION_MODE { mode.0 = (mode.0 + 1) % 2; }
+        else if click.item == ACTION_PASTEL { pastel.0 = !pastel.0; }
     }
-}
 
-// ─── Panels — each anchors to whichever cluster its button sits in ──
-
-fn draw_panels(
-    mut contexts: EguiContexts,
-    // Mutable so the command palette can call `open.close_all()`
-    // / `open.toggle(..)` when the user picks a pane-switcher
-    // action from the general palette.
-    mut open: ResMut<RibbonOpen>,
-    placement: Res<RibbonPlacement>,
-    mut accent: ResMut<AccentColor>,
-    mut glass: ResMut<GlassOpacity>,
-    mut state: ResMut<DemoState>,
-) {
-    let Ok(ctx) = contexts.ctx_mut() else { return };
-    let accent_col = accent.0;
-    let mut keep_open = true;
-
-    // "Is this menu currently open?" — checks against whichever
-    // ribbon the button currently lives on (may differ from its
-    // declaration if the user dragged it).
     let is_open = |id: &'static str| -> bool {
         let Some(item) = find_item(RIBBON_ITEMS, id) else { return false };
         let (rid, _, _) = placement.resolve(item);
         open.is_open(rid, id)
     };
 
-    if is_open(MENU_WIDGETS) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_WIDGETS, "Widgets", egui::vec2(320.0, 480.0),
-            &mut keep_open, accent_col,
-            |pane| widgets_panel(pane, &mut state),
-        );
-    }
-    if is_open(MENU_CONTAINERS) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_CONTAINERS, "Containers", egui::vec2(320.0, 400.0),
-            &mut keep_open, accent_col,
-            |pane| containers_panel(pane, &mut state),
-        );
-    }
-    if is_open(MENU_SCENE) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_SCENE, "Elements", egui::vec2(340.0, 480.0),
-            &mut keep_open, accent_col,
-            |pane| elements_panel(pane, &mut state),
-        );
-    }
-    if is_open(MENU_GRAPH) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_GRAPH, "Editor", egui::vec2(560.0, 480.0),
-            &mut keep_open, accent_col,
-            |pane| editor_panel(pane, &mut state),
-        );
-    }
-    if is_open(MENU_THEME) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_THEME, "Theme", egui::vec2(300.0, 280.0),
-            &mut keep_open, accent_col,
-            |pane| theme_panel(pane, &mut accent, &mut glass, &mut state.tint_rgba),
-        );
-    }
-    if is_open(MENU_KEYS) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_KEYS, "Keys", egui::vec2(300.0, 220.0),
-            &mut keep_open, accent_col,
-            |pane| keys_panel(pane),
-        );
-    }
-    if is_open(MENU_ABOUT) {
-        floating_window_for_item(
-            ctx, RIBBONS, RIBBON_ITEMS, &placement,
-            MENU_ABOUT, "About", egui::vec2(300.0, 220.0),
-            &mut keep_open, accent_col,
-            |pane| about_panel(pane),
-        );
-    }
-
-    // ── Context-aware command palette (Cmd/Ctrl+K) ──────────
-    //
-    // Three pickable slices:
-    //
-    // * **General** — used when no maximisable widget is full-
-    //   window. Picking an item from this palette first
-    //   `close_all()`s every open pane and then opens whichever
-    //   one the item targets, so the user always lands on a
-    //   single-pane layout.
-    // * **Graph** — used when the node graph is maximised.
-    //   Actions scoped to the graph only (reset view, add a
-    //   node, …). No pane-closing behaviour — the graph is
-    //   already front-and-centre.
-    // * **Source** — ditto for the code editor.
-    //
-    // Context is queried via `is_maximized(ctx, id_salt)`
-    // passing the same id_salt the widget itself uses
-    // (`demo_editor_snarl` for the graph, `demo_editor_code`
-    // for the code editor). Because the maximise flag lives in
-    // ctx data keyed purely on id_salt — no `ui.id()` involved —
-    // the host can read it without holding a `Ui`.
-    ctx.input_mut(|i| {
-        if i.consume_key(egui::Modifiers::COMMAND, egui::Key::K) {
-            state.palette.open = !state.palette.open;
-            state.palette.query.clear();
-            state.palette.selected = 0;
-        }
-    });
-    let graph_maxed = is_maximized(ctx, "demo_editor_snarl");
-    let code_maxed = is_maximized(ctx, "demo_editor_code");
-    let items: &[PaletteItem] = if graph_maxed {
-        GRAPH_PALETTE_ITEMS
-    } else if code_maxed {
-        CODE_PALETTE_ITEMS
-    } else {
-        GENERAL_PALETTE_ITEMS
+    // Resolve the LIVE pane anchor — `placement.resolve` returns
+    // wherever the button currently lives (after any drag), so a
+    // button moved from TopRail::Start to LeftRail::End now opens
+    // at the new corner.
+    let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
+        let item = find_item(RIBBON_ITEMS, id)?;
+        let (rid, cluster, _) = placement.resolve(item);
+        let def = find_ribbon(RIBBONS, rid)?;
+        let zone = match cluster {
+            RibbonCluster::Start  => RailZone::Start,
+            RibbonCluster::Middle => RailZone::Middle,
+            RibbonCluster::End    => RailZone::End,
+        };
+        Some(match def.edge {
+            RibbonEdge::Left   => PaneAnchor::LeftRail(zone),
+            RibbonEdge::Right  => PaneAnchor::RightRail(zone),
+            RibbonEdge::Top    => PaneAnchor::TopRail(zone),
+            RibbonEdge::Bottom => PaneAnchor::BottomRail(zone),
+        })
     };
-    if let Some(picked) = command_palette(ctx, &mut state.palette, items, accent_col) {
-        // General-palette picks: pane-opening actions close every
-        // other pane first. Graph / code palettes skip that —
-        // they're operating on the currently-maximised widget
-        // only, so touching pane state would be jarring.
-        let is_general = !graph_maxed && !code_maxed;
-        if is_general && picked.starts_with("open_") {
-            open.close_all();
-        }
-        match picked {
-            // General (pane switchers).
-            "open_widgets"    => { open.toggle(RIBBON_LEFT, MENU_WIDGETS); }
-            "open_containers" => { open.toggle(RIBBON_LEFT, MENU_CONTAINERS); }
-            "open_scene"      => { open.toggle(RIBBON_LEFT, MENU_SCENE); }
-            "open_editor"     => { open.toggle(RIBBON_LEFT, MENU_GRAPH); }
-            "open_theme"      => { open.toggle(RIBBON_RIGHT, MENU_THEME); }
-            "open_keys"       => { open.toggle(RIBBON_RIGHT, MENU_KEYS); }
-            "open_about"      => { open.toggle(RIBBON_RIGHT, MENU_ABOUT); }
-            "close_all"       => { open.close_all(); }
-            "reset_accent"    => accent.0 = bevy_frost::style::ACCENT_NEUTRAL,
-            "full_glass"      => glass.0 = 100,
-            "half_glass"      => glass.0 = 50,
-            // Graph-context.
-            "graph_add_number" => {
-                state.graph.insert_node(
-                    egui::pos2(40.0, 40.0),
-                    GraphNode::Number(0.0),
-                );
-            }
-            "graph_add_add" => {
-                state.graph.insert_node(
-                    egui::pos2(40.0, 40.0),
-                    GraphNode::Add,
-                );
-            }
-            "graph_add_output" => {
-                state.graph.insert_node(
-                    egui::pos2(40.0, 40.0),
-                    GraphNode::Output,
-                );
-            }
-            // Source-context.
-            "code_wipe" => { state.code.clear(); }
-            "code_reset" => { state.code = default_code(); }
-            _ => {}
-        }
-    }
 
-    // ── Status bar (LEFT_BOTTOM) ────────────────────────────
-    // Status bar removed — top-level chrome is ribbons +
-    // command palette only.
-    let _ = accent_col;
-}
-
-// ─── Panel bodies ───────────────────────────────────────────────────
-
-fn widgets_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
-    let accent = pane.accent();
-    let order = pane.section_order([
-        "demo_flags",
-        "demo_numbers",
-        "demo_bars",
-        "demo_buttons",
-        "demo_anim_buttons",
-    ]);
-    for id in &order {
-        match id.as_str() {
-            "demo_flags" => pane.section_with("demo_flags", "Flags", true, Some("flag"), |ui| {
-                toggle(ui, "power", &mut state.power, accent);
-                toggle(ui, "headlights", &mut state.headlights, accent);
-            }),
-            "demo_numbers" => pane.section_with("demo_numbers", "Numbers", true, Some("calculator"), |ui| {
-                drag_value(ui, "gravity (m/s²)", &mut state.gravity, 0.05, 0.0..=30.0, 2, "");
-                drag_value(ui, "speed limit (m/s)", &mut state.speed_limit, 0.1, 0.0..=100.0, 1, "");
-                drag_value(ui, "engine power (kW)", &mut state.engine_power, 1.0, 0.0..=2_000.0, 0, "");
-            }),
-            "demo_bars" => pane.section_with("demo_bars", "Bars", true, Some("gauge"), |ui| {
-                pretty_slider(ui, "throttle", &mut state.throttle, 0.0..=1.0, 2, "", accent);
-                pretty_slider(ui, "brake", &mut state.brake, 0.0..=1.0, 2, "", accent);
-                pretty_progressbar_text(
-                    ui,
-                    "fuel",
-                    state.fuel_fraction,
-                    &format!("{:.0}%", state.fuel_fraction * 100.0),
-                    accent,
-                );
-            }),
-            "demo_buttons" => pane.section_with("demo_buttons", "Buttons", false, Some("button"), |ui| {
-                if wide_button(ui, "Refuel", accent).clicked() {
-                    state.fuel_fraction = 1.0;
-                }
-                card_button(
-                    ui,
-                    "★",
-                    "Primary action",
-                    "Two-line card button with glyph + subtitle",
-                    accent,
-                );
-            }),
-            "demo_anim_buttons" => pane.section_with(
-                "demo_anim_buttons",
-                "Animated",
-                false,
-                Some("animation"),
-                |ui| {
-                    // 12 hover-fill animation styles. Hover each for
-                    // 0.5 s and the dark fill slides / grows /
-                    // converges in. CSS-translated from the popular
-                    // hover-button collection — every variant uses
-                    // the same accent + the same widget allocator.
-                    use frostcore::widgets::FillStyle;
-                    animated_button(ui, "Slide left", accent, FillStyle::SlideLeft);
-                    animated_button(ui, "Parallelogram", accent, FillStyle::Parallelogram);
-                    animated_button(ui, "Parallelogram meet", accent, FillStyle::ParallelogramMeet);
-                    animated_button(ui, "Bowtie", accent, FillStyle::Bowtie);
-                    animated_button(ui, "Bands meet", accent, FillStyle::BandsMeet);
-                    animated_button(ui, "Corner squares", accent, FillStyle::CornerSquares);
-                    animated_button(ui, "Diagonal triangles", accent, FillStyle::DiagonalTriangles);
-                    animated_button(ui, "Circle grow", accent, FillStyle::CircleGrow);
-                    animated_button(ui, "Equalizer", accent, FillStyle::Equalizer);
-                    animated_button(ui, "Horizontal slide", accent, FillStyle::HorizontalSlide);
-                    animated_button(ui, "Horizontal delayed", accent, FillStyle::HorizontalSlideDelayed);
-                    animated_button(ui, "Vertical delayed", accent, FillStyle::VerticalSlideDelayed);
-                    animated_button(ui, "Criss cross", accent, FillStyle::CrissCross);
-                },
-            ),
-            _ => {}
-        }
-    }
-}
-
-fn elements_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
-    let accent = pane.accent();
-    let order = pane.section_order(["demo_scene_tree", "demo_elements"]);
-    for id in &order {
-        match id.as_str() {
-            // Scene outliner — full tree widget with per-row uniform icon
-            // gutter (visibility + lock) and a filter dropdown at the top.
-            // This is the Blender-style layers panel: a recursive stage
-            // view with direct per-entity controls in the gutter.
-            "demo_scene_tree" => pane.section_with("demo_scene_tree", "Scene", true, Some("folder"), |ui| {
-        // Filter field + kind dropdown, side-by-side at the top.
-        // `search_field` is the new frost primitive — magnifier
-        // glyph on the left, `✕` clear on the right, returns
-        // `Response::changed()` on each keystroke. Case-
-        // insensitive substring match happens inside
-        // `draw_scene_tree` via `node_passes_filters`.
-        search_field(ui, &mut state.scene_query, "filter by name / path…", accent);
-        dropdown(ui, "kind", &mut state.scene_filter, SCENE_FILTERS, accent);
-
-        let scroll_w = ui.available_width();
-        let query_lc = state.scene_query.to_lowercase();
-        let scroll_out = ui.allocate_ui_with_layout(
-            egui::vec2(scroll_w, state.scene_scroll_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("demo_scene_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        draw_scene_tree(
-                            ui,
-                            &mut state.scene_tree,
-                            0,
-                            &mut state.scene_tree_selected,
-                            state.scene_filter,
-                            &query_lc,
-                            accent,
-                            &mut state.copied_path,
-                        );
-                    })
-            },
-        );
-        let content_h = scroll_out.inner.content_size.y;
-        let min_h = TREE_ROW_H * 3.0;
-        let max_h = content_h.max(min_h);
-        row_separator_resize(
-            ui,
-            "scene_scroll_grip",
-            &mut state.scene_scroll_h,
-            min_h,
-            max_h,
-            accent,
-        );
-        readout_row(
-            ui,
-            "selected",
-            state.scene_tree_selected.as_deref().unwrap_or("—"),
-        );
-        // Flags for the selected prim, shown as a `badge_row` —
-        // the label sits in the left cell, each chip runs across
-        // the right gutter. Proves `chip` + `badge_row` wiring.
-        let sel_flags = state
-            .scene_tree_selected
-            .as_deref()
-            .and_then(|p| find_node(&state.scene_tree, p))
-            .map(|n| n.flags)
-            .unwrap_or(&[]);
-        if !sel_flags.is_empty() {
-            badge_row(ui, "flags", sel_flags, accent);
-        }
-            }),
-            // Flat hybrid-select list — kept so the two row styles can be
-            // compared side-by-side. Body click = transient select, body
-            // double-click = arbitrary action (here we bump a counter),
-            // right-edge radio = durable "pin". The two click targets do
-            // NOT leak into each other.
-            "demo_elements" => pane.section_with("demo_elements", "Flat list", true, Some("list"), |ui| {
-        let scroll_w = ui.available_width();
-        let scroll_out = ui.allocate_ui_with_layout(
-            egui::vec2(scroll_w, state.flat_scroll_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("demo_flat_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for (idx, name) in state.scene_entities.iter().enumerate() {
-                            let selected = state.scene_selected == Some(idx);
-                            let pinned = state.scene_following == Some(idx);
-                            let trailing = format!("#{idx}");
-                            let resp = hybrid_select_row(
-                                ui,
-                                idx,
-                                name,
-                                Some(&trailing),
-                                selected,
-                                pinned,
-                                accent,
-                            );
-                            if resp.body.clicked() {
-                                state.scene_selected = Some(idx);
-                            }
-                            if resp.body.double_clicked() {
-                                state.scene_double_click_count =
-                                    state.scene_double_click_count.wrapping_add(1);
-                            }
-                            if resp.radio.clicked() {
-                                state.scene_following =
-                                    if pinned { None } else { Some(idx) };
-                            }
-                        }
-                    })
-            },
-        );
-        let content_h = scroll_out.inner.content_size.y;
-        let min_h = HYBRID_SELECT_ROW_H * 3.0;
-        let max_h = content_h.max(min_h);
-        row_separator_resize(
-            ui,
-            "flat_scroll_grip",
-            &mut state.flat_scroll_h,
-            min_h,
-            max_h,
-            accent,
-        );
-        let selected = state
-            .scene_selected
-            .and_then(|i| state.scene_entities.get(i))
-            .cloned()
-            .unwrap_or_else(|| "—".into());
-        let pinned = state
-            .scene_following
-            .and_then(|i| state.scene_entities.get(i))
-            .cloned()
-            .unwrap_or_else(|| "—".into());
-        readout_row(ui, "selected (transient)", &selected);
-        readout_row(ui, "pinned (durable)", &pinned);
-        readout_row(
-            ui,
-            "double-clicks",
-            &state.scene_double_click_count.to_string(),
-        );
-            }),
-            _ => {}
-        }
-    }
-}
-
-fn containers_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
-    let accent = pane.accent();
-    let order = pane.section_order(["demo_transform"]);
-    for id in &order {
-        match id.as_str() {
-            "demo_transform" => pane.section_with("demo_transform", "Transform", true, Some("resize"), |ui| {
-        subsection(
-            ui,
-            "demo_tr_pos",
-            "Position",
-            Some("drag, double-click to type"),
-            accent,
-            true,
-            |ui| {
-                axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
-                    &mut state.position[0], 0.05, " m", 3);
-                axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
-                    &mut state.position[1], 0.05, " m", 3);
-                axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
-                    &mut state.position[2], 0.05, " m", 3);
-            },
-        );
-
-        subsection(
-            ui,
-            "demo_tr_rot",
-            "Rotation",
-            Some("Euler XYZ, degrees"),
-            accent,
-            true,
-            |ui| {
-                axis_drag(ui, "X", egui::Color32::from_rgb(0xE0, 0x43, 0x3B),
-                    &mut state.rotation_deg[0], 1.0, "°", 2);
-                axis_drag(ui, "Y", egui::Color32::from_rgb(0x7F, 0xB4, 0x35),
-                    &mut state.rotation_deg[1], 1.0, "°", 2);
-                axis_drag(ui, "Z", egui::Color32::from_rgb(0x2E, 0x83, 0xE6),
-                    &mut state.rotation_deg[2], 1.0, "°", 2);
-            },
-        );
-            }),
-            _ => {}
-        }
-    }
-}
-
-
-/// Seed text for the code-editor demo — a small Rust snippet that
-/// exercises every TokenType the highlighter knows (keyword,
-/// identifier, literal, string, number, comment, punctuation).
-fn default_code() -> String {
-    // Using a raw literal so backslashes / quotes inside the
-    // snippet don't need escaping.
-    r#"// Frost code editor demo — Rust syntax highlighting.
-fn fibonacci(n: u64) -> u64 {
-    if n < 2 {
-        return n;
-    }
-    let mut a: u64 = 0;
-    let mut b: u64 = 1;
-    for _ in 2..=n {
-        let next = a + b;
-        a = b;
-        b = next;
-    }
-    b
-}
-
-fn main() {
-    let label = "fib(20)";
-    println!("{label} = {}", fibonacci(20));
-}
-"#
-    .to_string()
-}
-
-/// Combined Editor pane — two sections stacked vertically:
-///
-/// 1. **Node graph** — `egui-snarl` canvas with the `frost_snarl`
-///    maximise toggle.
-/// 2. **Source** — `egui_code_editor` buffer with its own
-///    maximise toggle.
-///
-/// Each section folds independently (click the section header
-/// chevron) and each widget's maximise chip lifts only that widget
-/// to full window, leaving the other section and the pane alone.
-fn editor_panel(pane: &mut PaneBuilder, state: &mut DemoState) {
-    let accent = pane.accent();
-    let order = pane.section_order(["demo_graph", "demo_code"]);
-    for id in &order {
-        match id.as_str() {
-            "demo_graph" => pane.section_with(
-                "demo_graph",
-                "Node graph",
-                true,
-                Some("flowchart"),
-                |ui| {
-                    sub_caption(ui, "right-click to add nodes · click ▢ to maximise");
-                    let s: &mut DemoState = state;
-                    let w = ui.available_width();
-                    frost_snarl(
-                        ui,
-                        "demo_editor_snarl",
-                        &mut s.graph,
-                        &mut s.graph_viewer,
-                        accent,
-                        egui::vec2(w, 260.0),
+    for &(_, button_id, default_anchor, label) in PANE_DEFS {
+        if is_open(button_id) {
+            // Fall back to the declared default if we can't resolve
+            // (shouldn't happen — every pane button is in RIBBON_ITEMS).
+            let anchor = live_anchor(button_id).unwrap_or(default_anchor);
+            Pane2::new(button_id, label, anchor, accent_col)
+                // Pane only resizes on the SPAN axis — flow-axis
+                // size auto-derives from the sum of container body
+                // flows + per-container chrome. Each container's
+                // own size is dragged via the inter-container
+                // separator below.
+                .resize(corekit::pane::PaneResize::SPAN)
+                .show(ctx, |body_ui| {
+                    // Three independent containers, each with its own
+                    // toggle state (id derived from the pane's button
+                    // id + an index).
+                    const CONTAINERS_PER_PANE: usize = 3;
+                    // Build the default id list in declaration order,
+                    // then ask the pane for the user's persisted
+                    // drag-reorder order — which preserves any drag
+                    // commits across runs and falls back to defaults
+                    // for new ids.
+                    let pane_egui_id = egui::Id::new(button_id);
+                    let defaults: Vec<egui::Id> = (0..CONTAINERS_PER_PANE)
+                        .map(|i| egui::Id::new((button_id, "container", i)))
+                        .collect();
+                    let order = corekit::pane::section_order_for(
+                        body_ui.ctx(),
+                        pane_egui_id,
+                        &defaults,
                     );
-                },
-            ),
-            "demo_code" => pane.section_with(
-                "demo_code",
-                "Source",
-                true,
-                Some("code"),
-                |ui| {
-                    sub_caption(ui, "rust syntax · click ▢ to maximise");
-                    let w = ui.available_width();
-                    frost_code_editor(
-                        ui,
-                        "demo_editor_code",
-                        &mut state.code,
-                        Syntax::rust(),
-                        accent,
-                        egui::vec2(w, 260.0),
-                    );
-                },
-            ),
-            _ => {}
-        }
-    }
-}
-
-fn theme_panel(
-    pane: &mut PaneBuilder,
-    accent_res: &mut AccentColor,
-    glass: &mut GlassOpacity,
-    tint_rgba: &mut [f32; 4],
-) {
-    let accent = pane.accent();
-    let order = pane.section_order(["demo_theme_profile", "demo_theme_colour", "demo_theme_glass"]);
-    for id in &order {
-        match id.as_str() {
-            "demo_theme_profile" => pane.section_with("demo_theme_profile", "Profile", true, Some("person"), |ui| {
-                // Theme = aesthetic (PRO / GAME). Mode = brightness
-                // (Dark / Light). Two dropdowns, two ctx-keyed
-                // indices.
-                let theme_key        = ui.id().with("frost_theme_idx");
-                let mode_key         = ui.id().with("frost_mode_idx");
-                let weight_key       = ui.id().with("frost_weight_idx");
-                let title_weight_key = ui.id().with("frost_title_weight_idx");
-                let mut theme_idx:        usize = ui.ctx().data(|d| d.get_temp(theme_key).unwrap_or(0));
-                let mut mode_idx:         usize = ui.ctx().data(|d| d.get_temp(mode_key).unwrap_or(0));
-                // Body default 4 == Medium, matching `FontWeight::default()`.
-                let mut weight_idx:       usize = ui.ctx().data(|d| d.get_temp(weight_key).unwrap_or(4));
-                // Title default 8 == Heavy, matching `title_weight()`'s default.
-                let mut title_weight_idx: usize = ui.ctx().data(|d| d.get_temp(title_weight_key).unwrap_or(8));
-                let prev_theme        = theme_idx;
-                let prev_mode         = mode_idx;
-                let prev_weight       = weight_idx;
-                let prev_title_weight = title_weight_idx;
-                const WEIGHTS: &[&str] = &[
-                    "Thin", "ExtraLight", "Light", "Regular",
-                    "Medium", "SemiBold", "Bold", "ExtraBold", "Heavy",
-                ];
-                let weight_to_enum = |idx: usize| -> bevy_frost::style::FontWeight {
-                    match idx {
-                        0 => bevy_frost::style::FontWeight::Thin,
-                        1 => bevy_frost::style::FontWeight::ExtraLight,
-                        2 => bevy_frost::style::FontWeight::Light,
-                        3 => bevy_frost::style::FontWeight::Regular,
-                        4 => bevy_frost::style::FontWeight::Medium,
-                        5 => bevy_frost::style::FontWeight::SemiBold,
-                        6 => bevy_frost::style::FontWeight::Bold,
-                        7 => bevy_frost::style::FontWeight::ExtraBold,
-                        _ => bevy_frost::style::FontWeight::Heavy,
-                    }
-                };
-                let theme_changed =
-                    dropdown(ui, "theme", &mut theme_idx, &["PRO", "GAME"], accent).changed();
-                let mode_changed =
-                    dropdown(ui, "mode", &mut mode_idx, &["Dark", "Light"], accent).changed();
-                let weight_changed =
-                    dropdown(ui, "body weight", &mut weight_idx, WEIGHTS, accent).changed();
-                let title_weight_changed =
-                    dropdown(ui, "title weight", &mut title_weight_idx, WEIGHTS, accent).changed();
-                if theme_changed || mode_changed
-                    || prev_theme != theme_idx
-                    || prev_mode != mode_idx
-                {
-                    let mode = if mode_idx == 1 { bevy_frost::style::Mode::Light } else { bevy_frost::style::Mode::Dark };
-                    let chosen = if theme_idx == 1 {
-                        bevy_frost::style::theme_game(mode)
+                    // Container-resize-handle orientation matches
+                    // the container stack direction: vertical-strip
+                    // panes (Left/Right rail middle, corner-zone
+                    // Top/Bottom) stack containers along X, so the
+                    // dot handle runs top↕bottom (vertical);
+                    // horizontal-strip panes stack along Y, so the
+                    // handle runs left↔right (horizontal).
+                    let containers_stack_horizontally =
+                        !anchor.title_side().is_horizontal_strip();
+                    let dots_orient = if containers_stack_horizontally {
+                        corekit::container::SeparatorOrient::Vertical
                     } else {
-                        bevy_frost::style::theme_pro(mode)
+                        corekit::container::SeparatorOrient::Horizontal
                     };
-                    set_theme(chosen);
-                }
-                if weight_changed || prev_weight != weight_idx {
-                    bevy_frost::style::set_font_weight(weight_to_enum(weight_idx));
-                }
-                if title_weight_changed || prev_title_weight != title_weight_idx {
-                    bevy_frost::style::set_title_weight(weight_to_enum(title_weight_idx));
-                }
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(theme_key,        theme_idx);
-                    d.insert_temp(mode_key,         mode_idx);
-                    d.insert_temp(weight_key,       weight_idx);
-                    d.insert_temp(title_weight_key, title_weight_idx);
+                    for cid in order.into_iter() {
+                        // Recover the original index for the title /
+                        // text-input key so renaming after a reorder
+                        // still maps each id back to "container N".
+                        let i = defaults.iter().position(|d| *d == cid).unwrap_or(0);
+                        let title = format!("{} {}", label, i + 1);
+                        // Deterministic per-container "randomness":
+                        // hash the container id into a u64, then
+                        // peel a few digits off the bottom for the
+                        // pod count (1..=4) and per-pod search count
+                        // (1..=3). Stable across frames because the
+                        // cid is stable.
+                        let seed: u64 = cid.value();
+                        // ONE widget per pod. Multi-row widgets (tree,
+                        // select_list, hybrid_select_list) are still
+                        // ONE widget — they happen to paint several
+                        // rows internally. `pod_count` is between 2
+                        // and 5 so each container shows a spread of
+                        // kinds without any pod hosting more than its
+                        // single widget.
+                        let pod_count = ((seed % 4) as usize) + 2;
+                        let pods: Vec<_> = (0..pod_count)
+                            .map(|p| {
+                                let pod_id = cid.with(("newui_pod", p));
+                                // Spread `p` across the full 64-bit
+                                // pod_seed via golden-ratio multiply
+                                // — XOR with low bits alone would be
+                                // discarded by the `>> 4` mask below
+                                // and every pod would land on the
+                                // same `mix`.
+                                let pod_seed = seed
+                                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                    ^ (p as u64).wrapping_mul(0xD737_3348_5DDB_E5C5);
+                                let mix = (pod_seed >> 4) & 0b1111;
+                                // Only widgets that benefit from a
+                                // hide/reveal viewport (tree, select
+                                // lists) get the LineDots resizable
+                                // separator. Everything else gets the
+                                // plain Line — the rule is "if there
+                                // is a dotted handle, dragging it
+                                // actually does something visible".
+                                // - Resizable: user-draggable handle
+                                //   reveals/hides rows. Visible dotted
+                                //   separator (LineDots).
+                                // - Fill: auto-expands to consume
+                                //   leftover container space; user
+                                //   can't drag. Plain Line separator
+                                //   (no drag handle, but still a
+                                //   visible divider so neighbour pods
+                                //   read distinct).
+                                let is_resizable = matches!(mix, 9 | 10);
+                                let is_fill = matches!(mix, 14);
+                                let is_last = p + 1 == pod_count;
+                                let separator_style = if is_resizable {
+                                    corekit::container::SeparatorStyle::LineDots
+                                } else if is_last {
+                                    corekit::container::SeparatorStyle::None
+                                } else {
+                                    corekit::container::SeparatorStyle::Line
+                                };
+                                let mut pod = corekit::pod::Pod::new(pod_id)
+                                    .with_separator(separator_style);
+                                if is_resizable {
+                                    pod = pod.resizable();
+                                }
+                                if is_fill {
+                                    pod = pod.fill();
+                                }
+                                {
+                                    // Single-widget per pod — keep
+                                    // the existing one-letter `s`
+                                    // alias the inner branches use
+                                    // for trailing-suffix formatting,
+                                    // pinned to 0 since there's no
+                                    // longer an inner loop.
+                                    let s: usize = 0;
+                                    let _ = s;
+                                    pod = match mix {
+                                        0 => pod.with_search(
+                                            format!(
+                                                "pod {} · search {}…",
+                                                p + 1,
+                                                s + 1
+                                            ),
+                                            accent_col,
+                                        ),
+                                        1 => pod.with_button(
+                                            format!("pod {} · btn {}", p + 1, s + 1),
+                                            accent_col,
+                                        ),
+                                        2 => {
+                                            // 2U "card" button — primary
+                                            // label + dim subtitle + an
+                                            // animated hover fill so the
+                                            // user sees that the 2-layer
+                                            // shape supports every
+                                            // animation the 1U one does.
+                                            use corekit::widget::FillStyle::*;
+                                            let styles = [
+                                                SlideLeft,
+                                                CircleGrow,
+                                                BandsMeet,
+                                                ParallelogramMeet,
+                                                Bowtie,
+                                                CornerSquares,
+                                                DiagonalTriangles,
+                                                Equalizer,
+                                                HorizontalSlideDelayed,
+                                                VerticalSlideDelayed,
+                                                CrissCross,
+                                            ];
+                                            let pick = ((pod_seed >> (s * 4 + 16))
+                                                as usize)
+                                                % styles.len();
+                                            pod.with_button_styled(
+                                                format!("Preset {}", s + 1),
+                                                accent_col,
+                                                Some("stacked subtitle"),
+                                                Option::<&str>::None,
+                                                Some(styles[pick]),
+                                            )
+                                        }
+                                        3 => {
+                                            use corekit::widget::FillStyle::*;
+                                            let styles = [
+                                                SlideLeft,
+                                                Parallelogram,
+                                                ParallelogramMeet,
+                                                Bowtie,
+                                                BandsMeet,
+                                                CornerSquares,
+                                                DiagonalTriangles,
+                                                CircleGrow,
+                                                Equalizer,
+                                                HorizontalSlide,
+                                                HorizontalSlideDelayed,
+                                                VerticalSlideDelayed,
+                                                CrissCross,
+                                            ];
+                                            let pick = ((pod_seed >> (s * 4 + 16))
+                                                as usize)
+                                                % styles.len();
+                                            pod.with_button_animated(
+                                                format!("anim {}", s + 1),
+                                                accent_col,
+                                                styles[pick],
+                                            )
+                                        }
+                                        4 => pod.with_toggle_initial(
+                                            format!("toggle {}", s + 1),
+                                            accent_col,
+                                            (pod_seed >> 8) & 1 == 1,
+                                        ),
+                                        5 => {
+                                            let frac = (((pod_seed >> (s * 5))
+                                                & 0xFF)
+                                                as f32)
+                                                / 255.0;
+                                            pod.with_progress(
+                                                format!("progress {}", s + 1),
+                                                frac,
+                                                format!(
+                                                    "{:.0}%",
+                                                    frac * 100.0
+                                                ),
+                                                accent_col,
+                                            )
+                                        }
+                                        6 => {
+                                            let v = ((pod_seed >> (s * 5)) & 0xFF)
+                                                as f64
+                                                / 255.0;
+                                            pod.with_slider(
+                                                format!("slider {}", s + 1),
+                                                v,
+                                                0.0..=1.0,
+                                                2,
+                                                "",
+                                                accent_col,
+                                            )
+                                        }
+                                        7 => pod.with_drag_value(
+                                            format!("value {}", s + 1),
+                                            ((pod_seed >> (s * 5)) & 0xFF) as f64,
+                                            0.5,
+                                            0.0..=255.0,
+                                            1,
+                                            "",
+                                        ),
+                                        8 => pod.with_dropdown(
+                                            ["Alpha", "Beta", "Gamma", "Delta"],
+                                            ((pod_seed >> (s * 4)) as usize) % 4,
+                                            accent_col,
+                                        ),
+                                        9 => {
+                                            // Multi-row select list as
+                                            // ONE widget. 8 items;
+                                            // selection persists in
+                                            // ctx data via the pod's
+                                            // own slot key.
+                                            let items: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("Item {i}"))
+                                                .collect();
+                                            let trailing: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("#{i}"))
+                                                .collect();
+                                            pod.with_select_list(
+                                                items,
+                                                Some(trailing),
+                                                accent_col,
+                                            )
+                                        }
+                                        10 => {
+                                            // Multi-row hybrid select
+                                            // list as ONE widget — body
+                                            // click + radio pin per
+                                            // row, single-pin across
+                                            // the list.
+                                            let items: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("Layer {i}"))
+                                                .collect();
+                                            let trailing: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("L{i}"))
+                                                .collect();
+                                            pod.with_hybrid_select_list(
+                                                items,
+                                                Some(trailing),
+                                                accent_col,
+                                            )
+                                        }
+                                        11 => {
+                                            let r = ((pod_seed >> 0) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let g = ((pod_seed >> 8) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let b = ((pod_seed >> 16) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            pod.with_color_rgb(
+                                                format!("rgb {}", s + 1),
+                                                [r, g, b],
+                                                accent_col,
+                                            )
+                                        }
+                                        12 => {
+                                            let r = ((pod_seed >> 0) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let g = ((pod_seed >> 8) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let b = ((pod_seed >> 16) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            pod.with_color_rgba(
+                                                format!("rgba {}", s + 1),
+                                                [r, g, b, 0.7],
+                                                accent_col,
+                                            )
+                                        }
+                                        13 => {
+                                            // Pick a different Fluent
+                                            // icon per pod_seed so the
+                                            // demo cycles through real
+                                            // glyphs instead of always
+                                            // showing the same one.
+                                            const ICONS: &[&str] = &[
+                                                "settings", "folder", "code",
+                                                "search", "person", "image",
+                                                "flowchart", "list",
+                                            ];
+                                            let pick = ((pod_seed >> 4) as usize)
+                                                % ICONS.len();
+                                            pod.with_card_button(
+                                                ICONS[pick],
+                                                format!("Card {}", s + 1),
+                                                "glyph + subtitle",
+                                                accent_col,
+                                            )
+                                        }
+                                        14 => {
+                                            // Inline scene-graph tree
+                                            // demo. Stable id derived
+                                            // from the pod_seed so each
+                                            // tree gets its own
+                                            // expanded / selected /
+                                            // visibility state.
+                                            let seed = pod_seed;
+                                            let tree_root =
+                                                egui::Id::new(("frost_demo_tree", seed));
+                                            // 7 rows × 1U each ≈ 7
+                                            // unit-equivalents — passed
+                                            // via with_custom_units so
+                                            // the inter-pod resize
+                                            // share is proportional.
+                                            pod.with_custom_units(7, move |ui| {
+                                                demo_tree(ui, tree_root, accent_col);
+                                            })
+                                        }
+                                        15 => {
+                                            // Read-only info row —
+                                            // label-left, monospace
+                                            // value-right. Mirrors the
+                                            // old `readout_row` from
+                                            // frostcore (used in the
+                                            // demo to show the tree's
+                                            // currently-selected
+                                            // path, etc.).
+                                            const LABELS: &[&str] = &[
+                                                "selected", "active layer",
+                                                "current tool", "frame",
+                                                "fps", "memory",
+                                                "draw calls", "triangles",
+                                            ];
+                                            const VALUES: &[&str] = &[
+                                                "/World/Robot/base",
+                                                "World layer",
+                                                "Move (G)",
+                                                "00:01:42 · 2517",
+                                                "60.0",
+                                                "412 MB",
+                                                "1 248",
+                                                "8.4M",
+                                            ];
+                                            let pick = ((pod_seed >> 8) as usize)
+                                                % LABELS.len();
+                                            pod.with_readout(LABELS[pick], VALUES[pick])
+                                        }
+                                        _ => pod.with_button(
+                                            format!("btn {}", s + 1),
+                                            accent_col,
+                                        ),
+                                    };
+                                }
+                                pod
+                            })
+                            .collect();
+                        Normal::new(title, anchor, accent_col, cid)
+                            .icon("settings")
+                            .show(body_ui, pods);
+                        // Container resize handle — three dots,
+                        // painted AFTER every container including
+                        // the last. Drag delta updates THIS
+                        // container's persisted flow size; the
+                        // pane auto-grows to fit.
+                        //
+                        // For bottom / right-anchored panes the
+                        // body extends in the negative axis
+                        // direction (bottom_up / right_to_left), so
+                        // the handle painted "after" the container
+                        // ends up on the side AWAY from the title
+                        // (above for bottom, left for right). To
+                        // grow the container, the user drags the
+                        // handle FURTHER from the title — which is
+                        // a NEGATIVE axis delta. Negate so the
+                        // grow direction matches the cursor in
+                        // both anchorings.
+                        let title_at_end =
+                            anchor.title_side().is_at_end();
+                        // Skip painting the dot handle while THIS
+                        // container is being dragged (reorder) —
+                        // the floating drag preview already paints
+                        // a copy of the container with its handle,
+                        // so painting the original's handle here
+                        // produces a duplicate "double dots" look
+                        // until the user releases.
+                        let dragging_self = corekit::pane::active_drag(body_ui.ctx())
+                            .and_then(|(_, s)| s.item)
+                            .map(|item| item == cid)
+                            .unwrap_or(false);
+                        if dragging_self {
+                            continue;
+                        }
+                        let resp = corekit::pane::paint_container_dots(
+                            body_ui,
+                            dots_orient,
+                            cid,
+                            accent_col,
+                        );
+                        // Folded containers ignore the resize drag —
+                        // the body slot they're sized from is hidden,
+                        // so dragging the dots while folded would
+                        // silently grow / shrink an invisible region
+                        // and only become visible to the user when
+                        // they unfold.
+                        let body_open: bool = body_ui.ctx().data_mut(|d| {
+                            d.get_persisted::<bool>(cid.with("body_open"))
+                                .unwrap_or(true)
+                        });
+                        if resp.dragged() && body_open {
+                            // `containers_stack_horizontally` is the
+                            // inverse of `is_horizontal_strip` for
+                            // the parent pane (containers stack
+                            // horizontally precisely in vertical-
+                            // strip panes).
+                            let pane_horizontal_strip =
+                                anchor.title_side().is_horizontal_strip();
+                            let cur = corekit::container::container_flow(
+                                body_ui.ctx(),
+                                cid,
+                                pane_horizontal_strip,
+                            );
+                            let raw = if containers_stack_horizontally {
+                                resp.drag_delta().x
+                            } else {
+                                resp.drag_delta().y
+                            };
+                            let delta = if title_at_end { -raw } else { raw };
+                            corekit::container::set_container_flow(
+                                body_ui.ctx(),
+                                cid,
+                                cur + delta,
+                                pane_horizontal_strip,
+                            );
+                        }
+                    }
                 });
-                sub_caption(
-                    ui,
-                    "Theme = aesthetic (PRO / GAME). Mode = brightness (Dark / Light). Weight = body font weight (Thin / Light / Medium).",
-                );
-            }),
-            // Accent. Mutating `AccentColor` triggers the crate's `apply_theme`
-            // system, which re-paints *every* widget — buttons, frames,
-            // borders, slider fills, the lot — from this single source of
-            // truth.
-            "demo_theme_colour" => pane.section_with("demo_theme_colour", "Accent", true, Some("color"), |ui| {
-                let c = accent_res.0;
-                let mut rgb = [
-                    c.r() as f32 / 255.0,
-                    c.g() as f32 / 255.0,
-                    c.b() as f32 / 255.0,
-                ];
-                if color_rgb(ui, "accent", &mut rgb, accent).changed() {
-                    accent_res.0 = srgb_to_egui(rgb);
-                }
-                // RGBA variant — same inline-expanding picker, plus an alpha
-                // slider inside the expanded body. Demo-only; doesn't feed
-                // back into the theme.
-                color_rgba(ui, "tint (rgba)", tint_rgba, accent);
-                sub_caption(
-                    ui,
-                    "Changing accent recolours every widget in the app — one resource, one brush.",
-                );
-            }),
-            // Glass opacity — ditto. `GlassOpacity(u8)` in `0..=100`.
-            "demo_theme_glass" => pane.section_with("demo_theme_glass", "Glass", true, Some("glasses"), |ui| {
-                let mut v = glass.0 as f64;
-                if pretty_slider(ui, "opacity", &mut v, 1.0..=100.0, 0, "%", accent).changed() {
-                    glass.0 = v.round().clamp(1.0, 100.0) as u8;
-                }
-                sub_caption(
-                    ui,
-                    "Lower values let the 3D scene bleed through every panel.",
-                );
-            }),
-            _ => {}
         }
     }
 }
 
-fn keys_panel(pane: &mut PaneBuilder) {
-    let order = pane.section_order(["demo_keys_mouse", "demo_keys_layout"]);
-    for id in &order {
-        match id.as_str() {
-            "demo_keys_mouse" => pane.section_with("demo_keys_mouse", "Mouse", true, Some("cursor"), |ui| {
-                keybinding_row(ui, "MMB drag", "pan the camera focus");
-                keybinding_row(ui, "LMB+RMB drag", "orbit the camera");
-                keybinding_row(ui, "Scroll", "log-smooth zoom");
-                keybinding_row(ui, "MMB × 2", "snap focus to cursor's ground point");
-                keybinding_row(ui, "LMB on cube", "re-tint the whole UI accent");
-            }),
-            "demo_keys_layout" => pane.section_with("demo_keys_layout", "Layout", false, Some("grid"), |ui| {
-                keybinding_row(ui, "Drag panel edge", "resize its cluster's width");
-                keybinding_row(ui, "Toggle ribbon btn", "open / close the panel");
-            }),
-            _ => {}
-        }
+// ─── Demo tree ─────────────────────────────────────────────────────
+//
+// Hand-authored mini scene-graph used to demo the `tree_row` widget
+// inside a Pod's `with_custom` slot. State (expanded flags, selection,
+// per-row visibility / lock toggles) lives in egui ctx data keyed off
+// each node's path, so the tree survives reorders and theme switches
+// without the example having to thread its own `App`-level resource.
+
+// Each row: `(path, name, icon, children, material_color)`.
+// `material_color` is painted as a `TreeIconKind::Color` swatch in
+// the row's right-gutter — matches the legacy demo's "where is the
+// red thing" affordance.
+type DemoTreeRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    egui::Color32,
+);
+
+const DEMO_TREE: &[DemoTreeRow] = &[
+    (
+        "/World", "World", "folder",
+        &["/World/Robot", "/World/Lights"],
+        egui::Color32::from_rgb(0x55, 0x6E, 0x9C),
+    ),
+    (
+        "/World/Robot", "Robot", "person",
+        &["/World/Robot/base", "/World/Robot/arm"],
+        egui::Color32::from_rgb(0xE0, 0x6C, 0x4F),
+    ),
+    (
+        "/World/Robot/base", "base", "code",
+        &[],
+        egui::Color32::from_rgb(0x4D, 0xA8, 0xDA),
+    ),
+    (
+        "/World/Robot/arm", "arm", "code",
+        &["/World/Robot/arm/grip"],
+        egui::Color32::from_rgb(0xE6, 0xB7, 0x3D),
+    ),
+    (
+        "/World/Robot/arm/grip", "grip", "code",
+        &[],
+        egui::Color32::from_rgb(0x9C, 0x55, 0xC0),
+    ),
+    (
+        "/World/Lights", "Lights", "image",
+        &["/World/Lights/sun"],
+        egui::Color32::from_rgb(0xF5, 0xC2, 0x42),
+    ),
+    (
+        "/World/Lights/sun", "sun", "image",
+        &[],
+        egui::Color32::from_rgb(0xFF, 0xE5, 0x6B),
+    ),
+];
+
+fn demo_tree_node(path: &str) -> Option<&'static DemoTreeRow> {
+    DEMO_TREE.iter().find(|(p, _, _, _, _)| *p == path)
+}
+
+fn demo_tree(ui: &mut egui::Ui, root_id: egui::Id, accent: egui::Color32) {
+    let sel_key = root_id.with("frost_demo_tree_selected");
+    let mut selected: String = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(sel_key))
+        .unwrap_or_default();
+    let initial_selected = selected.clone();
+
+    let mut frame_clicked: Option<String> = None;
+    walk_demo_tree(ui, root_id, "/World", 0, &selected, accent, &mut frame_clicked);
+
+    if let Some(p) = frame_clicked {
+        selected = p;
+    }
+    if selected != initial_selected {
+        ui.ctx().data_mut(|d| d.insert_temp(sel_key, selected));
     }
 }
 
-fn about_panel(pane: &mut PaneBuilder) {
-    let order = pane.section_order(["demo_about_intro"]);
-    for id in &order {
-        match id.as_str() {
-            "demo_about_intro" => pane.section_with("demo_about_intro", "bevy_frost", true, Some("info"), |ui| {
-                sub_caption(
-                    ui,
-                    "Reusable glass-themed editor UI kit for Bevy + egui.",
-                );
-                readout_row(ui, "version", env!("CARGO_PKG_VERSION"));
-                readout_row(ui, "bevy", "0.18");
-                readout_row(ui, "bevy_egui", "0.39");
-            }),
-            _ => {}
+fn walk_demo_tree(
+    ui: &mut egui::Ui,
+    root_id: egui::Id,
+    path: &'static str,
+    depth: u32,
+    selected: &str,
+    accent: egui::Color32,
+    clicked: &mut Option<String>,
+) {
+    let Some((p, name, icon, children, material)) = demo_tree_node(path) else {
+        return;
+    };
+    let is_branch = !children.is_empty();
+    // Per-node persisted state.
+    let exp_key = root_id.with(("frost_demo_tree_expanded", *p));
+    let eye_key = root_id.with(("frost_demo_tree_eye", *p));
+    let lock_key = root_id.with(("frost_demo_tree_lock", *p));
+    let mut expanded: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(exp_key))
+        .unwrap_or(true);
+    let mut eye_on: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(eye_key))
+        .unwrap_or(true);
+    let mut lock_on: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(lock_key))
+        .unwrap_or(false);
+    // `Color` slots are read-only — the slot still requires a `&mut
+    // bool` so the slice shape stays uniform across all rows; the
+    // boolean is never read or flipped, so a throwaway local
+    // suffices.
+    let mut swatch_dummy = false;
+
+    let mut slots = [
+        corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Eye, &mut eye_on)
+            .with_tooltip("Toggle visibility"),
+        corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Lock, &mut lock_on)
+            .with_tooltip("Toggle lock"),
+        corekit::widget::TreeIconSlot::new(
+            corekit::widget::TreeIconKind::Color(*material),
+            &mut swatch_dummy,
+        )
+        .with_tooltip("Material colour"),
+    ];
+    let resp = corekit::widget::tree_row(
+        ui,
+        *p,
+        depth,
+        if is_branch { Some(&mut expanded) } else { None },
+        Some(*icon),
+        *name,
+        selected == *p,
+        accent,
+        &mut slots,
+    );
+    if resp.body.clicked() {
+        *clicked = Some((*p).to_string());
+    }
+
+    ui.ctx().data_mut(|d| {
+        d.insert_persisted(exp_key, expanded);
+        d.insert_persisted(eye_key, eye_on);
+        d.insert_persisted(lock_key, lock_on);
+    });
+
+    if is_branch && expanded {
+        for child in *children {
+            walk_demo_tree(ui, root_id, child, depth + 1, selected, accent, clicked);
         }
     }
 }
