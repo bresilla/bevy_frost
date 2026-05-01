@@ -13,6 +13,26 @@
 
 #![allow(dead_code)]
 
+// ─── Sizing fundamentals ───────────────────────────────────────────
+
+/// Body text size, in pixels. Drives the [`UNIT`] derivation below
+/// — change here only if the entire frost type ramp moves.
+pub const BODY_FONT_SIZE: f32 = 14.0;
+
+/// Foundational row-height unit, in pixels. The canonical "1 row"
+/// measurement for every frost widget — derived as body font size
+/// plus 25 % padding above and 25 % padding below
+/// (`BODY_FONT_SIZE × 1.5`). With body text at 14 px, `UNIT = 21 px`.
+///
+/// Every widget's height is a multiple of `UNIT`. A search bar /
+/// button / single-line control is 1U; a future labelled control
+/// could be 2U; a stacked editor could be 3U; etc. The resizable
+/// [`crate::pod::Pod`] floor is 1U — dragging the resize handle
+/// can never shrink a widget below `UNIT`. Whenever you add a new
+/// widget, size it as `UNIT * n` for some integer `n` so it lines
+/// up with the rest of the kit's vertical rhythm.
+pub const UNIT: f32 = BODY_FONT_SIZE * 1.5;
+
 // ─── Neutrals ───────────────────────────────────────────────────────
 // PRO Dark palette. Wider tier deltas than the previous pass — each
 // "step up" or "step down" from the panel is now ~20+ units instead

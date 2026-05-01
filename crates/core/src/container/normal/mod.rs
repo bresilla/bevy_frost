@@ -187,13 +187,16 @@ impl Normal {
         let mut out: Vec<crate::pod::PodResponse> = Vec::with_capacity(pods_total);
         self.show_with_body(ui, |body_ui| {
             for (i, pod) in pods.into_iter().enumerate() {
+                // Capture metadata BEFORE the pod is consumed by `show`.
                 let pod_id = pod.id();
+                let pod_is_resizable = pod.is_resizable();
+                let pod_widget_count = pod.widget_count();
                 let separator_after = if i + 1 < pods_total {
                     pod.separator_style()
                 } else {
                     // Last pod — never paint a separator after,
                     // regardless of its `separator_style()`.
-                    crate::widget::SeparatorStyle::None
+                    crate::container::SeparatorStyle::None
                 };
                 let frame_resp = Frame::new()
                     .inner_margin(egui::Margin::symmetric(POD_PAD_X, POD_PAD_Y))
@@ -205,18 +208,42 @@ impl Normal {
                     frame_resp.response.rect,
                     format!("Pod[{:?}]", pod_id),
                 );
-                if separator_after != crate::widget::SeparatorStyle::None {
+                if separator_after != crate::container::SeparatorStyle::None {
                     let sep_rect_before = body_ui.cursor();
-                    crate::widget::paint_separator(
-                        body_ui,
-                        separator_after,
-                        pods_accent,
-                    );
+                    let resizable_handle = pod_is_resizable
+                        && separator_after == crate::container::SeparatorStyle::LineDots;
+                    if resizable_handle {
+                        // Interactive variant: drag delta updates
+                        // the pod's persisted per-widget height,
+                        // divided by widget_count so the cursor
+                        // tracks the pod's bottom edge (each
+                        // widget grows by delta/N).
+                        let resp = crate::container::paint_separator_resize(
+                            body_ui,
+                            separator_after,
+                            pod_id,
+                            pods_accent,
+                        );
+                        if resp.dragged() && pod_widget_count > 0 {
+                            let key = crate::pod::Pod::widget_height_key(pod_id);
+                            let cur = body_ui
+                                .ctx()
+                                .data_mut(|d| d.get_persisted::<f32>(key))
+                                .unwrap_or(crate::style::UNIT);
+                            let delta_per_widget =
+                                resp.drag_delta().y / pod_widget_count as f32;
+                            let new = (cur + delta_per_widget)
+                                .clamp(crate::pod::POD_MIN_WIDGET_H, crate::pod::POD_MAX_WIDGET_H);
+                            body_ui.ctx().data_mut(|d| d.insert_persisted(key, new));
+                        }
+                    } else {
+                        crate::container::paint_separator(body_ui, separator_after);
+                    }
                     let sep_rect_after = body_ui.cursor();
                     // Tag the separator strip for the F10 inspector
                     // so the user can see which boundary owns
-                    // which style. Use the cursor delta since
-                    // `paint_separator` doesn't return its rect.
+                    // which style. Use the cursor delta since the
+                    // separator paint functions don't return rects.
                     let strip_rect = egui::Rect::from_min_max(
                         sep_rect_before.min,
                         egui::pos2(sep_rect_before.max.x, sep_rect_after.min.y),

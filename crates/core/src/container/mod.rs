@@ -1,8 +1,7 @@
 //! In-pane container widgets — visual blocks the caller drops into a
-//! [`crate::pane::Pane2`] body to organise content. Each container
-//! defines its own title zone + content zone and grows the pane along
-//! the body axis (since `Pane2` is content-driven; see
-//! `pane::Pane2::lay_out_flex`).
+//! [`crate::pane::Pane2`] body to organise content. A container holds
+//! [`crate::pod::Pod`]s and (between consecutive pods) separators —
+//! see [`SeparatorStyle`].
 //!
 //! Variants:
 //!
@@ -13,7 +12,9 @@
 
 pub mod body;
 pub mod normal;
+pub mod separator;
 pub mod tabbed;
 
 pub use body::Body;
 pub use normal::Normal;
+pub use separator::{paint_separator, paint_separator_resize, SeparatorStyle};

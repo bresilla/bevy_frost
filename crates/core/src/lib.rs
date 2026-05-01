@@ -35,6 +35,11 @@ pub mod ribbon;
 pub mod style;
 pub mod widget;
 
+// Foundational row-height unit — re-exported at crate root so the
+// canonical name is `corekit::UNIT`. Every widget is sized in
+// multiples of this. See [`style::UNIT`] for the definition.
+pub use style::{BODY_FONT_SIZE, UNIT};
+
 // Re-export of the bundled `iconflow` crate so consumers can reach
 // `iconflow::list(Pack::Fluentui)`, `Pack`, etc. without their own
 // dependency on the same version we ship.

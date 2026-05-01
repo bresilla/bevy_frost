@@ -667,12 +667,22 @@ fn ui_system(
                                 // get the future drag-handle (line
                                 // + 3 dots + line).
                                 let separator_style = if p % 2 == 0 {
-                                    corekit::widget::SeparatorStyle::Line
+                                    corekit::container::SeparatorStyle::Line
                                 } else {
-                                    corekit::widget::SeparatorStyle::LineDots
+                                    corekit::container::SeparatorStyle::LineDots
                                 };
                                 let mut pod = corekit::pod::Pod::new(pod_id)
                                     .with_separator(separator_style);
+                                // Pods that get the LineDots
+                                // separator are resizable — the
+                                // separator below them doubles as
+                                // a vertical drag handle that
+                                // grows the pod's widgets.
+                                if separator_style
+                                    == corekit::container::SeparatorStyle::LineDots
+                                {
+                                    pod = pod.resizable();
+                                }
                                 for s in 0..search_count {
                                     pod = pod.with_search(
                                         format!("pod {} · search {}…", p + 1, s + 1),

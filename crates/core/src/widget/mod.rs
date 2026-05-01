@@ -1,11 +1,10 @@
 //! Frost-styled widgets that go inside a
-//! [`crate::container::Normal`] body.
+//! [`crate::container::Normal`] body — leaf nodes that paint a
+//! single primitive (text input, button, slider, …).
 //!
-//! Each widget lives in its own submodule so the surface stays
-//! navigable as more land. For now: just [`text_input`].
+//! Inter-pod separators are NOT widgets — they're container-level
+//! chrome. See [`crate::container::SeparatorStyle`].
 
-pub mod separator;
 pub mod text_input;
 
-pub use separator::{paint_separator, SeparatorStyle};
-pub use text_input::text_input;
+pub use text_input::{text_input, text_input_h};

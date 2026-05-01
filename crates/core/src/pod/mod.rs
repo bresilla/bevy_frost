@@ -36,7 +36,9 @@
 
 use egui::{Color32, Id, Ui};
 
-use crate::widget::{text_input, SeparatorStyle};
+use crate::container::SeparatorStyle;
+use crate::style::UNIT;
+use crate::widget::text_input_h;
 
 /// What a [`Pod`] surfaces to the caller per frame. Each field is
 /// a list of per-widget responses in declaration order — the first
@@ -78,7 +80,26 @@ pub struct Pod {
     /// pods follow in the same container. Container-level decision
     /// — the last pod's separator is suppressed automatically.
     separator: SeparatorStyle,
+    /// `true` → the pod's [`SeparatorStyle::LineDots`] separator
+    /// (when present) becomes a vertical drag handle that grows /
+    /// shrinks every widget inside this pod. The per-widget height
+    /// is persisted in `ctx().data` keyed off the pod's id, so it
+    /// survives across frames. Default is `false` — pods render at
+    /// the widgets' intrinsic height (1U / [`UNIT`] for search bars).
+    resizable: bool,
 }
+
+/// Lower bound on the per-widget height of a [`Pod::resizable`]
+/// pod. Pinned to [`crate::style::UNIT`] — a widget can never
+/// shrink below 1U regardless of how aggressively the user drags
+/// the resize handle. Same as the non-resizable default, so the
+/// pod's "starts at 1U, can grow upward" semantics hold.
+pub const POD_MIN_WIDGET_H: f32 = UNIT;
+/// Upper bound on the per-widget height of a [`Pod::resizable`]
+/// pod. Beyond this the field looks awkward and the pane runs out
+/// of space. Roughly 11U, leaving headroom for very tall pods
+/// without going pathological.
+pub const POD_MAX_WIDGET_H: f32 = 240.0;
 
 impl Pod {
     /// `id` scopes the per-widget persisted state (search query,
@@ -93,14 +114,49 @@ impl Pod {
             // as a list of distinct sections without the caller
             // needing to opt-in.
             separator: SeparatorStyle::Line,
+            resizable: false,
         }
+    }
+
+    /// Mark this pod resizable. Combined with
+    /// [`SeparatorStyle::LineDots`] (the default for the
+    /// LineDots separator variant), the separator painted after
+    /// this pod becomes a vertical drag handle that grows / shrinks
+    /// every widget inside the pod. Drag delta is divided across
+    /// the pod's widgets so dragging 30 px down with 3 widgets
+    /// inside grows each widget by 10 px.
+    pub fn resizable(mut self) -> Self {
+        self.resizable = true;
+        self
+    }
+
+    /// Whether this pod was marked resizable via [`Pod::resizable`].
+    pub fn is_resizable(&self) -> bool {
+        self.resizable
+    }
+
+    /// Persistence key for the resizable per-widget height. Used by
+    /// [`crate::container::Normal`] to write the new value when the
+    /// drag handle reports a delta, and by [`Pod::show`] to read
+    /// the current value when sizing widgets.
+    pub fn widget_height_key(id: Id) -> Id {
+        id.with("frost_pod_widget_height")
+    }
+
+    /// Number of widgets the pod will paint. Used by
+    /// [`crate::container::Normal`] to divide the resize-handle's
+    /// drag delta across widgets so dragging by 30 px on a 3-widget
+    /// pod grows each widget by 10 px (and the pod's overall
+    /// height by 30 px, matching the cursor).
+    pub fn widget_count(&self) -> usize {
+        self.searches.len()
     }
 
     /// Override the separator painted AFTER this pod. The default
     /// is [`SeparatorStyle::Line`] (plain hairline). Set
     /// [`SeparatorStyle::LineDots`] to mark this boundary as a
     /// future drag-resize handle (currently visual only — see
-    /// [`crate::widget::separator`]).
+    /// [`crate::container::separator`]).
     pub fn with_separator(mut self, style: SeparatorStyle) -> Self {
         self.separator = style;
         self
@@ -148,6 +204,20 @@ impl Pod {
         // Small breathing space between successive widgets so multi-
         // widget pods don't stack flush against each other.
         const WIDGET_SPACING: f32 = 4.0;
+        // Resolve the per-widget height: resizable pods read the
+        // persisted value (written by `Normal::show` when the
+        // resize handle below the pod is dragged), defaulting to
+        // 1U; non-resizable pods always render at 1U. The clamp's
+        // lower bound is also 1U so a previously-persisted value
+        // smaller than 1U (from an older code path) snaps back up.
+        let widget_h: f32 = if self.resizable {
+            ui.ctx()
+                .data_mut(|d| d.get_persisted::<f32>(Self::widget_height_key(pod_id)))
+                .unwrap_or(UNIT)
+                .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H)
+        } else {
+            UNIT
+        };
         for (i, cfg) in self.searches.into_iter().enumerate() {
             if i > 0 {
                 ui.add_space(WIDGET_SPACING);
@@ -157,7 +227,7 @@ impl Pod {
                 .ctx()
                 .data(|d| d.get_temp::<String>(buf_key))
                 .unwrap_or_default();
-            let resp = text_input(ui, &mut buf, &cfg.placeholder, cfg.accent);
+            let resp = text_input_h(ui, &mut buf, &cfg.placeholder, cfg.accent, widget_h);
             let changed = resp.changed();
             if changed {
                 ui.ctx().data_mut(|d| d.insert_temp(buf_key, buf.clone()));

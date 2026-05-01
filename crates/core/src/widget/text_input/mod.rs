@@ -30,26 +30,38 @@ use crate::icons;
 use crate::style;
 use crate::style::widget_border;
 
-/// Total field height. Matches the shared `interact_size.y` so the
-/// input aligns with every other frost row-height control.
-const FIELD_H: f32 = 20.0;
 /// Width of the leading / trailing glyph columns.
 const GLYPH_W: f32 = 18.0;
 /// Padding between the text and the glyph columns.
 const TEXT_PAD: f32 = 4.0;
 
-/// Render a text input bound to `text`. `placeholder` shows as a dim
-/// hint when the buffer is empty. Returns the inner `TextEdit`'s
-/// `Response`; the clear-button click marks it `.changed()` too.
+/// Render a text input at the canonical 1U height
+/// ([`crate::style::UNIT`]). See [`text_input_h`] for the
+/// variable-height variant used by resizable pods.
 pub fn text_input(
     ui: &mut egui::Ui,
     text: &mut String,
     placeholder: &str,
     accent: egui::Color32,
 ) -> egui::Response {
+    text_input_h(ui, text, placeholder, accent, crate::style::UNIT)
+}
+
+/// Render a text input bound to `text` at the requested `height`.
+/// `placeholder` shows as a dim hint when the buffer is empty.
+/// Returns the inner `TextEdit`'s `Response` (with `.rect` extended
+/// to cover the full field — leading icon + text strip + clear
+/// button); the clear-button click marks it `.changed()` too.
+pub fn text_input_h(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    placeholder: &str,
+    accent: egui::Color32,
+    height: f32,
+) -> egui::Response {
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(w, FIELD_H),
+        egui::vec2(w, height),
         egui::Sense::hover(),
     );
 
@@ -83,7 +95,7 @@ pub fn text_input(
     // dead button.
     let clear_rect = egui::Rect::from_min_size(
         egui::pos2(rect.max.x - GLYPH_W, rect.min.y),
-        egui::vec2(GLYPH_W, FIELD_H),
+        egui::vec2(GLYPH_W, height),
     );
     let mut cleared = false;
     if !text.is_empty() {
