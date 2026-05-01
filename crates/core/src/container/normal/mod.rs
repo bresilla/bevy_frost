@@ -1152,16 +1152,24 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// "Ease-out-back" — `t = 0 → 0`, `t = 1 → 1`, peaks at `~1.18`
-/// around `t ≈ 0.6` for an overshoot. Used by the corner-bracket
-/// snap so the brackets fly past rest by a few px before settling.
+/// "Ease-out-elastic" — exponentially damped sine that overshoots
+/// past 1.0 once before settling. `t = 0 → 0`, `t = 1 → 1` exactly
+/// (both endpoints early-return). Tuned subtle: a fast decay
+/// (`exp(-5.0 t)`) plus an `AMP = 0.45` scale on the deviation
+/// keeps the overshoot small (~5 %) and the undershoot barely
+/// perceptible — a hint of bounce, not a wobble.
 #[inline]
-fn ease_out_back(t: f32) -> f32 {
+fn ease_out_elastic(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
-    let c1: f32 = 2.5;
-    let c3 = c1 + 1.0;
-    let t1 = t - 1.0;
-    1.0 + c3 * t1 * t1 * t1 + c1 * t1 * t1
+    if t == 0.0 {
+        return 0.0;
+    }
+    if t == 1.0 {
+        return 1.0;
+    }
+    const AMP: f32 = 0.45;
+    let c = std::f32::consts::TAU / 3.0;
+    -(AMP * (-5.0 * t).exp() * ((t * 3.5 - 0.75) * c).sin()) + 1.0
 }
 
 /// Paint a chevron at `center` rotated to match the title side and
@@ -1251,13 +1259,12 @@ fn paint_corner_ticks(
     // actually sees the brackets fly in instead of having the
     // animation play out invisibly under the fade. Same gating
     // pattern the cipher uses.
-    const APPEAR_DUR: f32 = 0.5;
+    const APPEAR_DUR: f32 = 1.0;
     // Brackets fly in from this many pixels OUTSIDE the rest position.
     // Reduced 10 → 7 so a fully-collapsed container's corner ticks
     // sit 3 px closer to the frame edge (the user complained the old
     // value left them visibly floating outside the container).
     const START_OFFSET: f32 = 7.0;
-    const SNAP_RATIO: f32 = 1.2;
     // Gate at `1.0 - ε` (not `0.95`) so the snap starts only AFTER
     // this container's stagger fade has fully completed, not 5 %
     // before the end. `stagger_opacity` reaches exactly `1.0` at
@@ -1336,11 +1343,36 @@ fn paint_corner_ticks(
     if appear < 1.0 {
         ui.ctx().request_repaint();
     }
-    let openness_t = (openness * SNAP_RATIO).clamp(0.0, 1.0);
-    let snap_t = appear.min(openness_t);
-    let snap = ease_out_back(snap_t);
+    // Snap progress is driven by `appear` ALONE — re-arming events
+    // (pane launch, single-container unfold) drop `first_seen`,
+    // which restarts `appear` at 0 and lets `ease_out_elastic`
+    // bounce the brackets in over `APPEAR_DUR`. We deliberately do
+    // NOT factor `openness` in here: the previous version used
+    // `appear.min(openness_t)`, which made the brackets fly OUT
+    // during a fold (openness 1 → 0 dragged the easing curve
+    // backward through its overshoot region) and re-fly-in during
+    // an unfold. With elastic that produced a visible vertical
+    // shift on folded panes — the bracket landed past rest, then
+    // the outer_rect shrank around it so it appeared offset DOWN
+    // from where it should be. By using `appear` alone, the
+    // brackets sit exactly at `rest_inset` whenever no snap is
+    // playing — folded or open, the placement is identical
+    // relative to the (animated) outer_rect.
+    let snap_t = appear;
+    let snap = ease_out_elastic(snap_t);
     let extra = egui::lerp(-START_OFFSET..=0.0, snap);
-    let inset = rest_inset + extra;
+    // Resting inset lerps with `openness`: when fully open, brackets
+    // sit `rest_inset` px INSIDE the painted outer_rect (theme
+    // value, gives breathing room from the frame stroke). When
+    // fully folded, they slide out to `FOLDED_INSET` — slightly
+    // OUTSIDE the painted edge — so the title strip reads as a
+    // self-contained mark with the brackets clinging to its
+    // border, not nested inside a small box. `extra` (the snap-in
+    // offset) is added on top, so the elastic bounce still plays
+    // around whatever resting inset the current fold state picks.
+    const FOLDED_INSET: f32 = -1.0;
+    let resting = egui::lerp(FOLDED_INSET..=rest_inset, openness);
+    let inset = resting + extra;
     let r = outer_rect.shrink(inset);
 
     // Snap the L-bracket corner positions for a 2-px stroke. The
