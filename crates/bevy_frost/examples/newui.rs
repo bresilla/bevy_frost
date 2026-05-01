@@ -19,7 +19,6 @@ use bevy_glacial::prelude::*;
 // us `frostcore`'s parallel state, where the buttons never see the
 // PRO/GAME swap.
 use corekit::container::Normal;
-use corekit::widget::text_input;
 use corekit::pane::{PaneAnchor, Pane2, RailZone};
 use corekit::ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
@@ -501,15 +500,25 @@ fn ui_system(
         }
     }
 
-    // F12 → toggle egui's "show interactive widget bounds" overlay
-    // (matches `bevy_frost::debug_toggle_system` in the legacy
-    // crate). Renders a coloured outline + hit-rect around every
-    // widget egui knows about, so layout / hit-target issues are
-    // immediately visible.
-    //
-    // `Style.debug` is `#[cfg(debug_assertions)]`-gated by egui, so
-    // the overlay is a no-op in `--release`. `make run-newui` runs
-    // a debug build, so it shows here.
+    // F10 → toggle the FROST custom inspector. Tags only the
+    // surfaces we care about (panes, containers, pods) with labels
+    // we wrote — see `corekit::debug`. Hovering any tagged surface
+    // outlines its rect and stamps a label chip at the corner. No
+    // `container_pointer` / horizontal / clip noise. Works in both
+    // `debug` and `--release` builds since it's our code, not
+    // egui's `cfg(debug_assertions)`-gated overlay.
+    {
+        let inspect = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F10));
+        if inspect {
+            let on = !corekit::debug::is_enabled(ctx);
+            corekit::debug::set_enabled(ctx, on);
+        }
+    }
+    // F12 → egui's stock "show interactive widget bounds" overlay.
+    // Coloured outline + hit-rect on every widget egui knows about
+    // — useful when chasing a hit-target / layout bug, noisy for
+    // anything else. `Style.debug` is `cfg(debug_assertions)`-
+    // gated by egui, so this is a no-op in `--release`.
     #[cfg(debug_assertions)]
     {
         let pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12));
@@ -520,6 +529,9 @@ fn ui_system(
             });
         }
     }
+    // Paint the inspector overlay AFTER everything else has
+    // rendered this frame. No-op when the inspector is off.
+    corekit::debug::paint(ctx);
 
     // Pastelized accent flows through chrome (ribbon paint, panel
     // fills, borders, glass tint) so the `Theme::pastel_accent`
@@ -627,24 +639,35 @@ fn ui_system(
                         // still maps each id back to "container N".
                         let i = defaults.iter().position(|d| *d == cid).unwrap_or(0);
                         let title = format!("{} {}", label, i + 1);
+                        // Deterministic per-container "randomness":
+                        // hash the container id into a u64, then
+                        // peel a few digits off the bottom for the
+                        // pod count (1..=4) and per-pod search count
+                        // (1..=3). Stable across frames because the
+                        // cid is stable.
+                        let seed: u64 = cid.value();
+                        let pod_count = ((seed % 4) as usize) + 1;
+                        let pods: Vec<_> = (0..pod_count)
+                            .map(|p| {
+                                let pod_id = cid.with(("newui_pod", p));
+                                let pod_seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                    ^ (p as u64);
+                                let search_count =
+                                    ((pod_seed % 3) as usize) + 1;
+                                let mut pod = corekit::pod::Pod::new(pod_id);
+                                for s in 0..search_count {
+                                    pod = pod.with_search(
+                                        format!("pod {} · search {}…", p + 1, s + 1),
+                                        accent_col,
+                                    );
+                                }
+                                pod
+                            })
+                            .collect();
                         Normal::new(title, anchor, accent_col, cid)
                             .icon("settings")
                             .body_flow(body_flow_per_container)
-                            .show(body_ui, |inner_ui| {
-                                let key = egui::Id::new(("newui_text_input", cid));
-                                let mut buf: String = inner_ui
-                                    .ctx()
-                                    .data(|d| d.get_temp(key).unwrap_or_default());
-                                let resp = text_input(
-                                    inner_ui,
-                                    &mut buf,
-                                    "type something…",
-                                    accent_col,
-                                );
-                                if resp.changed() {
-                                    inner_ui.ctx().data_mut(|d| d.insert_temp(key, buf));
-                                }
-                            });
+                            .show(body_ui, pods);
                     }
                 });
         }

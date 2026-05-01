@@ -1653,8 +1653,8 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         section_fill_mode:  ColorMode::FromBg,
         section_show_frame: true,
         section_show_title_divider: true,
-        section_pad_x: 4,
-        section_pad_y: 3,
+        section_pad_x: 2,
+        section_pad_y: 2,
         section_body_indent: 8.0,
         section_outer_margin_flow_title: 3,
         section_outer_margin_flow_body: 3,
@@ -1805,8 +1805,8 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // instead of almost touching it. Top picks up the same
         // value, which keeps the header strip from looking crammed
         // against the corner ticks.
-        section_pad_x: 6,
-        section_pad_y: 8,
+        section_pad_x: 3,
+        section_pad_y: 4,
         section_body_indent: 8.0,
         // GAME stacking: containers feel like discrete tiles. Wide
         // gaps between adjacent containers (and between the first

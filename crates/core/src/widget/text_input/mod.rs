@@ -141,5 +141,12 @@ pub fn text_input(
     if cleared {
         resp.mark_changed();
     }
+    // Extend the response's rect from the inner TextEdit to the
+    // full painted field — the leading magnifier glyph, the trailing
+    // clear button, and the rounded glass border are all PART of
+    // the widget the caller sees, so callers / inspectors should
+    // receive the full field rect, not just the carved-out text
+    // strip in the middle.
+    resp.rect = rect;
     resp
 }

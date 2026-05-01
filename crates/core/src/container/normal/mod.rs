@@ -146,7 +146,51 @@ impl Normal {
         self
     }
 
-    pub fn show(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+    /// Render the container with one or more pods stacked in the
+    /// body slot. Containers only accept [`crate::pod::Pod`]s — raw
+    /// widgets / closures are intentionally not supported. Returns
+    /// one [`crate::pod::PodResponse`] per pod, in declaration
+    /// order. Pass via `vec![pod1, pod2, ...]` or any
+    /// `IntoIterator<Item = Pod>`.
+    pub fn show(
+        self,
+        ui: &mut Ui,
+        pods: impl IntoIterator<Item = crate::pod::Pod>,
+    ) -> Vec<crate::pod::PodResponse> {
+        // Padding INSIDE each pod (between the pod's painted Frame
+        // and its widgets). Bigger than the now-halved
+        // section_padding so most of the breathing room around pod
+        // content lives in the pod chrome, not the container chrome.
+        const POD_PAD_X: i8 = 8;
+        const POD_PAD_Y: i8 = 6;
+        // Vertical gap BETWEEN successive pods inside the same
+        // container — visually separates them without needing a
+        // border on the pod Frame.
+        const POD_STACK_GAP: f32 = 6.0;
+        let pods: Vec<crate::pod::Pod> = pods.into_iter().collect();
+        let mut out: Vec<crate::pod::PodResponse> = Vec::with_capacity(pods.len());
+        self.show_with_body(ui, |body_ui| {
+            for (i, pod) in pods.into_iter().enumerate() {
+                if i > 0 {
+                    body_ui.add_space(POD_STACK_GAP);
+                }
+                let pod_id = pod.id();
+                let frame_resp = Frame::new()
+                    .inner_margin(egui::Margin::symmetric(POD_PAD_X, POD_PAD_Y))
+                    .show(body_ui, |inner_ui| {
+                        out.push(pod.show(inner_ui));
+                    });
+                crate::debug::tag(
+                    body_ui,
+                    frame_resp.response.rect,
+                    format!("Pod[{:?}]", pod_id),
+                );
+            }
+        });
+        out
+    }
+
+    fn show_with_body(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
         // Register this container's MIN WIDTH with the parent pane
         // so the pane's resize handles can refuse to shrink the
         // pane below the union of its containers' bounds. Keyed
@@ -649,6 +693,13 @@ impl Normal {
                 frame_response.response.rect,
             );
         }
+        // Custom debug inspector — outline the container's full
+        // painted Frame rect with a `Normal[<title>]` label.
+        crate::debug::tag(
+            ui,
+            frame_response.response.rect,
+            format!("Normal[{}]", title_text),
+        );
     }
 
     /// Same recipe as `frostcore::widgets::foldable::section_tracked`'s

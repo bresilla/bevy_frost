@@ -467,6 +467,7 @@ impl Pane2 {
         let pane_anchor = self.anchor;
         let pane_resize = self.resize;
         let pane_accent = self.accent;
+        let pane_title_dbg = self.title.clone();
         // Slot for the Frame's actual rendered rect. The pane Area
         // closure writes this after `Frame::show` returns; the
         // resize-handle Area below reads it so the flow-axis
@@ -584,6 +585,14 @@ impl Pane2 {
                 // animation has shrunk the frame.
                 painted_rect.set(frame_response.response.rect);
                 }
+                // Custom debug inspector — paint the pane's frame
+                // rect with a `Pane2[<title>]` label when the user
+                // toggles the inspector and hovers inside.
+                crate::debug::tag(
+                    outer_ui,
+                    painted_rect.get(),
+                    format!("Pane2[{}]", pane_title_dbg),
+                );
                 let _ = outer_ui.allocate_rect(pane_rect, egui::Sense::hover());
 
                 // ── Resize handles (in-Area) ──
