@@ -596,8 +596,101 @@ impl Pane2 {
             + pane_title_to_body_pad
             + body_flow_open
             + PANE_FRAME_CHROME;
-        let pane_flow =
+        let mut pane_flow =
             collapsed_flow + (expanded_flow - collapsed_flow) * openness;
+
+        // ── Auto-fold-tail when the pane would overflow the screen ──
+        //
+        // Hard rule: a pane MUST NOT exceed the screen extent along
+        // its flow axis (otherwise `Middle`-anchored panes center
+        // the overflow off-screen and the user can't see the title /
+        // header strip). On a frame where the natural pane flow
+        // exceeds `screen_flow_avail`, walk the previous frame's
+        // container list from END to START and force-fold the
+        // tail containers (write `body_open = false`) until the
+        // natural sum fits. The user can drag the corresponding
+        // ribbon button to that container to unfold it; if doing so
+        // exceeds the budget, the next frame's walk will fold a
+        // different tail container to compensate.
+        let screen = ctx.content_rect();
+        let screen_flow_avail = if horizontal_strip {
+            (screen.height() - 2.0 * RAIL_INSET).max(MIN_USER_FLOW)
+        } else {
+            (screen.width() - 2.0 * RAIL_INSET).max(MIN_USER_FLOW)
+        };
+        if !self.resize.flow
+            && !prev_cids_snapshot.is_empty()
+            && pane_flow > screen_flow_avail
+        {
+            let title_chrome = TITLE_STRIP_THICKNESS
+                + pane_title_to_body_pad
+                + PANE_FRAME_CHROME;
+            let chrome_per_container = body_flow_collapsed;
+            // Body budget = screen flow minus title strip etc. minus
+            // any extra body chrome (dot handles) registered last
+            // frame. Each container takes `chrome_per_container`
+            // unconditionally (its title strip is always painted) plus
+            // its `container_flow` only when expanded.
+            let mut budget = (screen_flow_avail
+                - title_chrome
+                - prev_extra_flow_snapshot
+                - chrome_per_container * prev_cids_snapshot.len() as f32)
+                .max(0.0);
+            // Walk from start (closest to title) to end. Open
+            // containers consume from `budget` until exhausted; the
+            // remaining ones get force-folded for THIS frame.
+            for cid in prev_cids_snapshot.iter() {
+                let open_key = cid.with("body_open");
+                let body_open: bool = ctx
+                    .data_mut(|d| d.get_persisted::<bool>(open_key))
+                    .unwrap_or(true);
+                if !body_open {
+                    continue;
+                }
+                let cf =
+                    crate::container::container_flow(ctx, *cid, horizontal_strip);
+                if budget >= cf {
+                    budget -= cf;
+                } else {
+                    // No room — fold this and every later open
+                    // container until budget admits one.
+                    ctx.data_mut(|d| d.insert_persisted(open_key, false));
+                }
+            }
+            // Recompute pane_flow with the folds applied. After the
+            // walk every open container fits in `budget`; the flow
+            // sum is guaranteed ≤ screen_flow_avail (with one frame
+            // of lag on the fold-state animation, which is fine
+            // since `body_openness` interpolates).
+            let sum_body: f32 = prev_cids_snapshot
+                .iter()
+                .map(|cid| {
+                    let open: bool = ctx
+                        .data_mut(|d| {
+                            d.get_persisted::<bool>(cid.with("body_open"))
+                        })
+                        .unwrap_or(true);
+                    if open {
+                        crate::container::container_flow(ctx, *cid, horizontal_strip)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum();
+            let new_expanded = TITLE_STRIP_THICKNESS
+                + pane_title_to_body_pad
+                + sum_body
+                + chrome_per_container * prev_cids_snapshot.len() as f32
+                + prev_extra_flow_snapshot
+                + PANE_FRAME_CHROME;
+            pane_flow = collapsed_flow
+                + (new_expanded - collapsed_flow) * openness;
+        }
+        // Final safety clamp — even with auto-folds we never let the
+        // pane outgrow the screen. Clip is a no-op when the auto-fold
+        // walk above already brought us under budget; it catches the
+        // first-frame case where prev_cids_snapshot was empty.
+        pane_flow = pane_flow.min(screen_flow_avail);
 
         let outer_size = if horizontal_strip {
             vec2(span_outer, pane_flow)
@@ -613,7 +706,6 @@ impl Pane2 {
         // With `fixed_pos`, position is computed in-frame from
         // our just-computed size, so the anchored corner is
         // pinned with ZERO lag.
-        let screen = ctx.content_rect();
         let pane_pos = layout::compute_pane_pos(align, offset, screen, outer_size);
         // Outer pane rect — used as the initial / fallback rect for
         // the resize handles. The Frame inside the Area shrinks

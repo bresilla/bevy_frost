@@ -29,6 +29,7 @@
 //! }
 //! ```
 
+pub mod extras;
 pub mod gizmo_material;
 pub mod prelude;
 

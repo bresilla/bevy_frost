@@ -11,8 +11,19 @@ readme = "README.md"
 # `corekit` is the entire UI core — pane / ribbon / container / pod
 # systems, widgets, theme runtime, vendored fonts. `bevy_frost` is
 # now just the Bevy-specific glue (resource registration, input
-# firewall, gizmo material).
+# firewall, gizmo material) plus the vendored extras (node graph +
+# code editor) under `bevy_frost::extras::*`.
 corekit = { workspace = true, features = ["bevy"] }
+# Direct egui dep — needed by the vendored extras (snarl + code
+# editor) which use `use egui::{...}` paths inside their own
+# modules.
+egui = { workspace = true }
+# Transitive deps of the vendored extras — see
+# `src/extras/{snarl,code_editor}`. Pinned to the same versions
+# the legacy `frostcore` Cargo.toml used.
+egui-scale = "0.3"
+slab = "0.4"
+smallvec = { version = "1.15", features = ["const_new"] }
 bevy = { workspace = true, features = [
     "std",
     "async_executor",
@@ -52,6 +63,19 @@ bevy_egui = { workspace = true, features = [
 # `bevy_frost` directly so the framework-agnostic `corekit` stays
 # allocator-neutral.
 mimalloc = { workspace = true }
+
+[features]
+# Markers for the cfg-gates the vendored extras (snarl + code
+# editor) carry from their upstream crates. `egui` + `editor` are
+# default-on so the vendored code compiles with full egui
+# integration; `serde` + `egui-probe` are no-op markers kept here
+# to silence "unexpected cfg" warnings (they were stripped during
+# the vendoring pass to keep the sub-crates lean).
+default = ["egui", "editor"]
+egui = []
+editor = []
+serde = []
+egui-probe = []
 
 [dev-dependencies]
 # `bevy_glacial` — used by the demo example only (camera /

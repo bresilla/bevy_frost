@@ -495,11 +495,15 @@ fn install_fonts(ctx: &egui::Context, body: FontWeight, title: FontWeight) {
 
     crate::icons::install_iconflow_fonts(&mut fonts);
     ctx.set_fonts(fonts);
-    // Set the ready flags AFTER `ctx.set_fonts` so any concurrent
-    // paint sees the flag only once egui has the family bound.
-    crate::icons::ICONFLOW_FONTS_READY
-        .store(true, std::sync::atomic::Ordering::Release);
-    TITLE_FONT_READY.store(true, std::sync::atomic::Ordering::Release);
+    // Do NOT flip the ready flags here — `ctx.set_fonts` queues the
+    // new `FontDefinitions` for the NEXT pass, so any paint that
+    // happens in the rest of THIS pass would still find the
+    // FontFamily::Name unbound and panic ("FontFamily::Name(...) is
+    // not bound to any fonts"). The flags are flipped one frame
+    // later by `apply_theme` on its `else` branch (no install
+    // needed → fonts have been alive on the ctx for at least one
+    // pass), and by then egui has actually accepted the binding.
+    ctx.request_repaint();
 }
 
 /// Apply the frost theme to the given egui context. Pure egui —
@@ -557,6 +561,18 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
         install_fonts(ctx, body_w, title_w);
         LAST_BODY_WEIGHT.store(body_u8, Ordering::Relaxed);
         LAST_TITLE_WEIGHT.store(title_u8, Ordering::Relaxed);
+    } else {
+        // No install needed → set_fonts (if any) ran on a PREVIOUS
+        // frame, so by now egui has bound the FontFamily::Name(...)
+        // entries we registered. Flip the ready flags now so paint
+        // sites stop falling back to `Proportional` and start using
+        // the iconflow + title families.
+        if !crate::icons::ICONFLOW_FONTS_READY.load(Ordering::Relaxed) {
+            crate::icons::ICONFLOW_FONTS_READY.store(true, Ordering::Release);
+        }
+        if !TITLE_FONT_READY.load(Ordering::Relaxed) {
+            TITLE_FONT_READY.store(true, Ordering::Release);
+        }
     }
 
     // Pack the accent Color32 as u32: (r << 24) | (g << 16) | (b << 8) | a.
