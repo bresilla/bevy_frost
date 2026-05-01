@@ -245,6 +245,55 @@ fn clear_container_min_widths(ctx: &egui::Context, pane_id: Id) {
     });
 }
 
+/// Global ctx-data key under which every [`Pane2::show`] call
+/// publishes its painted rect each frame. Read by host integrations
+/// (e.g. `bevy_frost::EguiInputAbsorbPlugin`) to decide whether the
+/// cursor is currently over an interactable frost pane — a
+/// reliable substitute for `egui::Context::layer_id_at`, which has
+/// too many edge cases (modal handling, ribbon button tooltip
+/// areas, …) to use as a "is the cursor over the UI?" check.
+fn published_pane_rects_key() -> Id {
+    Id::new("frost_published_pane_rects")
+}
+
+/// Read every pane's painted rect that was published THIS FRAME.
+/// Empty when no panes are currently rendering. The list resets at
+/// the start of each frame and entries are appended by
+/// `Pane2::show`.
+pub fn published_pane_rects(ctx: &egui::Context) -> Vec<egui::Rect> {
+    ctx.data(|d| d.get_temp::<Vec<egui::Rect>>(published_pane_rects_key()))
+        .unwrap_or_default()
+}
+
+/// Append `rect` to the global pane-rects list. Called by
+/// `Pane2::show` after the Frame paints. The list lives in egui
+/// ctx data and is reset by [`maybe_reset_published_pane_rects`].
+fn publish_pane_rect(ctx: &egui::Context, rect: egui::Rect) {
+    ctx.data_mut(|d| {
+        let key = published_pane_rects_key();
+        let mut acc: Vec<egui::Rect> = d.get_temp(key).unwrap_or_default();
+        acc.push(rect);
+        d.insert_temp(key, acc);
+    });
+}
+
+/// Clear the pane-rects list. Called once per frame, before any
+/// `Pane2::show` runs, so the list reflects ONLY this frame's
+/// painted panes. Reset is keyed off `cumulative_pass_nr` — the
+/// list resets the first time `Pane2::show` is called in a new
+/// pass and stays accumulating until the next pass starts.
+fn maybe_reset_published_pane_rects(ctx: &egui::Context) {
+    let key = Id::new("frost_published_pane_rects_pass");
+    let now = ctx.cumulative_pass_nr();
+    let last: u64 = ctx.data(|d| d.get_temp(key)).unwrap_or(u64::MAX);
+    if last != now {
+        ctx.data_mut(|d| {
+            d.remove::<Vec<egui::Rect>>(published_pane_rects_key());
+            d.insert_temp(key, now);
+        });
+    }
+}
+
 /// Inset from each screen edge: `EDGE_GAP + SIDE_BTN_SIZE +
 /// RAIL_PANEL_GAP`. The pane sits 4 px past the rail's button
 /// strip on top/left edges; bottom/right add a wider `far` inset
@@ -585,6 +634,13 @@ impl Pane2 {
                 // animation has shrunk the frame.
                 painted_rect.set(frame_response.response.rect);
                 }
+                // Publish this pane's painted rect to the global
+                // ctx-data list so host integrations (e.g.
+                // `bevy_frost::EguiInputAbsorbPlugin`) can ask
+                // "is the cursor over any frost pane?" without
+                // going through egui's quirky `layer_id_at`.
+                maybe_reset_published_pane_rects(outer_ui.ctx());
+                publish_pane_rect(outer_ui.ctx(), painted_rect.get());
                 // Custom debug inspector — paint the pane's frame
                 // rect with a `Pane2[<title>]` label when the user
                 // toggles the inspector and hovers inside.

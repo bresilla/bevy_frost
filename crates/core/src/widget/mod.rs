@@ -4,6 +4,8 @@
 //! Each widget lives in its own submodule so the surface stays
 //! navigable as more land. For now: just [`text_input`].
 
+pub mod separator;
 pub mod text_input;
 
+pub use separator::{paint_separator, SeparatorStyle};
 pub use text_input::text_input;

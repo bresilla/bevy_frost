@@ -1,21 +1,17 @@
 //! Shared **body** layout helper for [`super::Normal`] and (later)
-//! `super::tabbed`. Just a thin wrapper around the span-axis +
-//! optional flow-axis clamp so child widgets see a stable
-//! `ui.available_*` regardless of the surrounding layout.
-//!
-//! ## What it does
+//! `super::tabbed`.
 //!
 //! Inside [`Body::paint`]:
 //!
-//! 1. Clamps the inner ui's CROSS axis to the parent pane's locked
-//!    dim (passed in as `span_inner`). This guarantees a widget
-//!    that calls `ui.available_width()` / `available_height()` (e.g.
-//!    `text_input`) sees the same value across the layout's
-//!    measurement passes.
-//! 2. Optionally clamps the MAIN axis too, when the caller wants
-//!    to bound the body's content size (e.g. `Normal`'s
-//!    `CONTAINER_DEFAULT_*` recipe).
-//! 3. Runs the user's body closure.
+//! 1. Snapshot the parent ui's available rect and pre-allocate that
+//!    exact size via `allocate_ui_with_layout` — gives a fixed-size
+//!    slot for the inner [`egui::ScrollArea`] to fill.
+//! 2. Clamp the inner ui's CROSS axis to `span_inner` so widgets
+//!    that call `ui.available_width()` / `available_height()` see a
+//!    stable value across the layout's measurement passes.
+//! 3. Wrap the user's body closure in a `ScrollArea` whose scroll
+//!    axis matches the container's flow axis (vertical for
+//!    horizontal-strip containers, horizontal for vertical-strip).
 
 use egui::Ui;
 
@@ -51,24 +47,65 @@ impl Body {
         self
     }
 
-    /// Apply the span-axis (and optional flow-axis) clamp to `ui`,
-    /// then run `body` inside a forced `top_down` layout so user
-    /// content always stacks vertically — regardless of which rail
-    /// the parent pane lives on. Without the override, vertical-
-    /// strip panes (LEFT / RIGHT rails) inherit a `left_to_right`
-    /// layout from the pane and any sequence of widgets the caller
-    /// adds (e.g. a column of text inputs) ends up rendered
-    /// side-by-side instead of stacked.
+    /// Pre-allocate a fixed-size rect for the body slot, clamp the
+    /// cross axis, and wrap `body` in a [`egui::ScrollArea`] whose
+    /// scroll axis matches the container's flow axis (vertical for
+    /// horizontal-strip containers, horizontal for vertical-strip).
+    ///
+    /// Two non-obvious settings make scrolling work for the small
+    /// body slots a stack of pods produces:
+    ///
+    /// * `allocate_ui_with_layout(slot_size, …)` instead of letting
+    ///   the ScrollArea derive its own size from
+    ///   `available_rect_before_wrap`. The latter inside a Frame
+    ///   whose content_ui's `max_rect` extends past the
+    ///   openness-clipped visible area returns an inflated value,
+    ///   and `max_offset = content_size - viewport_size` ends up
+    ///   wrong.
+    /// * `min_scrolled_height(0.0)` (or `_width`) to disable
+    ///   ScrollArea's default `min_scrolled_size = 64`. With the
+    ///   default in place, when the actual slot is smaller than 64
+    ///   the ScrollArea inflates `inner_size` to 64; the visible
+    ///   viewport stays clipped to the real slot but the scroll
+    ///   max_offset is computed against the inflated 64, so the
+    ///   user can scroll content past the bottom of the visible
+    ///   area and the last pod ends up half-cut below.
     pub fn paint<R>(&self, ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
-        if self.horizontal_strip {
-            ui.set_max_width(self.span_inner);
+        let slot_size = ui.available_rect_before_wrap().size();
+        let scroll_id = if self.horizontal_strip {
+            "frost_body_scroll_v"
         } else {
-            ui.set_max_height(self.span_inner);
-            if let Some(m) = self.max_flow {
-                ui.set_max_width(m);
-            }
-        }
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), body)
-            .inner
+            "frost_body_scroll_h"
+        };
+        let span_inner = self.span_inner;
+        let horizontal_strip = self.horizontal_strip;
+        let max_flow = self.max_flow;
+        ui.allocate_ui_with_layout(
+            slot_size,
+            egui::Layout::top_down(egui::Align::Min),
+            move |ui| {
+                if horizontal_strip {
+                    ui.set_max_width(span_inner);
+                    egui::ScrollArea::vertical()
+                        .id_salt(scroll_id)
+                        .auto_shrink([false, false])
+                        .min_scrolled_height(0.0)
+                        .show(ui, body)
+                        .inner
+                } else {
+                    ui.set_max_height(span_inner);
+                    if let Some(m) = max_flow {
+                        ui.set_max_width(m);
+                    }
+                    egui::ScrollArea::horizontal()
+                        .id_salt(scroll_id)
+                        .auto_shrink([false, false])
+                        .min_scrolled_width(0.0)
+                        .show(ui, body)
+                        .inner
+                }
+            },
+        )
+        .inner
     }
 }

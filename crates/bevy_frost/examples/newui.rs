@@ -193,6 +193,12 @@ fn main() {
         // `ui_system`, which is enough to drive PRO/GAME for both
         // the ribbon buttons (corekit's draw_assembly + paint) AND
         // the panes (Pane2).
+        //
+        // We DO add `EguiInputAbsorbPlugin` — drains
+        // `Messages<MouseWheel>` whenever the cursor sits over a
+        // frost pane, so scrolling inside a pane doesn't also
+        // drive `bevy_glacial`'s chase-camera zoom.
+        .add_plugins(bevy_frost::EguiInputAbsorbPlugin)
         .add_plugins(GlacialPlugins)
         .add_plugins(WindowSettingsPlugin::new("newui"))
         .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
@@ -654,7 +660,19 @@ fn ui_system(
                                     ^ (p as u64);
                                 let search_count =
                                     ((pod_seed % 3) as usize) + 1;
-                                let mut pod = corekit::pod::Pod::new(pod_id);
+                                // Alternate the separator style per
+                                // pod so the example shows both
+                                // variants — even-indexed pods get
+                                // a plain line, odd-indexed pods
+                                // get the future drag-handle (line
+                                // + 3 dots + line).
+                                let separator_style = if p % 2 == 0 {
+                                    corekit::widget::SeparatorStyle::Line
+                                } else {
+                                    corekit::widget::SeparatorStyle::LineDots
+                                };
+                                let mut pod = corekit::pod::Pod::new(pod_id)
+                                    .with_separator(separator_style);
                                 for s in 0..search_count {
                                     pod = pod.with_search(
                                         format!("pod {} · search {}…", p + 1, s + 1),

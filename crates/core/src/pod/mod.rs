@@ -36,7 +36,7 @@
 
 use egui::{Color32, Id, Ui};
 
-use crate::widget::text_input;
+use crate::widget::{text_input, SeparatorStyle};
 
 /// What a [`Pod`] surfaces to the caller per frame. Each field is
 /// a list of per-widget responses in declaration order — the first
@@ -74,6 +74,10 @@ struct SearchConfig {
 pub struct Pod {
     id: Id,
     searches: Vec<SearchConfig>,
+    /// What kind of separator to paint AFTER this pod when more
+    /// pods follow in the same container. Container-level decision
+    /// — the last pod's separator is suppressed automatically.
+    separator: SeparatorStyle,
 }
 
 impl Pod {
@@ -85,7 +89,27 @@ impl Pod {
         Self {
             id: id.into(),
             searches: Vec::new(),
+            // Default to a plain hairline so a stack of pods reads
+            // as a list of distinct sections without the caller
+            // needing to opt-in.
+            separator: SeparatorStyle::Line,
         }
+    }
+
+    /// Override the separator painted AFTER this pod. The default
+    /// is [`SeparatorStyle::Line`] (plain hairline). Set
+    /// [`SeparatorStyle::LineDots`] to mark this boundary as a
+    /// future drag-resize handle (currently visual only — see
+    /// [`crate::widget::separator`]).
+    pub fn with_separator(mut self, style: SeparatorStyle) -> Self {
+        self.separator = style;
+        self
+    }
+
+    /// The separator style this pod requests after itself. Read by
+    /// [`crate::container::Normal`] when stacking multiple pods.
+    pub fn separator_style(&self) -> SeparatorStyle {
+        self.separator
     }
 
     /// The pod's id. Exposed so callers (e.g.

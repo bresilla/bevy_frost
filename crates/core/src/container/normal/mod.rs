@@ -157,24 +157,44 @@ impl Normal {
         ui: &mut Ui,
         pods: impl IntoIterator<Item = crate::pod::Pod>,
     ) -> Vec<crate::pod::PodResponse> {
+        // Push a per-container `id` salt so every widget the
+        // container creates — `Frame::show`'s anonymous content_ui,
+        // the body's `ScrollArea`, the pods' `text_input`s, etc. —
+        // gets an id chain rooted at THIS container's `pane_id`.
+        // Without this, multiple containers in the same parent
+        // body_ui inherit `body_ui.id().with("child")` (egui's
+        // default fallback in `Ui::new_child`), which is identical
+        // across containers, and any widget inside would trip
+        // egui's "id reused" check_for_id_clash on every frame.
+        let pane_id = self.pane_id;
+        ui.push_id(pane_id, |ui| self.show_inner(ui, pods)).inner
+    }
+
+    fn show_inner(
+        self,
+        ui: &mut Ui,
+        pods: impl IntoIterator<Item = crate::pod::Pod>,
+    ) -> Vec<crate::pod::PodResponse> {
         // Padding INSIDE each pod (between the pod's painted Frame
         // and its widgets). Bigger than the now-halved
         // section_padding so most of the breathing room around pod
         // content lives in the pod chrome, not the container chrome.
         const POD_PAD_X: i8 = 8;
         const POD_PAD_Y: i8 = 6;
-        // Vertical gap BETWEEN successive pods inside the same
-        // container — visually separates them without needing a
-        // border on the pod Frame.
-        const POD_STACK_GAP: f32 = 6.0;
         let pods: Vec<crate::pod::Pod> = pods.into_iter().collect();
-        let mut out: Vec<crate::pod::PodResponse> = Vec::with_capacity(pods.len());
+        let pods_total = pods.len();
+        let pods_accent = self.accent;
+        let mut out: Vec<crate::pod::PodResponse> = Vec::with_capacity(pods_total);
         self.show_with_body(ui, |body_ui| {
             for (i, pod) in pods.into_iter().enumerate() {
-                if i > 0 {
-                    body_ui.add_space(POD_STACK_GAP);
-                }
                 let pod_id = pod.id();
+                let separator_after = if i + 1 < pods_total {
+                    pod.separator_style()
+                } else {
+                    // Last pod — never paint a separator after,
+                    // regardless of its `separator_style()`.
+                    crate::widget::SeparatorStyle::None
+                };
                 let frame_resp = Frame::new()
                     .inner_margin(egui::Margin::symmetric(POD_PAD_X, POD_PAD_Y))
                     .show(body_ui, |inner_ui| {
@@ -185,6 +205,28 @@ impl Normal {
                     frame_resp.response.rect,
                     format!("Pod[{:?}]", pod_id),
                 );
+                if separator_after != crate::widget::SeparatorStyle::None {
+                    let sep_rect_before = body_ui.cursor();
+                    crate::widget::paint_separator(
+                        body_ui,
+                        separator_after,
+                        pods_accent,
+                    );
+                    let sep_rect_after = body_ui.cursor();
+                    // Tag the separator strip for the F10 inspector
+                    // so the user can see which boundary owns
+                    // which style. Use the cursor delta since
+                    // `paint_separator` doesn't return its rect.
+                    let strip_rect = egui::Rect::from_min_max(
+                        sep_rect_before.min,
+                        egui::pos2(sep_rect_before.max.x, sep_rect_after.min.y),
+                    );
+                    crate::debug::tag(
+                        body_ui,
+                        strip_rect,
+                        format!("separator[{:?}]", separator_after),
+                    );
+                }
             }
         });
         out

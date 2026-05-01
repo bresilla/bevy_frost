@@ -36,8 +36,11 @@ pub mod prelude;
 // consumers don't notice the workspace split.
 pub use frostcore::*;
 
+use bevy::ecs::message::Messages;
+use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
+use bevy::window::PrimaryWindow;
+use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
 
 // ─── Theme ──────────────────────────────────────────────────────────
 
@@ -134,10 +137,65 @@ fn debug_toggle_system(mut contexts: EguiContexts) {
     }
 }
 
+// ─── Pointer-event firewall ────────────────────────────────────────
+
+/// Drains `Messages<MouseWheel>` whenever the OS cursor sits inside
+/// the painted rect of any frost pane this frame, so scroll wheel
+/// input over the UI doesn't bleed through to downstream Bevy
+/// systems (e.g. `bevy_glacial`'s chase-camera zoom).
+///
+/// We DON'T use egui's `is_pointer_over_area` / `layer_id_at` here:
+/// the former returns `false` for `Order::Background` layers when
+/// no `CentralPanel` is installed (frost panes are Background and
+/// we have no CentralPanel), and the latter has edge cases around
+/// modal / tooltip layers that fire for cursor positions visually
+/// over the 3D viewport. Instead, `corekit::pane::Pane2::show`
+/// publishes its painted rect to a global ctx-data list each frame
+/// (see [`corekit::pane::published_pane_rects`]) and we just check
+/// the bevy window's cursor against that list.
+fn consume_egui_input_system(
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut contexts: EguiContexts,
+    mut wheel_events: ResMut<Messages<MouseWheel>>,
+) {
+    let Ok(window) = primary_window.single() else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
+    let pos = egui::pos2(cursor.x, cursor.y);
+    let pane_rects = corekit::pane::published_pane_rects(ctx);
+    if pane_rects.iter().any(|r| r.contains(pos)) {
+        wheel_events.clear();
+    }
+}
+
+/// Standalone plugin that installs only the egui pointer-event
+/// firewall — useful for apps that can't take the full
+/// [`FrostPlugin`] (e.g. apps already wiring their own theme +
+/// ribbon resources from a different source). Add this alone
+/// alongside `EguiPlugin` and you get the same input-absorption
+/// behaviour without dragging in `ThemePlugin` / `RibbonPlugin`.
+pub struct EguiInputAbsorbPlugin;
+
+impl Plugin for EguiInputAbsorbPlugin {
+    fn build(&self, app: &mut App) {
+        // Run `.after(EguiPreUpdateSet::ProcessInput)` — bevy_egui's
+        // set that copies `Messages<MouseWheel>` into egui's
+        // `EguiInput`. If we cleared the queue earlier the UI would
+        // miss the scroll entirely. After this set, egui has its
+        // copy and we're free to drain so downstream `Update` systems
+        // (e.g. bevy_glacial's chase-camera zoom) see nothing.
+        app.add_systems(
+            PreUpdate,
+            consume_egui_input_system.after(EguiPreUpdateSet::ProcessInput),
+        );
+    }
+}
+
 // ─── Combined install ──────────────────────────────────────────────
 
-/// Full frost install — `ThemePlugin` + `RibbonPlugin`. Idempotent;
-/// safe to add alongside any other Bevy plugins.
+/// Full frost install — `ThemePlugin` + `RibbonPlugin` +
+/// [`EguiInputAbsorbPlugin`]. Idempotent; safe to add alongside any
+/// other Bevy plugins.
 pub struct FrostPlugin;
 
 impl Plugin for FrostPlugin {
@@ -147,6 +205,9 @@ impl Plugin for FrostPlugin {
         }
         if !app.is_plugin_added::<RibbonPlugin>() {
             app.add_plugins(RibbonPlugin);
+        }
+        if !app.is_plugin_added::<EguiInputAbsorbPlugin>() {
+            app.add_plugins(EguiInputAbsorbPlugin);
         }
     }
 }
