@@ -5,7 +5,11 @@
 //!
 //!
 
-#![deny(missing_docs, non_ascii_idents, unsafe_code)]
+// `non_ascii_idents` was here in the upstream snarl crate but is
+// ignored at module level — moved to a vendored sub-module, the
+// only place to opt into it is the workspace root, which is out
+// of scope. Drop it from the list to silence the lint warning.
+#![deny(missing_docs, unsafe_code)]
 #![deny(
     clippy::correctness,
     clippy::complexity,

@@ -27,11 +27,6 @@ use egui::Color32;
 #[cfg(feature = "egui")]
 pub const ERROR_COLOR: Color32 = Color32::from_rgb(255, 0, 255);
 
-/// Default-themes array — kept for API compatibility, but only
-/// the one we actually keep around lives here now.
-#[cfg(feature = "egui")]
-pub const DEFAULT_THEMES: [ColorTheme; 1] = [ColorTheme::GRUVBOX];
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 /// Colour palette for a code-editor theme. Every field is a full
 /// [`Color32`] (including alpha), so you can make any slot

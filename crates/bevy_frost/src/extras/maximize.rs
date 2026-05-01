@@ -37,38 +37,13 @@ use std::hash::Hash;
 
 use egui;
 
-use corekit::style::{
-    glass_alpha_window, glass_fill, BORDER_SUBTLE,
-};
+use corekit::style::{glass_alpha_window, glass_fill};
 
 /// The egui data key that [`maximizable`] uses to store the
 /// maximise-flag for a given `id_salt`. Exposed so callers can do
 /// context-sensitive routing without poking inside the widget.
 pub fn maximize_state_key(id_salt: impl std::hash::Hash) -> egui::Id {
     egui::Id::new(("frost_maximize", id_salt))
-}
-
-/// Returns `true` if the maximizable widget identified by
-/// `id_salt` is currently in full-window mode. Use this from a
-/// host's key handler to route Ctrl+K to a widget-specific
-/// command palette when the widget is maximised, or to the
-/// general palette otherwise.
-pub fn is_maximized(ctx: &egui::Context, id_salt: impl std::hash::Hash) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(maximize_state_key(id_salt)))
-        .unwrap_or(false)
-}
-
-/// Returns `true` if ANY maximizable widget is currently in
-/// full-window mode. Useful when you only care about "should the
-/// general palette behave differently" and don't need to know
-/// which specific widget owns the screen.
-pub fn is_any_maximized(ctx: &egui::Context) -> bool {
-    let global_key = egui::Id::new("frost_maximize_global");
-    let pass_nr = ctx.cumulative_pass_nr();
-    match ctx.data(|d| d.get_temp::<(u64, egui::Id)>(global_key)) {
-        Some((f, _)) => f == pass_nr || f + 1 == pass_nr,
-        None => false,
-    }
 }
 
 /// Wrap a widget so it gains a maximise / restore toggle.
@@ -202,51 +177,6 @@ pub fn maximizable(
     }
 }
 
-/// Drop-in chip for a section's `actions` slot. Toggles the same
-/// maximise state that [`maximizable`] reads, identified by the
-/// caller's `id_salt`. Sized to fit
-/// [`18.0`] so the chip
-/// lines up with the reserved cell.
-pub fn header_action_maximize(
-    ui: &mut egui::Ui,
-    id_salt: impl Hash + Copy,
-    accent: egui::Color32,
-) {
-    let max_id = maximize_state_key(id_salt);
-    let maximized: bool = ui
-        .ctx()
-        .data(|d| d.get_temp::<bool>(max_id))
-        .unwrap_or(false);
-
-    let size = 18.0;
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(size, size),
-        egui::Sense::click(),
-    );
-    let resp = resp
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(if maximized { "Restore" } else { "Maximize" });
-    if ui.is_rect_visible(rect) {
-        paint_ribbon_style_chip(
-            &ui.painter(),
-            rect,
-            accent,
-            /* active */ maximized,
-            /* hovered */ resp.hovered(),
-        );
-        paint_fullscreen_arrows(
-            &ui.painter(),
-            rect,
-            accent,
-            /* inward */ maximized,
-            /* hovered */ resp.hovered(),
-        );
-    }
-    if resp.clicked() {
-        ui.ctx()
-            .data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
-    }
-}
 
 /// The 24 px maximise / restore chip. Lives in its own
 /// `Order::Tooltip` Area so it paints (and intercepts clicks)

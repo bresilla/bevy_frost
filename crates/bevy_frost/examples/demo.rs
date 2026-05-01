@@ -738,6 +738,13 @@ fn containers_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color3
 fn scene_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
     let pane_id = egui::Id::new(PANE_SCENE);
     let tree_root = cid(PANE_SCENE, "tree_root");
+    let search_pod_id = pid(PANE_SCENE, "scene", 0);
+    // Read the search field's current query so the tree below can
+    // filter against it. `search_query` reads ctx data persisted by
+    // last frame's `with_search` paint — first frame returns "".
+    let tree_filter =
+        corekit::pod::Pod::search_query(body.ctx(), search_pod_id, 0)
+            .to_lowercase();
     // Read the tree's currently-selected path so the trailing
     // readout shows it live (mirrors the legacy demo's `selected`
     // row at the bottom of the scene tree).
@@ -777,7 +784,9 @@ fn scene_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                 Pod::new(pid(PANE_SCENE, "scene", 2))
                     .with_separator(SeparatorStyle::Line)
                     .fill()
-                    .with_custom_units(7, move |ui| demo_tree(ui, tree_root, accent)),
+                    .with_custom_units(7, move |ui| {
+                        demo_tree(ui, tree_root, accent, &tree_filter)
+                    }),
                 Pod::new(pid(PANE_SCENE, "scene", 3))
                     .with_separator(SeparatorStyle::None)
                     .with_readout("selected", selected_display),
@@ -916,17 +925,13 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             icon: "cursor",
             pods: vec![
                 Pod::new(pid(PANE_KEYS, "mouse", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_readout("MMB drag", "pan camera focus"),
-                Pod::new(pid(PANE_KEYS, "mouse", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_readout("LMB+RMB drag", "orbit camera"),
-                Pod::new(pid(PANE_KEYS, "mouse", 2))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_readout("Scroll", "log-smooth zoom"),
-                Pod::new(pid(PANE_KEYS, "mouse", 3))
                     .with_separator(SeparatorStyle::None)
-                    .with_readout("LMB on cube", "re-tint UI accent"),
+                    .with_keybindings(vec![
+                        ("MMB drag", "pan camera focus"),
+                        ("LMB+RMB", "orbit camera"),
+                        ("Scroll", "log-smooth zoom"),
+                        ("LMB cube", "re-tint UI accent"),
+                    ]),
             ],
         },
         ContainerSpec {
@@ -935,17 +940,34 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             icon: "grid",
             pods: vec![
                 Pod::new(pid(PANE_KEYS, "layout", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_readout("Drag pane edge", "resize the pane"),
-                Pod::new(pid(PANE_KEYS, "layout", 1))
                     .with_separator(SeparatorStyle::None)
-                    .with_readout("Toggle ribbon btn", "open / close pane"),
+                    .with_keybindings(vec![
+                        ("Drag edge", "resize the pane"),
+                        ("Click btn", "open / close pane"),
+                        ("Drag btn", "reorder ribbon"),
+                        ("F12", "egui debug overlay"),
+                    ]),
+            ],
+        },
+        ContainerSpec {
+            id: cid(PANE_KEYS, "global"),
+            title: "Global".into(),
+            icon: "keyboard",
+            pods: vec![
+                Pod::new(pid(PANE_KEYS, "global", 0))
+                    .with_separator(SeparatorStyle::None)
+                    .with_keybindings(vec![
+                        ("Ctrl+K", "command palette"),
+                        ("Ctrl+P", "command palette"),
+                        ("Esc", "close palette"),
+                    ]),
             ],
         },
     ]);
 }
 
-/// **About pane** — version + dependency readouts.
+/// **About pane** — version + dependency readouts plus a feature
+/// chip cluster that demonstrates the auto-growing tags pod.
 fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
     let pane_id = egui::Id::new(PANE_ABOUT);
     render_containers(body, pane_id, anchor, accent, vec![
@@ -966,6 +988,85 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                 Pod::new(pid(PANE_ABOUT, "info", 3))
                     .with_separator(SeparatorStyle::None)
                     .with_readout("egui", "0.33"),
+            ],
+        },
+        ContainerSpec {
+            id: cid(PANE_ABOUT, "features"),
+            title: "Features".into(),
+            icon: "tag",
+            pods: vec![
+                Pod::new(pid(PANE_ABOUT, "features", 0))
+                    .with_separator(SeparatorStyle::None)
+                    .with_tag_items(
+                        vec![
+                            corekit::pod::TagItem::new("widgets"),
+                            corekit::pod::TagItem::new("ribbons"),
+                            corekit::pod::TagItem::new("panes"),
+                            corekit::pod::TagItem::new("pods"),
+                            corekit::pod::TagItem::new("snarl-graph"),
+                            corekit::pod::TagItem::new("code-editor"),
+                            corekit::pod::TagItem::new("theme/PRO"),
+                            corekit::pod::TagItem::new("theme/GAME"),
+                            corekit::pod::TagItem::colored(
+                                "experimental",
+                                corekit::style::WARNING,
+                            ),
+                            corekit::pod::TagItem::colored(
+                                "stable-api",
+                                corekit::style::SUCCESS,
+                            ),
+                        ],
+                        accent,
+                    ),
+            ],
+        },
+        ContainerSpec {
+            id: cid(PANE_ABOUT, "stats"),
+            title: "Stage stats".into(),
+            icon: "info",
+            pods: vec![
+                Pod::new(pid(PANE_ABOUT, "stats", 0))
+                    .with_separator(SeparatorStyle::Line)
+                    .with_badge_row(
+                        "lights",
+                        vec!["12 dir", "4 pt", "2 spot", "1 dome"],
+                        accent,
+                    ),
+                Pod::new(pid(PANE_ABOUT, "stats", 1))
+                    .with_separator(SeparatorStyle::Line)
+                    .with_badge_row(
+                        "instances",
+                        vec!["3 proto", "128 inst", "anim"],
+                        accent,
+                    ),
+                Pod::new(pid(PANE_ABOUT, "stats", 2))
+                    .with_separator(SeparatorStyle::Line)
+                    .with_badge_row(
+                        "skel",
+                        vec!["6 skel", "1 root", "84 bind"],
+                        accent,
+                    ),
+                Pod::new(pid(PANE_ABOUT, "stats", 3))
+                    .with_separator(SeparatorStyle::Line)
+                    .with_badge_row(
+                        "render",
+                        vec!["1 settings", "2 product", "3 var"],
+                        accent,
+                    ),
+                Pod::new(pid(PANE_ABOUT, "stats", 4))
+                    .with_separator(SeparatorStyle::None)
+                    .with_badge_row_items(
+                        "physics",
+                        vec![
+                            corekit::pod::TagItem::new("1 scene"),
+                            corekit::pod::TagItem::new("12 rb"),
+                            corekit::pod::TagItem::colored(
+                                "broken",
+                                corekit::style::WARNING,
+                            ),
+                        ],
+                        accent,
+                    ),
             ],
         },
     ]);
@@ -1208,7 +1309,12 @@ fn demo_tree_node(path: &str) -> Option<&'static DemoTreeRow> {
     DEMO_TREE.iter().find(|(p, _, _, _, _)| *p == path)
 }
 
-fn demo_tree(ui: &mut egui::Ui, root_id: egui::Id, accent: egui::Color32) {
+fn demo_tree(
+    ui: &mut egui::Ui,
+    root_id: egui::Id,
+    accent: egui::Color32,
+    filter: &str,
+) {
     let sel_key = root_id.with("frost_demo_tree_selected");
     let mut selected: String = ui
         .ctx()
@@ -1216,13 +1322,33 @@ fn demo_tree(ui: &mut egui::Ui, root_id: egui::Id, accent: egui::Color32) {
         .unwrap_or_default();
     let initial_selected = selected.clone();
     let mut frame_clicked: Option<String> = None;
-    walk_demo_tree(ui, root_id, "/World", 0, &selected, accent, &mut frame_clicked);
+    walk_demo_tree(
+        ui, root_id, "/World", 0, &selected, accent, filter,
+        &mut frame_clicked,
+    );
     if let Some(p) = frame_clicked {
         selected = p;
     }
     if selected != initial_selected {
         ui.ctx().data_mut(|d| d.insert_temp(sel_key, selected));
     }
+}
+
+/// Does this node — or any descendant — match the (lowercase)
+/// substring `filter`? Branches stay visible when any child passes
+/// so the path to a matching leaf never gets hidden by the parent
+/// chain. Empty filter passes everything.
+fn demo_tree_passes(path: &'static str, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let Some((p, name, _, children, _)) = demo_tree_node(path) else {
+        return false;
+    };
+    if name.to_lowercase().contains(filter) || p.to_lowercase().contains(filter) {
+        return true;
+    }
+    children.iter().any(|c| demo_tree_passes(c, filter))
 }
 
 fn walk_demo_tree(
@@ -1232,11 +1358,15 @@ fn walk_demo_tree(
     depth: u32,
     selected: &str,
     accent: egui::Color32,
+    filter: &str,
     clicked: &mut Option<String>,
 ) {
     let Some((p, name, icon, children, material)) = demo_tree_node(path) else {
         return;
     };
+    if !demo_tree_passes(path, filter) {
+        return;
+    }
     let is_branch = !children.is_empty();
     let exp_key = root_id.with(("frost_demo_tree_expanded", *p));
     let eye_key = root_id.with(("frost_demo_tree_eye", *p));
@@ -1286,7 +1416,9 @@ fn walk_demo_tree(
 
     if is_branch && expanded {
         for child in *children {
-            walk_demo_tree(ui, root_id, child, depth + 1, selected, accent, clicked);
+            walk_demo_tree(
+                ui, root_id, child, depth + 1, selected, accent, filter, clicked,
+            );
         }
     }
 }

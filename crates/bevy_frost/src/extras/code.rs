@@ -87,7 +87,7 @@ pub fn frost_code_editor(
 /// punctuation for a readable hierarchy.
 fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
     use corekit::style::{
-        accent_pressed, glass_alpha_window, glass_fill, on_panel, on_panel_dim, pane_fill, AXIS_X,
+        accent_pressed, glass_alpha_window, glass_fill, on_panel_dim, pane_fill, AXIS_X,
         AXIS_Y, AXIS_Z, SUCCESS,
     };
     ColorTheme {

@@ -42,7 +42,6 @@ pub use crate::extras::snarl::{
 use crate::extras::maximize::maximizable;
 use corekit::style::{
     glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
-    BG_2_RAISED,
 };
 
 /// Build a [`SnarlStyle`] that inherits the frost palette + border

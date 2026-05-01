@@ -188,12 +188,30 @@ pub fn active_pane_key() -> Id {
 pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
     let key = pane_id.with("body_open");
     let ver_key = pane_id.with("body_fold_version");
+    let touch_key = pane_id.with("body_open_touched_at");
+    let now = ctx.input(|i| i.time);
     ctx.data_mut(|d| {
         let cur: bool = d.get_persisted(key).unwrap_or(true);
         d.insert_persisted(key, !cur);
         let v: u64 = d.get_persisted(ver_key).unwrap_or(0);
         d.insert_persisted(ver_key, v.wrapping_add(1));
+        // Stamp the toggle time so the parent `Pane2` auto-fold
+        // walk can pick "fold the OLDEST-touched open container
+        // first" instead of just blindly chopping the tail. The
+        // user's most recent unfold wins — older opens yield space.
+        d.insert_persisted(touch_key, now);
     });
+}
+
+/// Read the timestamp (egui's `i.time` seconds) of the most recent
+/// user toggle of `body_open` for this container. Returns `0.0` if
+/// never toggled. Used by [`Pane2::show`]'s auto-fold-tail walk to
+/// preserve the user's most recent unfold over older opens.
+pub fn body_open_touched_at(ctx: &egui::Context, pane_id: Id) -> f64 {
+    ctx.data_mut(|d| {
+        d.get_persisted::<f64>(pane_id.with("body_open_touched_at"))
+    })
+    .unwrap_or(0.0)
 }
 
 /// Read the per-pane fold-version counter. Bumped by
@@ -383,6 +401,18 @@ pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP
     + crate::ribbon::SIDE_BTN_SIZE
     + RAIL_PANEL_GAP;
 
+/// Read which screen edges currently host an active ribbon, as
+/// `[left, right, top, bottom]`. Published every frame by
+/// [`crate::ribbon::draw_assembly`]; returns `[true; 4]` when no
+/// ribbons have been drawn yet (conservative default — reserve
+/// space for ribbons on every side until we know better).
+pub fn published_ribbon_edges(ctx: &egui::Context) -> [bool; 4] {
+    ctx.data(|d| {
+        d.get_temp::<[bool; 4]>(egui::Id::new("frost_published_ribbon_edges"))
+    })
+    .unwrap_or([true; 4])
+}
+
 /// Visual gap between the ribbon's button strip and the pane edge.
 const RAIL_PANEL_GAP: f32 = 8.0;
 
@@ -440,7 +470,7 @@ impl Pane2 {
         let horizontal_strip = title_side.is_horizontal_strip();
         // Cross extent: user-resized when `PaneResize::cross` is on,
         // baseline `PANE_OUTER_SPAN` otherwise.
-        let span_outer = if self.resize.span {
+        let mut span_outer = if self.resize.span {
             user_span(ctx, self.id)
         } else {
             PANE_OUTER_SPAN
@@ -613,10 +643,33 @@ impl Pane2 {
         // exceeds the budget, the next frame's walk will fold a
         // different tail container to compensate.
         let screen = ctx.content_rect();
+        // Reserve `RAIL_INSET` on the pane's OWN rail (its title
+        // strip lives there); on the opposite side only reserve
+        // when there's actually a ribbon hosted there. The
+        // `published_ribbon_edges` registry is filled every frame
+        // by `draw_assembly` so the pane always sees current
+        // truth.
+        let edges = published_ribbon_edges(ctx);
+        let [has_left, has_right, has_top, has_bottom] = edges;
+        let title_side = self.anchor.title_side();
+        let (own_present, opposite_present) = match title_side {
+            anchor::TitleSide::Left   => (has_left,   has_right),
+            anchor::TitleSide::Right  => (has_right,  has_left),
+            anchor::TitleSide::Top    => (has_top,    has_bottom),
+            anchor::TitleSide::Bottom => (has_bottom, has_top),
+        };
+        // Reserve TWICE `RAIL_INSET` on each side that has a ribbon —
+        // one ribbon's-worth of clearance to clear the ribbon button
+        // itself, plus another ribbon's-worth of breathing room so
+        // the pane (with its shadow + corner radius) doesn't crowd
+        // the ribbon visually. Single-inset was leaving the pane
+        // flush against the ribbon edge.
+        let own_inset = if own_present { RAIL_INSET * 2.0 } else { 0.0 };
+        let opp_inset = if opposite_present { RAIL_INSET * 2.0 } else { 0.0 };
         let screen_flow_avail = if horizontal_strip {
-            (screen.height() - 2.0 * RAIL_INSET).max(MIN_USER_FLOW)
+            (screen.height() - own_inset - opp_inset).max(MIN_USER_FLOW)
         } else {
-            (screen.width() - 2.0 * RAIL_INSET).max(MIN_USER_FLOW)
+            (screen.width() - own_inset - opp_inset).max(MIN_USER_FLOW)
         };
         if !self.resize.flow
             && !prev_cids_snapshot.is_empty()
@@ -626,35 +679,50 @@ impl Pane2 {
                 + pane_title_to_body_pad
                 + PANE_FRAME_CHROME;
             let chrome_per_container = body_flow_collapsed;
-            // Body budget = screen flow minus title strip etc. minus
-            // any extra body chrome (dot handles) registered last
-            // frame. Each container takes `chrome_per_container`
-            // unconditionally (its title strip is always painted) plus
-            // its `container_flow` only when expanded.
             let mut budget = (screen_flow_avail
                 - title_chrome
                 - prev_extra_flow_snapshot
                 - chrome_per_container * prev_cids_snapshot.len() as f32)
                 .max(0.0);
-            // Walk from start (closest to title) to end. Open
-            // containers consume from `budget` until exhausted; the
-            // remaining ones get force-folded for THIS frame.
-            for cid in prev_cids_snapshot.iter() {
-                let open_key = cid.with("body_open");
-                let body_open: bool = ctx
-                    .data_mut(|d| d.get_persisted::<bool>(open_key))
-                    .unwrap_or(true);
-                if !body_open {
-                    continue;
-                }
-                let cf =
-                    crate::container::container_flow(ctx, *cid, horizontal_strip);
-                if budget >= cf {
+            // Collect every currently-open container with its
+            // `container_flow` and the most recent user-toggle
+            // timestamp. Sort DESCENDING by timestamp — the user's
+            // most recent unfold is at the front, so it gets first
+            // dibs on the budget. Older opens (and never-toggled
+            // containers, which carry timestamp 0.0 by default) are
+            // the ones that yield space when overflow forces a
+            // re-fold.
+            let mut opens: Vec<(Id, f64, f32)> = prev_cids_snapshot
+                .iter()
+                .filter_map(|cid| {
+                    let open: bool = ctx
+                        .data_mut(|d| {
+                            d.get_persisted::<bool>(cid.with("body_open"))
+                        })
+                        .unwrap_or(true);
+                    if !open {
+                        return None;
+                    }
+                    let touched_at = body_open_touched_at(ctx, *cid);
+                    let cf = crate::container::container_flow(
+                        ctx, *cid, horizontal_strip,
+                    );
+                    Some((*cid, touched_at, cf))
+                })
+                .collect();
+            opens.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for (cid, _, cf) in opens.iter() {
+                if budget >= *cf {
                     budget -= cf;
                 } else {
-                    // No room — fold this and every later open
-                    // container until budget admits one.
-                    ctx.data_mut(|d| d.insert_persisted(open_key, false));
+                    // Older-toggled (or never-toggled) open
+                    // container — fold to free space for the
+                    // newer-toggled ones above.
+                    ctx.data_mut(|d| {
+                        d.insert_persisted(cid.with("body_open"), false)
+                    });
                 }
             }
             // Recompute pane_flow with the folds applied. After the
@@ -691,6 +759,42 @@ impl Pane2 {
         // walk above already brought us under budget; it catches the
         // first-frame case where prev_cids_snapshot was empty.
         pane_flow = pane_flow.min(screen_flow_avail);
+
+        // SPAN-axis clamp — perpendicular to flow. `Middle`-anchored
+        // panes center the span axis on screen, so a span larger
+        // than the available perpendicular extent bleeds past BOTH
+        // perpendicular ribbons at once. Min/Max-aligned anchors
+        // overflow only on one side, but the same clamp covers
+        // them: subtract the inset on each perpendicular ribbon
+        // that's actually present.
+        let (span_lead_present, span_trail_present) = if horizontal_strip {
+            (has_left, has_right)
+        } else {
+            (has_top, has_bottom)
+        };
+        let span_lead_inset  = if span_lead_present  { RAIL_INSET * 2.0 } else { 0.0 };
+        let span_trail_inset = if span_trail_present { RAIL_INSET * 2.0 } else { 0.0 };
+        let screen_span_avail = if horizontal_strip {
+            (screen.width()  - span_lead_inset - span_trail_inset).max(MIN_USER_SPAN)
+        } else {
+            (screen.height() - span_lead_inset - span_trail_inset).max(MIN_USER_SPAN)
+        };
+        span_outer = span_outer.min(screen_span_avail);
+        // Publish the clamped span so `lay_out_flex` (which runs
+        // inside the Area's body and would otherwise call
+        // `user_span` again, getting the unclamped raw drag value)
+        // sizes its Frame to the same dimension we just sized the
+        // Area to. Without this the inner Frame paints at the raw
+        // `user_span`, bleeding past the Area's clip rect into the
+        // perpendicular ribbon — the "going above the ribbon"
+        // symptom. We keep `user_span` unmodified so the user's
+        // drag intent survives a window-shrink + re-enlarge cycle.
+        ctx.data_mut(|d| {
+            d.insert_temp::<f32>(
+                self.id.with("frost_pane_effective_span"),
+                span_outer,
+            );
+        });
 
         let outer_size = if horizontal_strip {
             vec2(span_outer, pane_flow)
@@ -952,19 +1056,23 @@ impl Pane2 {
 
         // Cross axis = the dimension the title strip spans. Tracks
         // the SAME `span_outer` value `Pane2::show` used to size
-        // the pane Area: the user-resized one when `resize.span`
-        // is enabled, otherwise the baseline `PANE_OUTER_SPAN`.
-        // Hardcoding `PANE_OUTER_SPAN` here was the bug — the pane
-        // Area grew to the user-resized cross but the Frame inside
-        // stayed clamped to 280, leaving a transparent strip on
-        // the cross-max side and visually orphaning the cross
-        // resize handle (which always sits at the Area's true
-        // edge, not the Frame's edge).
-        let span_outer = if resize.span {
-            user_span(ui.ctx(), id)
-        } else {
-            PANE_OUTER_SPAN
-        };
+        // the pane Area. `Pane2::show` publishes the post-clamp
+        // effective span under `frost_pane_effective_span` for this
+        // pane id; that value already accounts for the screen-edge
+        // / perpendicular-ribbon clamp so the Frame paints flush
+        // with the Area's clipped rect. Falling back to the raw
+        // `user_span` (or `PANE_OUTER_SPAN`) only matters on the
+        // first frame before `show` has published.
+        let span_outer = ui
+            .ctx()
+            .data(|d| d.get_temp::<f32>(id.with("frost_pane_effective_span")))
+            .unwrap_or_else(|| {
+                if resize.span {
+                    user_span(ui.ctx(), id)
+                } else {
+                    PANE_OUTER_SPAN
+                }
+            });
         let span_inner = span_outer - PANE_FRAME_CHROME;
 
         let title_size = if horizontal_strip {

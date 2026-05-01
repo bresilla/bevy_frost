@@ -33,8 +33,7 @@ use self::{
 
 pub use self::{
     background_pattern::{BackgroundPattern, Grid},
-    pin::{AnyPins, PinInfo, PinShape, PinWireInfo, SnarlPin},
-    state::get_selected_nodes,
+    pin::{AnyPins, PinInfo, PinShape, SnarlPin},
     viewer::SnarlViewer,
     wire::{WireLayer, WireStyle},
 };

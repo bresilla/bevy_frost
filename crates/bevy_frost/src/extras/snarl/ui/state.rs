@@ -612,13 +612,3 @@ impl SnarlWidget {
     }
 }
 
-/// Returns nodes selected in the UI for the `SnarlWidget` with same ID.
-///
-/// Only works if [`SnarlWidget::id`] was used.
-/// For other cases construct [`SnarlWidget`] and use [`SnarlWidget::get_selected_nodes`] or [`SnarlWidget::get_selected_nodes_at`].
-#[must_use]
-#[inline]
-pub fn get_selected_nodes(id: Id, ctx: &Context) -> Vec<NodeId> {
-    ctx.data(|d| d.get_temp::<SelectedNodes>(id).unwrap_or_default().0)
-        .into_vec()
-}

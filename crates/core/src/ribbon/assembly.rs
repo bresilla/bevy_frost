@@ -688,6 +688,24 @@ pub fn draw_assembly(
     active: impl Fn(&'static str) -> bool,
 ) -> Vec<RibbonClick> {
     let insets = compute_side_insets(ribbons);
+    // Publish which screen edges currently host a ribbon. `Pane2`
+    // reads this to size itself against actual ribbon presence —
+    // a top-rail pane on a screen with no bottom ribbon can extend
+    // all the way to the bottom edge instead of reserving
+    // `RAIL_INSET` for a phantom ribbon. See
+    // `corekit::pane::published_ribbon_edges`.
+    let presence = [
+        ribbons.iter().any(|r| r.edge == RibbonEdge::Left),
+        ribbons.iter().any(|r| r.edge == RibbonEdge::Right),
+        ribbons.iter().any(|r| r.edge == RibbonEdge::Top),
+        ribbons.iter().any(|r| r.edge == RibbonEdge::Bottom),
+    ];
+    ctx.data_mut(|d| {
+        d.insert_temp::<[bool; 4]>(
+            egui::Id::new("frost_published_ribbon_edges"),
+            presence,
+        );
+    });
 
     // ── Resolve baseline positions ─────────────────────────────────
     // Each item has a current (ribbon, cluster_raw, slot). The

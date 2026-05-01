@@ -11,12 +11,6 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new<S: Into<String>>(ty: TokenType, buffer: S) -> Self {
-        Token {
-            ty,
-            buffer: buffer.into(),
-        }
-    }
     pub fn ty(&self) -> TokenType {
         self.ty
     }

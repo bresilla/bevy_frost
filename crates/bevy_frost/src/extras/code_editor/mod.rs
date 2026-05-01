@@ -86,7 +86,6 @@ use highlighting::highlight;
 use std::hash::{Hash, Hasher};
 pub use syntax::{Syntax, TokenType};
 pub use themes::ColorTheme;
-pub use themes::DEFAULT_THEMES;
 
 #[cfg(feature = "egui")]
 pub use crate::extras::code_editor::completer::Completer;

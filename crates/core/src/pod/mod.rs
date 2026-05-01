@@ -23,9 +23,11 @@ use egui::{Color32, Id, Ui};
 use crate::container::SeparatorStyle;
 use crate::style::UNIT;
 use crate::widget::{
+    badge::badge_row_colored,
     button::{Button, FillStyle},
-    color_rgb, color_rgba, drag_value, dropdown, hybrid_select_row, progressbar, readout,
-    select_row, slider, text_input, toggle,
+    chip, chip_colored, color_rgb, color_rgba, drag_value, dropdown, hybrid_select_row,
+    keybinding_row_h, progressbar, readout, select_row, slider, text_input, toggle,
+    CHIP_H, KEYBINDING_ROW_H,
 };
 
 // ─── Per-widget responses ─────────────────────────────────────────
@@ -48,6 +50,9 @@ pub struct PodResponse {
     pub readouts: Vec<ReadoutResponse>,
     pub select_lists: Vec<SelectListResponse>,
     pub hybrid_select_lists: Vec<HybridSelectListResponse>,
+    pub tags: Vec<TagsResponse>,
+    pub keybindings: Vec<KeybindingsResponse>,
+    pub badges: Vec<BadgesResponse>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -136,6 +141,18 @@ pub struct HybridSelectListResponse {
     /// time (the radio is single-select, like a real radio group).
     pub pinned: Option<usize>,
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct TagsResponse {
+    /// Index of the chip that was clicked this frame, if any.
+    pub clicked: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct KeybindingsResponse;
+
+#[derive(Clone, Debug, Default)]
+pub struct BadgesResponse;
 
 // ─── Widget specs ─────────────────────────────────────────────────
 
@@ -257,6 +274,69 @@ struct HybridSelectListConfig {
     accent: Color32,
 }
 
+/// One chip in a [`Pod::with_tags`] cluster.
+#[derive(Clone, Debug)]
+pub struct TagItem {
+    pub label: String,
+    /// `None` → faint accent-tinted glass fill (default chip look).
+    /// `Some(c)` → solid fill with `c` (e.g. `style::WARNING` for
+    /// status / severity chips).
+    pub fill: Option<Color32>,
+}
+
+impl TagItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self { label: label.into(), fill: None }
+    }
+    pub fn colored(label: impl Into<String>, fill: Color32) -> Self {
+        Self { label: label.into(), fill: Some(fill) }
+    }
+}
+
+#[derive(Clone)]
+struct TagsConfig {
+    items: Vec<TagItem>,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct KeybindingsConfig {
+    rows: Vec<(String, String)>,
+}
+
+/// One row of a [`Pod::with_badges`] cluster: a label on the left
+/// and a list of tag chips on the right (e.g.
+/// `lights  [12 dir] [4 pt] [2 spot]`).
+#[derive(Clone, Debug)]
+pub struct BadgeRowSpec {
+    pub label: String,
+    pub badges: Vec<TagItem>,
+}
+
+impl BadgeRowSpec {
+    pub fn new(label: impl Into<String>, badges: Vec<TagItem>) -> Self {
+        Self { label: label.into(), badges }
+    }
+
+    /// Convenience: build a row from plain strings — every chip uses
+    /// the default accent-tinted glass fill.
+    pub fn from_strs(
+        label: impl Into<String>,
+        badges: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            badges: badges.into_iter().map(|s| TagItem::new(s)).collect(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct BadgesConfig {
+    rows: Vec<BadgeRowSpec>,
+    accent: Color32,
+}
+
 /// One ordered slot in the pod's widget stack. Painted in
 /// declaration order; response indices match the order each widget
 /// kind was added (e.g. the third `with_button` shows up at
@@ -290,6 +370,21 @@ enum WidgetSpec {
     /// time), matching the "active layer / current camera target"
     /// pattern.
     HybridSelectList(HybridSelectListConfig),
+    /// Wrapping chip cluster — N tags laid out via
+    /// `horizontal_wrapped`, growing the pod's row-count as more
+    /// chips are added. The widget IS the whole cluster, so the
+    /// resize-handle math treats it as one entry whose unit count
+    /// scales with row count.
+    Tags(TagsConfig),
+    /// N keybinding rows (key chip + action label), bundled as ONE
+    /// widget. Pod height = N × `KEYBINDING_ROW_H`. Mirrors the
+    /// `with_select_list` shape — the list IS the widget.
+    Keybindings(KeybindingsConfig),
+    /// N labelled chip rows — each row has a fixed-width label cell
+    /// on the left and a wrapping chip cluster on the right
+    /// (`name: tag1 tag2 …`). Pod height grows both with row count
+    /// AND with how many chips wrap inside any single row.
+    Badges(BadgesConfig),
     /// Caller-supplied paint closure. Used as the integration point
     /// for widgets that don't fit a flat config (recursive trees,
     /// node graphs, code editors, …) — the closure draws into the
@@ -332,6 +427,9 @@ impl WidgetSpec {
             WidgetSpec::Readout(_) => 1,
             WidgetSpec::SelectList(cfg) => cfg.items.len().max(1),
             WidgetSpec::HybridSelectList(cfg) => cfg.items.len().max(1),
+            WidgetSpec::Tags(cfg) => tags_estimated_rows(cfg.items.len()),
+            WidgetSpec::Keybindings(cfg) => cfg.rows.len().max(1),
+            WidgetSpec::Badges(cfg) => cfg.rows.len().max(1),
             WidgetSpec::Custom { units, .. } => *units,
         }
     }
@@ -369,9 +467,35 @@ impl WidgetSpec {
             WidgetSpec::HybridSelectList(cfg) => {
                 cfg.items.len().max(1) as f32 * crate::widget::select::SELECT_ROW_H
             }
+            WidgetSpec::Tags(cfg) => {
+                tags_estimated_rows(cfg.items.len()) as f32 * TAG_ROW_PITCH
+            }
+            WidgetSpec::Keybindings(cfg) => {
+                cfg.rows.len().max(1) as f32 * KEYBINDING_ROW_H
+            }
+            WidgetSpec::Badges(cfg) => {
+                cfg.rows.len().max(1) as f32 * crate::widget::badge::BADGE_ROW_H
+            }
             WidgetSpec::Custom { units, .. } => (*units as f32) * UNIT,
         }
     }
+}
+
+/// Per-row pitch for `Pod::with_tags`: chip height + a touch of
+/// vertical spacing that `horizontal_wrapped` introduces between
+/// wrapped rows. Used by both `unit_count` (rounded up to whole U)
+/// and `natural_height_px`.
+const TAG_ROW_PITCH: f32 = CHIP_H + 4.0;
+
+/// Estimated row count for a wrapping chip cluster of `n` chips.
+/// Width-agnostic: assumes ~3 chips per row at typical pod widths
+/// (260–300 px) so the pod's flow accounting reserves enough
+/// vertical space for the cluster on the first paint. Actual wrap
+/// might use fewer rows; that's fine — the pod's layout grows
+/// around whatever the cluster paints, this is just the natural-h
+/// hint.
+fn tags_estimated_rows(n: usize) -> usize {
+    n.div_ceil(3).max(1)
 }
 
 // ─── Pod ──────────────────────────────────────────────────────────
@@ -479,6 +603,22 @@ impl Pod {
     /// comes from.
     pub fn widget_height_key(id: Id) -> Id {
         id.with("frost_pod_widget_height")
+    }
+
+    /// Read the current text in a `with_search` widget without
+    /// having to thread the `PodResponse` through (useful when an
+    /// adjacent custom widget needs to filter against the query
+    /// before the pod containing the search has even been
+    /// rendered this frame). `search_idx` is the 0-based index of
+    /// the search slot within `pod_id` — `0` for the first
+    /// `with_search`, `1` for the second, etc.
+    pub fn search_query(
+        ctx: &egui::Context,
+        pod_id: Id,
+        search_idx: usize,
+    ) -> String {
+        let key = pod_id.with(("frost_pod_search_buf", search_idx));
+        ctx.data(|d| d.get_temp::<String>(key)).unwrap_or_default()
     }
 
     /// Ctx-data key the container writes the fill pod's computed
@@ -870,6 +1010,102 @@ impl Pod {
         self
     }
 
+    /// Add a wrapping chip cluster — N tags rendered via
+    /// `horizontal_wrapped`. The pod's natural height grows with the
+    /// number of chips (≈ 3 chips per row at default pod width), so
+    /// adding more tags extends the pod automatically.
+    ///
+    /// Convenience overload that takes plain labels — every chip
+    /// uses the default faint accent-tinted glass fill. For mixed
+    /// colours (e.g. a `WARNING`-fill status chip alongside neutral
+    /// labels) use [`Pod::with_tag_items`].
+    pub fn with_tags(
+        mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        accent: Color32,
+    ) -> Self {
+        let items: Vec<TagItem> =
+            items.into_iter().map(|s| TagItem::new(s)).collect();
+        self.widgets.push(WidgetSpec::Tags(TagsConfig { items, accent }));
+        self
+    }
+
+    /// Like [`Pod::with_tags`] but accepts pre-built [`TagItem`]s so
+    /// individual chips can override the fill colour for status /
+    /// severity categorisation.
+    pub fn with_tag_items(mut self, items: Vec<TagItem>, accent: Color32) -> Self {
+        self.widgets.push(WidgetSpec::Tags(TagsConfig { items, accent }));
+        self
+    }
+
+    /// Add a keybinding list — N rows of `[keys]  action`. Pod
+    /// height = N × `KEYBINDING_ROW_H`, so adding more rows extends
+    /// the pod proportionally.
+    pub fn with_keybindings(
+        mut self,
+        rows: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        let rows: Vec<(String, String)> = rows
+            .into_iter()
+            .map(|(k, a)| (k.into(), a.into()))
+            .collect();
+        self.widgets
+            .push(WidgetSpec::Keybindings(KeybindingsConfig { rows }));
+        self
+    }
+
+    /// Add a single labelled chip row — `name: tag1 tag2 …` on one
+    /// 1U-tall line. Idiomatic for "one fact per pod" layouts where
+    /// each row gets its own pod (and therefore its own separator,
+    /// resize handle, and reorder slot). Plain-string badges all
+    /// share the default accent-tinted fill.
+    pub fn with_badge_row(
+        mut self,
+        label: impl Into<String>,
+        badges: impl IntoIterator<Item = impl Into<String>>,
+        accent: Color32,
+    ) -> Self {
+        let row = BadgeRowSpec::from_strs(label, badges);
+        self.widgets.push(WidgetSpec::Badges(BadgesConfig {
+            rows: vec![row],
+            accent,
+        }));
+        self
+    }
+
+    /// Add a single labelled chip row with per-chip fill overrides
+    /// — same shape as [`Pod::with_badge_row`] but each chip is a
+    /// [`TagItem`] so individual badges can be tinted with status
+    /// colours (e.g. `WARNING` for a broken-state counter).
+    pub fn with_badge_row_items(
+        mut self,
+        label: impl Into<String>,
+        badges: Vec<TagItem>,
+        accent: Color32,
+    ) -> Self {
+        let row = BadgeRowSpec::new(label, badges);
+        self.widgets.push(WidgetSpec::Badges(BadgesConfig {
+            rows: vec![row],
+            accent,
+        }));
+        self
+    }
+
+    /// Multi-row variant — packs N labelled chip rows into ONE pod
+    /// (so the whole stack reads as a single unit, no separator
+    /// between rows). Pod height = N × `BADGE_ROW_H`. For the
+    /// "one row per pod" layout — where each row carries its own
+    /// separator and resize handle — call [`Pod::with_badge_row`]
+    /// per pod instead.
+    pub fn with_badges(
+        mut self,
+        rows: Vec<BadgeRowSpec>,
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Badges(BadgesConfig { rows, accent }));
+        self
+    }
+
     /// Add a caller-supplied paint closure as a widget slot. Use for
     /// custom rendering that doesn't fit one of the flat configs —
     /// the canonical case being [`crate::widget::tree_row`], which is
@@ -1034,6 +1270,8 @@ fn paint_widgets(
         let mut readout_idx = 0usize;
         let mut select_list_idx = 0usize;
         let mut hybrid_select_list_idx = 0usize;
+        let mut tags_idx = 0usize;
+        let mut keybindings_idx = 0usize;
         for (slot_idx, spec) in widgets.into_iter().enumerate() {
             if slot_idx > 0 {
                 ui.add_space(WIDGET_SPACING);
@@ -1484,6 +1722,45 @@ fn paint_widgets(
                             pinned,
                         });
                     hybrid_select_list_idx += 1;
+                }
+                WidgetSpec::Tags(cfg) => {
+                    let mut clicked: Option<usize> = None;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                        for (i, item) in cfg.items.iter().enumerate() {
+                            let resp = match item.fill {
+                                Some(fill) => {
+                                    chip_colored(ui, &item.label, fill, cfg.accent)
+                                }
+                                None => chip(ui, &item.label, cfg.accent),
+                            };
+                            if resp.clicked() {
+                                clicked = Some(i);
+                            }
+                        }
+                    });
+                    response.tags.push(TagsResponse { clicked });
+                    tags_idx += 1;
+                    let _ = tags_idx; // silence unused warning when no further widgets follow
+                }
+                WidgetSpec::Keybindings(cfg) => {
+                    for (k, a) in cfg.rows.iter() {
+                        keybinding_row_h(ui, k, a, KEYBINDING_ROW_H);
+                    }
+                    response.keybindings.push(KeybindingsResponse);
+                    keybindings_idx += 1;
+                    let _ = keybindings_idx;
+                }
+                WidgetSpec::Badges(cfg) => {
+                    for row in cfg.rows.iter() {
+                        let pairs: Vec<(&str, Option<Color32>)> = row
+                            .badges
+                            .iter()
+                            .map(|t| (t.label.as_str(), t.fill))
+                            .collect();
+                        badge_row_colored(ui, &row.label, &pairs, cfg.accent);
+                    }
+                    response.badges.push(BadgesResponse);
                 }
                 WidgetSpec::Custom { paint, .. } => {
                     paint(ui);

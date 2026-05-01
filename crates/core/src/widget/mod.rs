@@ -5,10 +5,13 @@
 //! Inter-pod separators are NOT widgets — they're container-level
 //! chrome. See [`crate::container::SeparatorStyle`].
 
+pub mod badge;
 pub mod button;
+pub mod chip;
 pub mod color;
 pub mod drag_value;
 pub mod dropdown;
+pub mod keybinding;
 pub mod progressbar;
 pub mod readout;
 pub mod select;
@@ -21,9 +24,14 @@ pub use button::{
     button, button_h, card_button, Button, FillStyle, BUTTON_LABEL_FONT, BUTTON_ROW_H,
     BUTTON_ROW_H_SUBTITLE, CARD_BUTTON_ROW_H,
 };
+pub use badge::{
+    badge_row, badge_row_colored, BADGE_LABEL_COL_W, BADGE_ROW_H,
+};
+pub use chip::{chip, chip_colored, CHIP_H};
 pub use color::{color_rgb, color_rgba, COLOR_SWATCH_H};
 pub use drag_value::{axis_drag, axis_drag_h, drag_value, drag_value_h};
 pub use dropdown::{dropdown, dropdown_h, DROPDOWN_ROW_H};
+pub use keybinding::{keybinding_row, keybinding_row_h, KEYBINDING_ROW_H};
 pub use progressbar::{progressbar, progressbar_h};
 pub use readout::{readout, readout_h, READOUT_ROW_H};
 pub use select::{
