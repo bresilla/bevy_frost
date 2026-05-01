@@ -9,9 +9,11 @@
 //! 2. Clamp the inner ui's CROSS axis to `span_inner` so widgets
 //!    that call `ui.available_width()` / `available_height()` see a
 //!    stable value across the layout's measurement passes.
-//! 3. Wrap the user's body closure in a `ScrollArea` whose scroll
-//!    axis matches the container's flow axis (vertical for
-//!    horizontal-strip containers, horizontal for vertical-strip).
+//! 3. Wrap the user's body closure in a *vertical* `ScrollArea`.
+//!    The body always forces `top_down` so pods stack vertically
+//!    regardless of which side the container's title is on, so the
+//!    scroll axis is always vertical too — there's no case where
+//!    a horizontal scrollbar would help reach hidden pod content.
 
 use egui::Ui;
 
@@ -48,9 +50,7 @@ impl Body {
     }
 
     /// Pre-allocate a fixed-size rect for the body slot, clamp the
-    /// cross axis, and wrap `body` in a [`egui::ScrollArea`] whose
-    /// scroll axis matches the container's flow axis (vertical for
-    /// horizontal-strip containers, horizontal for vertical-strip).
+    /// cross axis, and wrap `body` in a vertical [`egui::ScrollArea`].
     ///
     /// Two non-obvious settings make scrolling work for the small
     /// body slots a stack of pods produces:
@@ -62,21 +62,24 @@ impl Body {
     ///   openness-clipped visible area returns an inflated value,
     ///   and `max_offset = content_size - viewport_size` ends up
     ///   wrong.
-    /// * `min_scrolled_height(0.0)` (or `_width`) to disable
-    ///   ScrollArea's default `min_scrolled_size = 64`. With the
-    ///   default in place, when the actual slot is smaller than 64
-    ///   the ScrollArea inflates `inner_size` to 64; the visible
-    ///   viewport stays clipped to the real slot but the scroll
-    ///   max_offset is computed against the inflated 64, so the
-    ///   user can scroll content past the bottom of the visible
-    ///   area and the last pod ends up half-cut below.
-    pub fn paint<R>(&self, ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
+    /// * `min_scrolled_height(0.0)` to disable ScrollArea's default
+    ///   `min_scrolled_size = 64`. With the default in place, when
+    ///   the actual slot is smaller than 64 the ScrollArea inflates
+    ///   `inner_size` to 64; the visible viewport stays clipped to
+    ///   the real slot but the scroll max_offset is computed against
+    ///   the inflated 64, so the user can scroll content past the
+    ///   bottom of the visible area and the last pod ends up
+    ///   half-cut below.
+    ///
+    /// Cross-axis clamping: for horizontal-strip containers we
+    /// `set_max_width(span_inner)` (the container's locked width);
+    /// for vertical-strip we `set_max_width(span_inner)` too, since
+    /// `span_inner` IS the cross axis from the body's perspective
+    /// regardless — the body's main axis is always Y because we
+    /// force `top_down`. (The legacy `max_flow` cap is kept for
+    /// callers that need to bound the body's perpendicular extent.)
+    pub fn paint<R>(&self, ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> (R, f32) {
         let slot_size = ui.available_rect_before_wrap().size();
-        let scroll_id = if self.horizontal_strip {
-            "frost_body_scroll_v"
-        } else {
-            "frost_body_scroll_h"
-        };
         let span_inner = self.span_inner;
         let horizontal_strip = self.horizontal_strip;
         let max_flow = self.max_flow;
@@ -86,24 +89,22 @@ impl Body {
             move |ui| {
                 if horizontal_strip {
                     ui.set_max_width(span_inner);
-                    egui::ScrollArea::vertical()
-                        .id_salt(scroll_id)
-                        .auto_shrink([false, false])
-                        .min_scrolled_height(0.0)
-                        .show(ui, body)
-                        .inner
                 } else {
                     ui.set_max_height(span_inner);
                     if let Some(m) = max_flow {
                         ui.set_max_width(m);
                     }
-                    egui::ScrollArea::horizontal()
-                        .id_salt(scroll_id)
-                        .auto_shrink([false, false])
-                        .min_scrolled_width(0.0)
-                        .show(ui, body)
-                        .inner
                 }
+                let scroll = egui::ScrollArea::vertical()
+                    .id_salt("frost_body_scroll_v")
+                    .auto_shrink([false, false])
+                    .min_scrolled_height(0.0)
+                    .show(ui, body);
+                // ScrollArea reports its inner content's natural
+                // size. The caller persists this so the container
+                // can auto-fit on the next frame (see
+                // `crate::container::record_container_intrinsic`).
+                (scroll.inner, scroll.content_size.y)
             },
         )
         .inner

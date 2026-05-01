@@ -37,7 +37,7 @@ pub mod prelude;
 pub use frostcore::*;
 
 use bevy::ecs::message::Messages;
-use bevy::input::mouse::MouseWheel;
+use bevy::input::mouse::{MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
@@ -139,12 +139,15 @@ fn debug_toggle_system(mut contexts: EguiContexts) {
 
 // ─── Pointer-event firewall ────────────────────────────────────────
 
-/// Drains `Messages<MouseWheel>` whenever the OS cursor sits inside
-/// the painted rect of any frost pane this frame, so scroll wheel
-/// input over the UI doesn't bleed through to downstream Bevy
-/// systems (e.g. `bevy_glacial`'s chase-camera zoom).
+/// Drains every relevant pointer input message whenever the OS
+/// cursor sits inside the painted rect of any frost pane this
+/// frame, so neither scroll, clicks, nor polled mouse-button state
+/// bleed through to downstream Bevy systems (e.g. `bevy_glacial`'s
+/// chase-camera zoom, a viewport ray-pick that uses
+/// `mouse.just_pressed(...)`, a drag-to-pan handler reading
+/// `MouseButtonInput`, etc.).
 ///
-/// We DON'T use egui's `is_pointer_over_area` / `layer_id_at` here:
+/// We DON'T use egui's `is_pointer_over_area` / `layer_id_at`:
 /// the former returns `false` for `Order::Background` layers when
 /// no `CentralPanel` is installed (frost panes are Background and
 /// we have no CentralPanel), and the latter has edge cases around
@@ -153,10 +156,21 @@ fn debug_toggle_system(mut contexts: EguiContexts) {
 /// publishes its painted rect to a global ctx-data list each frame
 /// (see [`corekit::pane::published_pane_rects`]) and we just check
 /// the bevy window's cursor against that list.
+///
+/// Clearing happens AFTER `EguiPreUpdateSet::ProcessInput` so
+/// bevy_egui's input forwarder has already copied the events into
+/// egui's own `EguiInput` — the UI keeps responding to clicks /
+/// scrolls normally, only Bevy-side consumers see the queue
+/// emptied. Polled state (`ButtonInput<MouseButton>`) is also
+/// reset so code like `mouse.just_pressed(MouseButton::Left)`
+/// inside a 3D-viewport system doesn't fire when the click was
+/// actually delivered to the UI.
 fn consume_egui_input_system(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut contexts: EguiContexts,
     mut wheel_events: ResMut<Messages<MouseWheel>>,
+    mut button_events: ResMut<Messages<MouseButtonInput>>,
+    mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
 ) {
     let Ok(window) = primary_window.single() else { return };
     let Some(cursor) = window.cursor_position() else { return };
@@ -165,6 +179,8 @@ fn consume_egui_input_system(
     let pane_rects = corekit::pane::published_pane_rects(ctx);
     if pane_rects.iter().any(|r| r.contains(pos)) {
         wheel_events.clear();
+        button_events.clear();
+        mouse_buttons.reset_all();
     }
 }
 

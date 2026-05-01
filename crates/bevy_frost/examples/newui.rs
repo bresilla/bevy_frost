@@ -704,15 +704,49 @@ fn ui_system(
                         // both anchorings.
                         let title_at_end =
                             anchor.title_side().is_at_end();
+                        // Skip painting the dot handle while THIS
+                        // container is being dragged (reorder) —
+                        // the floating drag preview already paints
+                        // a copy of the container with its handle,
+                        // so painting the original's handle here
+                        // produces a duplicate "double dots" look
+                        // until the user releases.
+                        let dragging_self = corekit::pane::active_drag(body_ui.ctx())
+                            .and_then(|(_, s)| s.item)
+                            .map(|item| item == cid)
+                            .unwrap_or(false);
+                        if dragging_self {
+                            continue;
+                        }
                         let resp = corekit::pane::paint_container_dots(
                             body_ui,
                             dots_orient,
                             cid,
                             accent_col,
                         );
-                        if resp.dragged() {
-                            let cur =
-                                corekit::container::container_flow(body_ui.ctx(), cid);
+                        // Folded containers ignore the resize drag —
+                        // the body slot they're sized from is hidden,
+                        // so dragging the dots while folded would
+                        // silently grow / shrink an invisible region
+                        // and only become visible to the user when
+                        // they unfold.
+                        let body_open: bool = body_ui.ctx().data_mut(|d| {
+                            d.get_persisted::<bool>(cid.with("body_open"))
+                                .unwrap_or(true)
+                        });
+                        if resp.dragged() && body_open {
+                            // `containers_stack_horizontally` is the
+                            // inverse of `is_horizontal_strip` for
+                            // the parent pane (containers stack
+                            // horizontally precisely in vertical-
+                            // strip panes).
+                            let pane_horizontal_strip =
+                                anchor.title_side().is_horizontal_strip();
+                            let cur = corekit::container::container_flow(
+                                body_ui.ctx(),
+                                cid,
+                                pane_horizontal_strip,
+                            );
                             let raw = if containers_stack_horizontally {
                                 resp.drag_delta().x
                             } else {
@@ -723,6 +757,7 @@ fn ui_system(
                                 body_ui.ctx(),
                                 cid,
                                 cur + delta,
+                                pane_horizontal_strip,
                             );
                         }
                     }

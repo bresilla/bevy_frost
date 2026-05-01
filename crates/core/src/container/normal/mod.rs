@@ -428,7 +428,7 @@ impl Normal {
             // Persisted per-container flow takes precedence over
             // the static fallback. Returns
             // `CONTAINER_DEFAULT_FLOW` clamped on first read.
-            crate::container::container_flow(ui.ctx(), pane_id)
+            crate::container::container_flow(ui.ctx(), pane_id, horizontal_strip)
         });
         // Publish this container's cid to the parent pane so
         // `Pane2::show` can sum each container's LIVE persisted
@@ -670,7 +670,19 @@ impl Normal {
                 if body_top_pad > 0.0 {
                     child.add_space(body_top_pad);
                 }
-                body_cfg.paint(&mut child, body);
+                let (_, content_h) = body_cfg.paint(&mut child, body);
+                // Record the body's intrinsic content height so
+                // next frame's `container_flow` auto-fit path can
+                // size the container to its actual content (capped
+                // at `CONTAINER_AUTOFIT_CAP`). Add back the
+                // `body_top_pad` we consumed above so the
+                // measurement reflects the FULL body slot the
+                // container needs, not just the post-pad part.
+                crate::container::record_container_intrinsic(
+                    child.ctx(),
+                    pane_id,
+                    content_h + body_top_pad,
+                );
             };
 
             // ALWAYS title FIRST, body SECOND. Layout direction

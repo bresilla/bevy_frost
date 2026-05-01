@@ -541,8 +541,14 @@ impl Pane2 {
         let body_flow_collapsed = CONTAINER_TITLE_THICKNESS
             + container_pad_flow
             + container_outer_main_total;
-        let collapsed_flow =
-            TITLE_STRIP_THICKNESS + body_flow_collapsed + PANE_FRAME_CHROME;
+        // Extra space `lay_out_flex` allocates between the pane
+        // title strip and the first container — keeps that gap in
+        // sync between the layout pass and the size computation.
+        let pane_title_to_body_pad = theme_now.section_outer_margin_flow_title as f32;
+        let collapsed_flow = TITLE_STRIP_THICKNESS
+            + pane_title_to_body_pad
+            + body_flow_collapsed
+            + PANE_FRAME_CHROME;
         // Pane main when fully open = title + body + frame chrome.
         //
         // When `PaneResize::flow` is ON, the user drives this with
@@ -566,13 +572,16 @@ impl Pane2 {
             let chrome_per_container = body_flow_collapsed;
             let sum_body: f32 = prev_cids_snapshot
                 .iter()
-                .map(|cid| crate::container::container_flow(ctx, *cid))
+                .map(|cid| crate::container::container_flow(ctx, *cid, horizontal_strip))
                 .sum();
             sum_body
                 + chrome_per_container * (prev_cids_snapshot.len() as f32)
                 + prev_extra_flow_snapshot
         };
-        let expanded_flow = TITLE_STRIP_THICKNESS + body_flow_open + PANE_FRAME_CHROME;
+        let expanded_flow = TITLE_STRIP_THICKNESS
+            + pane_title_to_body_pad
+            + body_flow_open
+            + PANE_FRAME_CHROME;
         let pane_flow =
             collapsed_flow + (expanded_flow - collapsed_flow) * openness;
 
@@ -845,6 +854,20 @@ impl Pane2 {
         // automatically — `bottom_up` puts first-allocated at the
         // BOTTOM, `right_to_left` at the RIGHT, etc.
         paint_title_strip(ui);
+        // Extra breathing space between the pane title strip and the
+        // FIRST container. The container's own
+        // `section_outer_margin_flow_title` already gives a small gap
+        // (3 px PRO / 6 px GAME), but the user wants roughly DOUBLE
+        // that on the first container only — without affecting
+        // inter-container gaps. Allocating it here, between the title
+        // strip and the body callback, hits exactly the first container
+        // (no other paint runs between title and body) and leaves
+        // every subsequent container's stacking gap unchanged.
+        let pane_title_to_body_pad =
+            style::theme().section_outer_margin_flow_title as f32;
+        if pane_title_to_body_pad > 0.0 {
+            ui.add_space(pane_title_to_body_pad);
+        }
         // Reset per-frame drag bookkeeping (current cache + section
         // idx counter). Snapshot from prev frame stays available
         // for size lookups.
