@@ -26,10 +26,11 @@ use egui::{vec2, Color32, Rect, Response, Sense, Stroke, Ui};
 
 use crate::style;
 
-/// Alpha applied to [`style::outline_base`] when painting the
-/// separator. Low enough to whisper beneath section frames rather
-/// than compete with them.
-const SEPARATOR_ALPHA: u8 = 90;
+/// Alpha applied to the title-divider colour when painting the
+/// separator. `255` so the inter-pod separator paints at the same
+/// opacity as the hairline under the container title — the two
+/// horizontal rules read as identical strokes.
+const SEPARATOR_ALPHA: u8 = 255;
 
 /// Cross-axis strip thickness — the rect EVERY separator reserves
 /// in the parent ui, every style and orientation. Same value for
@@ -146,9 +147,12 @@ fn allocate_strip(ui: &mut Ui, orient: SeparatorOrient) -> Rect {
 }
 
 /// Theme-flipped ink shared by [`paint_separator`] and the rest
-/// state of [`paint_separator_resize`].
+/// state of [`paint_separator_resize`]. Pulls from the active
+/// theme's `border_subtle` so inter-pod separators match the
+/// hairline divider painted under each container's title — the two
+/// horizontal rules in a section read as the same family.
 fn default_ink() -> Color32 {
-    let base = style::outline_base();
+    let base = style::theme().border_subtle;
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), SEPARATOR_ALPHA)
 }
 

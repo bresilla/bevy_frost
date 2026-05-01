@@ -642,49 +642,69 @@ fn ui_system(
                         // (1..=3). Stable across frames because the
                         // cid is stable.
                         let seed: u64 = cid.value();
-                        let pod_count = ((seed % 4) as usize) + 1;
+                        // ONE widget per pod. Multi-row widgets (tree,
+                        // select_list, hybrid_select_list) are still
+                        // ONE widget — they happen to paint several
+                        // rows internally. `pod_count` is between 2
+                        // and 5 so each container shows a spread of
+                        // kinds without any pod hosting more than its
+                        // single widget.
+                        let pod_count = ((seed % 4) as usize) + 2;
                         let pods: Vec<_> = (0..pod_count)
                             .map(|p| {
                                 let pod_id = cid.with(("newui_pod", p));
-                                let pod_seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                                    ^ (p as u64);
-                                let search_count =
-                                    ((pod_seed % 3) as usize) + 1;
-                                // Alternate the separator style per
-                                // pod so the example shows both
-                                // variants — even-indexed pods get
-                                // a plain line, odd-indexed pods
-                                // get the future drag-handle (line
-                                // + 3 dots + line).
-                                let separator_style = if p % 2 == 0 {
-                                    corekit::container::SeparatorStyle::Line
-                                } else {
+                                // Spread `p` across the full 64-bit
+                                // pod_seed via golden-ratio multiply
+                                // — XOR with low bits alone would be
+                                // discarded by the `>> 4` mask below
+                                // and every pod would land on the
+                                // same `mix`.
+                                let pod_seed = seed
+                                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                    ^ (p as u64).wrapping_mul(0xD737_3348_5DDB_E5C5);
+                                let mix = (pod_seed >> 4) & 0b1111;
+                                // Only widgets that benefit from a
+                                // hide/reveal viewport (tree, select
+                                // lists) get the LineDots resizable
+                                // separator. Everything else gets the
+                                // plain Line — the rule is "if there
+                                // is a dotted handle, dragging it
+                                // actually does something visible".
+                                let is_resizable =
+                                    matches!(mix, 9 | 10 | 14);
+                                let is_last = p + 1 == pod_count;
+                                // Resizable pods always paint their
+                                // dotted handle below — including the
+                                // last pod in the container, so the
+                                // user can still drag the bottom
+                                // edge to shrink/grow it. Plain
+                                // (non-resizable) last pods
+                                // suppress the separator since
+                                // there's nothing below to divide
+                                // them from.
+                                let separator_style = if is_resizable {
                                     corekit::container::SeparatorStyle::LineDots
+                                } else if is_last {
+                                    corekit::container::SeparatorStyle::None
+                                } else {
+                                    corekit::container::SeparatorStyle::Line
                                 };
                                 let mut pod = corekit::pod::Pod::new(pod_id)
                                     .with_separator(separator_style);
-                                // Pods that get the LineDots
-                                // separator are resizable — the
-                                // separator below them doubles as
-                                // a vertical drag handle that
-                                // grows the pod's widgets.
-                                if separator_style
-                                    == corekit::container::SeparatorStyle::LineDots
-                                {
+                                if is_resizable {
                                     pod = pod.resizable();
                                 }
-                                // Mix of widget kinds — the demo
-                                // rotates between search / button /
-                                // labelled-toggle / progressbar so
-                                // the pod widget API shows all
-                                // four. `pod_seed` is stable per
-                                // (cid, pod_index), so each pod
-                                // keeps its widget mix across
-                                // frames.
-                                for s in 0..search_count {
-                                    let mix = (pod_seed >> (s * 3)) & 0b111;
+                                {
+                                    // Single-widget per pod — keep
+                                    // the existing one-letter `s`
+                                    // alias the inner branches use
+                                    // for trailing-suffix formatting,
+                                    // pinned to 0 since there's no
+                                    // longer an inner loop.
+                                    let s: usize = 0;
+                                    let _ = s;
                                     pod = match mix {
-                                        0 | 1 => pod.with_search(
+                                        0 => pod.with_search(
                                             format!(
                                                 "pod {} · search {}…",
                                                 p + 1,
@@ -692,16 +712,74 @@ fn ui_system(
                                             ),
                                             accent_col,
                                         ),
-                                        2 | 3 => pod.with_button(
+                                        1 => pod.with_button(
                                             format!("pod {} · btn {}", p + 1, s + 1),
                                             accent_col,
                                         ),
-                                        4 | 5 => pod.with_toggle_initial(
+                                        2 => {
+                                            // 2U "card" button — primary
+                                            // label + dim subtitle + an
+                                            // animated hover fill so the
+                                            // user sees that the 2-layer
+                                            // shape supports every
+                                            // animation the 1U one does.
+                                            use corekit::widget::FillStyle::*;
+                                            let styles = [
+                                                SlideLeft,
+                                                CircleGrow,
+                                                BandsMeet,
+                                                ParallelogramMeet,
+                                                Bowtie,
+                                                CornerSquares,
+                                                DiagonalTriangles,
+                                                Equalizer,
+                                                HorizontalSlideDelayed,
+                                                VerticalSlideDelayed,
+                                                CrissCross,
+                                            ];
+                                            let pick = ((pod_seed >> (s * 4 + 16))
+                                                as usize)
+                                                % styles.len();
+                                            pod.with_button_styled(
+                                                format!("Preset {}", s + 1),
+                                                accent_col,
+                                                Some("stacked subtitle"),
+                                                Option::<&str>::None,
+                                                Some(styles[pick]),
+                                            )
+                                        }
+                                        3 => {
+                                            use corekit::widget::FillStyle::*;
+                                            let styles = [
+                                                SlideLeft,
+                                                Parallelogram,
+                                                ParallelogramMeet,
+                                                Bowtie,
+                                                BandsMeet,
+                                                CornerSquares,
+                                                DiagonalTriangles,
+                                                CircleGrow,
+                                                Equalizer,
+                                                HorizontalSlide,
+                                                HorizontalSlideDelayed,
+                                                VerticalSlideDelayed,
+                                                CrissCross,
+                                            ];
+                                            let pick = ((pod_seed >> (s * 4 + 16))
+                                                as usize)
+                                                % styles.len();
+                                            pod.with_button_animated(
+                                                format!("anim {}", s + 1),
+                                                accent_col,
+                                                styles[pick],
+                                            )
+                                        }
+                                        4 => pod.with_toggle_initial(
                                             format!("toggle {}", s + 1),
                                             accent_col,
                                             (pod_seed >> 8) & 1 == 1,
                                         ),
-                                        _ => {
+                                        5 => {
                                             let frac = (((pod_seed >> (s * 5))
                                                 & 0xFF)
                                                 as f32)
@@ -716,6 +794,172 @@ fn ui_system(
                                                 accent_col,
                                             )
                                         }
+                                        6 => {
+                                            let v = ((pod_seed >> (s * 5)) & 0xFF)
+                                                as f64
+                                                / 255.0;
+                                            pod.with_slider(
+                                                format!("slider {}", s + 1),
+                                                v,
+                                                0.0..=1.0,
+                                                2,
+                                                "",
+                                                accent_col,
+                                            )
+                                        }
+                                        7 => pod.with_drag_value(
+                                            format!("value {}", s + 1),
+                                            ((pod_seed >> (s * 5)) & 0xFF) as f64,
+                                            0.5,
+                                            0.0..=255.0,
+                                            1,
+                                            "",
+                                        ),
+                                        8 => pod.with_dropdown(
+                                            ["Alpha", "Beta", "Gamma", "Delta"],
+                                            ((pod_seed >> (s * 4)) as usize) % 4,
+                                            accent_col,
+                                        ),
+                                        9 => {
+                                            // Multi-row select list as
+                                            // ONE widget. 8 items;
+                                            // selection persists in
+                                            // ctx data via the pod's
+                                            // own slot key.
+                                            let items: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("Item {i}"))
+                                                .collect();
+                                            let trailing: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("#{i}"))
+                                                .collect();
+                                            pod.with_select_list(
+                                                items,
+                                                Some(trailing),
+                                                accent_col,
+                                            )
+                                        }
+                                        10 => {
+                                            // Multi-row hybrid select
+                                            // list as ONE widget — body
+                                            // click + radio pin per
+                                            // row, single-pin across
+                                            // the list.
+                                            let items: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("Layer {i}"))
+                                                .collect();
+                                            let trailing: Vec<String> = (1..=8u8)
+                                                .map(|i| format!("L{i}"))
+                                                .collect();
+                                            pod.with_hybrid_select_list(
+                                                items,
+                                                Some(trailing),
+                                                accent_col,
+                                            )
+                                        }
+                                        11 => {
+                                            let r = ((pod_seed >> 0) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let g = ((pod_seed >> 8) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let b = ((pod_seed >> 16) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            pod.with_color_rgb(
+                                                format!("rgb {}", s + 1),
+                                                [r, g, b],
+                                                accent_col,
+                                            )
+                                        }
+                                        12 => {
+                                            let r = ((pod_seed >> 0) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let g = ((pod_seed >> 8) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            let b = ((pod_seed >> 16) & 0xFF)
+                                                as f32
+                                                / 255.0;
+                                            pod.with_color_rgba(
+                                                format!("rgba {}", s + 1),
+                                                [r, g, b, 0.7],
+                                                accent_col,
+                                            )
+                                        }
+                                        13 => {
+                                            // Pick a different Fluent
+                                            // icon per pod_seed so the
+                                            // demo cycles through real
+                                            // glyphs instead of always
+                                            // showing the same one.
+                                            const ICONS: &[&str] = &[
+                                                "settings", "folder", "code",
+                                                "search", "person", "image",
+                                                "flowchart", "list",
+                                            ];
+                                            let pick = ((pod_seed >> 4) as usize)
+                                                % ICONS.len();
+                                            pod.with_card_button(
+                                                ICONS[pick],
+                                                format!("Card {}", s + 1),
+                                                "glyph + subtitle",
+                                                accent_col,
+                                            )
+                                        }
+                                        14 => {
+                                            // Inline scene-graph tree
+                                            // demo. Stable id derived
+                                            // from the pod_seed so each
+                                            // tree gets its own
+                                            // expanded / selected /
+                                            // visibility state.
+                                            let seed = pod_seed;
+                                            let tree_root =
+                                                egui::Id::new(("frost_demo_tree", seed));
+                                            // 7 rows × 1U each ≈ 7
+                                            // unit-equivalents — passed
+                                            // via with_custom_units so
+                                            // the inter-pod resize
+                                            // share is proportional.
+                                            pod.with_custom_units(7, move |ui| {
+                                                demo_tree(ui, tree_root, accent_col);
+                                            })
+                                        }
+                                        15 => {
+                                            // Read-only info row —
+                                            // label-left, monospace
+                                            // value-right. Mirrors the
+                                            // old `readout_row` from
+                                            // frostcore (used in the
+                                            // demo to show the tree's
+                                            // currently-selected
+                                            // path, etc.).
+                                            const LABELS: &[&str] = &[
+                                                "selected", "active layer",
+                                                "current tool", "frame",
+                                                "fps", "memory",
+                                                "draw calls", "triangles",
+                                            ];
+                                            const VALUES: &[&str] = &[
+                                                "/World/Robot/base",
+                                                "World layer",
+                                                "Move (G)",
+                                                "00:01:42 · 2517",
+                                                "60.0",
+                                                "412 MB",
+                                                "1 248",
+                                                "8.4M",
+                                            ];
+                                            let pick = ((pod_seed >> 8) as usize)
+                                                % LABELS.len();
+                                            pod.with_readout(LABELS[pick], VALUES[pick])
+                                        }
+                                        _ => pod.with_button(
+                                            format!("btn {}", s + 1),
+                                            accent_col,
+                                        ),
                                     };
                                 }
                                 pod
@@ -801,6 +1045,109 @@ fn ui_system(
                         }
                     }
                 });
+        }
+    }
+}
+
+// ─── Demo tree ─────────────────────────────────────────────────────
+//
+// Hand-authored mini scene-graph used to demo the `tree_row` widget
+// inside a Pod's `with_custom` slot. State (expanded flags, selection,
+// per-row visibility / lock toggles) lives in egui ctx data keyed off
+// each node's path, so the tree survives reorders and theme switches
+// without the example having to thread its own `App`-level resource.
+
+const DEMO_TREE: &[(&str, &str, &str, &[&str])] = &[
+    ("/World",                "World",     "folder",    &["/World/Robot", "/World/Lights"]),
+    ("/World/Robot",          "Robot",     "person",    &["/World/Robot/base", "/World/Robot/arm"]),
+    ("/World/Robot/base",     "base",      "code",      &[]),
+    ("/World/Robot/arm",      "arm",       "code",      &["/World/Robot/arm/grip"]),
+    ("/World/Robot/arm/grip", "grip",      "code",      &[]),
+    ("/World/Lights",         "Lights",    "image",     &["/World/Lights/sun"]),
+    ("/World/Lights/sun",     "sun",       "image",     &[]),
+];
+
+fn demo_tree_node(path: &str) -> Option<&'static (&'static str, &'static str, &'static str, &'static [&'static str])> {
+    DEMO_TREE.iter().find(|(p, _, _, _)| *p == path)
+}
+
+fn demo_tree(ui: &mut egui::Ui, root_id: egui::Id, accent: egui::Color32) {
+    let sel_key = root_id.with("frost_demo_tree_selected");
+    let mut selected: String = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(sel_key))
+        .unwrap_or_default();
+    let initial_selected = selected.clone();
+
+    let mut frame_clicked: Option<String> = None;
+    walk_demo_tree(ui, root_id, "/World", 0, &selected, accent, &mut frame_clicked);
+
+    if let Some(p) = frame_clicked {
+        selected = p;
+    }
+    if selected != initial_selected {
+        ui.ctx().data_mut(|d| d.insert_temp(sel_key, selected));
+    }
+}
+
+fn walk_demo_tree(
+    ui: &mut egui::Ui,
+    root_id: egui::Id,
+    path: &'static str,
+    depth: u32,
+    selected: &str,
+    accent: egui::Color32,
+    clicked: &mut Option<String>,
+) {
+    let Some((p, name, icon, children)) = demo_tree_node(path) else { return };
+    let is_branch = !children.is_empty();
+    // Per-node persisted state.
+    let exp_key = root_id.with(("frost_demo_tree_expanded", *p));
+    let eye_key = root_id.with(("frost_demo_tree_eye", *p));
+    let lock_key = root_id.with(("frost_demo_tree_lock", *p));
+    let mut expanded: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(exp_key))
+        .unwrap_or(true);
+    let mut eye_on: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(eye_key))
+        .unwrap_or(true);
+    let mut lock_on: bool = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(lock_key))
+        .unwrap_or(false);
+
+    let mut slots = [
+        corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Eye, &mut eye_on)
+            .with_tooltip("Toggle visibility"),
+        corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Lock, &mut lock_on)
+            .with_tooltip("Toggle lock"),
+    ];
+    let resp = corekit::widget::tree_row(
+        ui,
+        *p,
+        depth,
+        if is_branch { Some(&mut expanded) } else { None },
+        Some(*icon),
+        *name,
+        selected == *p,
+        accent,
+        &mut slots,
+    );
+    if resp.body.clicked() {
+        *clicked = Some((*p).to_string());
+    }
+
+    ui.ctx().data_mut(|d| {
+        d.insert_persisted(exp_key, expanded);
+        d.insert_persisted(eye_key, eye_on);
+        d.insert_persisted(lock_key, lock_on);
+    });
+
+    if is_branch && expanded {
+        for child in *children {
+            walk_demo_tree(ui, root_id, child, depth + 1, selected, accent, clicked);
         }
     }
 }

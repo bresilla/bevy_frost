@@ -36,11 +36,13 @@ pub mod prelude;
 // consumers don't notice the workspace split.
 pub use frostcore::*;
 
-use bevy::ecs::message::Messages;
+use bevy::ecs::message::{MessageReader, Messages};
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
+use std::collections::HashSet;
 
 // ─── Theme ──────────────────────────────────────────────────────────
 
@@ -139,49 +141,104 @@ fn debug_toggle_system(mut contexts: EguiContexts) {
 
 // ─── Pointer-event firewall ────────────────────────────────────────
 
-/// Drains every relevant pointer input message whenever the OS
-/// cursor sits inside the painted rect of any frost pane this
-/// frame, so neither scroll, clicks, nor polled mouse-button state
-/// bleed through to downstream Bevy systems (e.g. `bevy_glacial`'s
-/// chase-camera zoom, a viewport ray-pick that uses
-/// `mouse.just_pressed(...)`, a drag-to-pan handler reading
-/// `MouseButtonInput`, etc.).
+/// Pointer-event firewall for clicks / drags / scroll over a frost
+/// pane. Selectively blocks Bevy-side consumers from seeing input
+/// that's "for the UI", without breaking ongoing interactions that
+/// originated outside the UI.
 ///
-/// We DON'T use egui's `is_pointer_over_area` / `layer_id_at`:
-/// the former returns `false` for `Order::Background` layers when
-/// no `CentralPanel` is installed (frost panes are Background and
-/// we have no CentralPanel), and the latter has edge cases around
-/// modal / tooltip layers that fire for cursor positions visually
-/// over the 3D viewport. Instead, `corekit::pane::Pane2::show`
-/// publishes its painted rect to a global ctx-data list each frame
-/// (see [`corekit::pane::published_pane_rects`]) and we just check
-/// the bevy window's cursor against that list.
+/// ## What it filters
 ///
-/// Clearing happens AFTER `EguiPreUpdateSet::ProcessInput` so
-/// bevy_egui's input forwarder has already copied the events into
-/// egui's own `EguiInput` — the UI keeps responding to clicks /
-/// scrolls normally, only Bevy-side consumers see the queue
-/// emptied. Polled state (`ButtonInput<MouseButton>`) is also
-/// reset so code like `mouse.just_pressed(MouseButton::Left)`
-/// inside a 3D-viewport system doesn't fire when the click was
-/// actually delivered to the UI.
+/// 1. **Mouse wheel**: cleared whenever the cursor sits inside any
+///    `corekit::pane::published_pane_rects`. Wheel events are
+///    one-shot and don't have an "ongoing" semantic, so a flat
+///    cursor-over-pane gate is correct.
+///
+/// 2. **Mouse buttons (polled `ButtonInput<MouseButton>`)**: only
+///    *the buttons whose CURRENT hold started over a pane* get
+///    `release(button)` called on them. Buttons whose press
+///    happened on the 3D viewport remain "pressed" in the polled
+///    state for the entire hold, even if the cursor moves over a
+///    pane mid-drag. This is what makes middle-click pan
+///    (start-on-viewport) keep working continuously instead of
+///    dropping to "released" the moment the cursor crosses a pane.
+///
+/// We do NOT filter `Messages<MouseButtonInput>` events because
+/// bevy_glacial (and most Bevy camera/picking code) reads polled
+/// `ButtonInput` rather than raw events. Filtering events would
+/// add complexity (drain-and-rewrite plumbing) without changing
+/// the practical behaviour for typical consumers.
+///
+/// ## Why not `is_pointer_over_area` / `layer_id_at`?
+///
+/// `is_pointer_over_area` returns `false` for `Order::Background`
+/// layers when no `CentralPanel` is installed (frost panes are
+/// Background; we don't install a CentralPanel). `layer_id_at`
+/// has modal / tooltip-area edge cases. The published-rects
+/// approach works for any pane order without those gotchas.
+///
+/// ## Ordering
+///
+/// `.after(EguiPreUpdateSet::ProcessInput)` so bevy_egui's input
+/// forwarder has already copied events into egui's own
+/// `EguiInput`. The UI keeps responding to clicks / scrolls
+/// normally; only the Bevy-side polled state is masked.
 fn consume_egui_input_system(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut contexts: EguiContexts,
     mut wheel_events: ResMut<Messages<MouseWheel>>,
-    mut button_events: ResMut<Messages<MouseButtonInput>>,
+    mut button_events: MessageReader<MouseButtonInput>,
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
+    mut pressed_over_pane: Local<HashSet<MouseButton>>,
 ) {
     let Ok(window) = primary_window.single() else { return };
     let Some(cursor) = window.cursor_position() else { return };
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let pos = egui::pos2(cursor.x, cursor.y);
     let pane_rects = corekit::pane::published_pane_rects(ctx);
-    if pane_rects.iter().any(|r| r.contains(pos)) {
-        wheel_events.clear();
-        button_events.clear();
-        mouse_buttons.reset_all();
+    let cursor_over_pane = pane_rects.iter().any(|r| r.contains(pos));
+
+    // Track which mouse buttons were pressed while the cursor was
+    // over a pane. Released → drop from the set. The whole point
+    // of the set is to remember presses across frames so a
+    // subsequent over-pane mouse move during a viewport drag
+    // doesn't accidentally classify the hold as "over pane".
+    for ev in button_events.read() {
+        match ev.state {
+            ButtonState::Pressed => {
+                if cursor_over_pane {
+                    pressed_over_pane.insert(ev.button);
+                }
+            }
+            ButtonState::Released => {
+                pressed_over_pane.remove(&ev.button);
+            }
+        }
     }
+
+    // Mask only the buttons whose current hold belongs to the UI.
+    // `release` clears the `pressed` set; `clear_just_pressed` clears
+    // the `just_pressed` set. Both are needed — `ButtonInput::release`
+    // ALONE leaves `just_pressed(btn)` returning true on the press
+    // frame, so a click on a frost-pane button still fires viewport
+    // pickers gated only by `just_pressed`.
+    for &btn in pressed_over_pane.iter() {
+        mouse_buttons.release(btn);
+        mouse_buttons.clear_just_pressed(btn);
+    }
+
+    // Wheel: simple cursor-over-pane gate — wheel events are
+    // one-shot, no ongoing-interaction concept.
+    if cursor_over_pane {
+        wheel_events.clear();
+    }
+
+    // Clear the published-rects list now that we've consumed it.
+    // The next egui pass either repopulates it (open panes call
+    // `Pane2::show` → publish) or leaves it empty (no panes shown
+    // this frame). Without this, closing every pane would leave the
+    // last-seen rects stuck in ctx data — `Pane2::show` is the only
+    // other reset path, and it doesn't fire when no panes paint.
+    corekit::pane::clear_published_pane_rects(ctx);
 }
 
 /// Standalone plugin that installs only the egui pointer-event

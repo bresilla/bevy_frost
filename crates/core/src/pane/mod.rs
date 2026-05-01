@@ -52,7 +52,7 @@ const PANE_FRAME_CHROME: f32 = PANE_INNER_MARGIN * 2.0;
 /// regardless of which rail it lives on, and the container inside
 /// clamps its own cross to `outer_avail` so it always fits — no
 /// per-orientation tuning needed.
-pub const PANE_OUTER_SPAN: f32 = 280.0;
+pub const PANE_OUTER_SPAN: f32 = 320.0;
 
 /// Thickness of the title strip on its flow axis (perpendicular to
 /// the strip's reading direction).
@@ -329,6 +329,20 @@ fn published_pane_rects_key() -> Id {
 pub fn published_pane_rects(ctx: &egui::Context) -> Vec<egui::Rect> {
     ctx.data(|d| d.get_temp::<Vec<egui::Rect>>(published_pane_rects_key()))
         .unwrap_or_default()
+}
+
+/// Clear the global pane-rects list unconditionally. Host
+/// integrations call this once per frame BEFORE any `Pane2::show`
+/// runs (e.g. the bevy_frost firewall, after it has consumed the
+/// previous frame's rects), so the list reflects ONLY panes that
+/// actually painted in the most recent egui pass — without this,
+/// closing every visible pane leaves the last-seen rects stuck in
+/// `published_pane_rects` forever, since `Pane2::show` is the only
+/// other entry point that resets the list.
+pub fn clear_published_pane_rects(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.remove::<Vec<egui::Rect>>(published_pane_rects_key());
+    });
 }
 
 /// Append `rect` to the global pane-rects list. Called by
@@ -622,6 +636,32 @@ impl Pane2 {
         // open / fold animation. Cross handles also benefit when
         // span-axis is animating.
         let painted_rect = std::cell::Cell::new(pane_rect);
+        // Hierarchical clip rect — taken from the PREVIOUS frame's
+        // painted rect (persisted via ctx data) unioned with this
+        // frame's `pane_rect`. Reasons:
+        //
+        // * `pane_rect` is computed from `pane_flow`, which uses last
+        //   frame's container snapshots. On the first frame after
+        //   content grows (a new container appears, a fold animation
+        //   ramps up, …) `pane_rect` undersizes the actual paint and
+        //   `shrink_clip_rect(pane_rect)` would slice the body's far
+        //   edge — exactly the symptom of "the side opposite the
+        //   title is being clipped".
+        // * Last frame's actual `painted_rect` is the ground truth
+        //   for what fit on the previous render; unioning with
+        //   `pane_rect` covers the case where content shrank (so
+        //   `pane_rect` is now the larger, accurate bound).
+        //
+        // The union is the smallest rect that's known to contain
+        // both the predicted bounds and the most recently observed
+        // bounds, so a single frame of growth still renders fully
+        // — only growth that exceeds last frame's paint by more than
+        // one frame would clip, which is the rare transient.
+        let clip_key = pane_id.with("frost_pane_painted_rect_for_clip");
+        let last_painted_rect: egui::Rect = ctx
+            .data(|d| d.get_temp::<egui::Rect>(clip_key))
+            .unwrap_or(pane_rect);
+        let pane_clip_rect = pane_rect.union(last_painted_rect);
 
         egui::Area::new(area_id)
             // `Order::Background` keeps the pane's drop shadow
@@ -687,11 +727,23 @@ impl Pane2 {
                         .max_rect(pane_rect)
                         .layout(layout),
                 );
-                // No clip_rect — the pane is on `Order::Background`
-                // (below the ribbon buttons), so any shadow bleed
-                // is painted over by the buttons. Content is laid
-                // out tight to `pane_rect` (item_spacing = 0), so
-                // there's nothing to clip anyway.
+                // ── Hierarchical clip invariant (root) ──
+                //
+                // The pane Area is created at `Order::Background` with
+                // a screen-sized clip rect by default — descendants
+                // (containers, pods, individual widgets) inherit that
+                // wide-open clip via egui's painter cloning in
+                // `new_child` and `painter_at`, which means a pod
+                // whose content overflows can paint past the pane's
+                // painted bounds. Narrowing the child_ui's clip
+                // anchors the top of the hierarchy: every descendant
+                // now has `clip ⊆ pane_clip_rect` automatically (each
+                // level's `painter_at(rect)` intersects against the
+                // inherited clip). Use `shrink_clip_rect` rather than
+                // `set_clip_rect` so we INTERSECT with whatever egui
+                // set on the Area — `set_` can grow the clip and is
+                // footgunny per egui docs.
+                child_ui.shrink_clip_rect(pane_clip_rect);
                 {
                 let ui = &mut child_ui;
                 let theme = style::theme();
@@ -730,6 +782,15 @@ impl Pane2 {
                 // exactly on the painted edge, even when fold
                 // animation has shrunk the frame.
                 painted_rect.set(frame_response.response.rect);
+                // Persist this frame's actual painted rect so next
+                // frame's `pane_clip_rect` (= pane_rect ∪
+                // last_painted_rect) accurately bounds the body —
+                // critical for the first frame after content grows,
+                // where `pane_rect` lags by one frame and would
+                // otherwise slice the body's far edge.
+                outer_ui.ctx().data_mut(|d| {
+                    d.insert_temp(clip_key, frame_response.response.rect);
+                });
                 }
                 // Publish this pane's painted rect to the global
                 // ctx-data list so host integrations (e.g.

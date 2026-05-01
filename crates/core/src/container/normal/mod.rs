@@ -94,6 +94,15 @@ pub struct Normal {
     /// available main extent and pass each container its share via
     /// this builder so they don't all claim the full pane.
     body_flow: Option<f32>,
+    /// Optional per-container override for the autofit cap
+    /// (vertically-stacked containers in horizontal-strip panes —
+    /// TM/BM) or the fixed default-flow size (horizontally-stacked
+    /// containers in vertical-strip panes — LM/RM). Set via
+    /// [`Normal::initial_flow`]. When `None`, the global
+    /// [`crate::container::CONTAINER_AUTOFIT_CAP`] (= 8U) /
+    /// [`crate::container::CONTAINER_HORIZONTAL_DEFAULT_FLOW`]
+    /// (= 12U) apply.
+    initial_flow: Option<f32>,
     /// Minimum WIDTH this container will accept. The parent pane's
     /// user-resize handles consult the registered minimums (one per
     /// container painted this frame) and stop shrinking once the
@@ -116,8 +125,29 @@ impl Normal {
             pane_id: pane_id.into(),
             icon: None,
             body_flow: None,
+            initial_flow: None,
             min_width: None,
         }
+    }
+
+    /// Override the per-container default flow size. Replaces the
+    /// global autofit cap (vertically-stacked: 8U) or the fixed
+    /// default (horizontally-stacked: 12U) for this container only.
+    /// Once the user drags the inter-container resize handle, the
+    /// drag value takes precedence — the override is only used
+    /// while the container is in its untouched state.
+    ///
+    /// Example: a console pane that should open at 12U instead of
+    /// the default 8U auto-fit cap:
+    ///
+    /// ```ignore
+    /// Normal::new(title, anchor, accent, cid)
+    ///     .initial_flow(12.0 * corekit::UNIT)
+    ///     .show(ui, pods);
+    /// ```
+    pub fn initial_flow(mut self, flow: f32) -> Self {
+        self.initial_flow = Some(flow.max(0.0));
+        self
     }
 
     /// Set the container's minimum WIDTH. The parent pane's resize
@@ -190,12 +220,22 @@ impl Normal {
                 // Capture metadata BEFORE the pod is consumed by `show`.
                 let pod_id = pod.id();
                 let pod_is_resizable = pod.is_resizable();
-                let pod_widget_count = pod.widget_count();
+                let _pod_widget_count = pod.widget_count();
                 let separator_after = if i + 1 < pods_total {
                     pod.separator_style()
+                } else if pod_is_resizable {
+                    // Last pod that's resizable still paints its
+                    // dotted handle so the user can drag the bottom
+                    // edge to shrink/grow the pod (reveal / hide
+                    // rows). Without this the resize affordance
+                    // disappears whenever the resizable pod ends up
+                    // at the bottom of its container — which is
+                    // exactly when the user expects to find the
+                    // handle there.
+                    pod.separator_style()
                 } else {
-                    // Last pod — never paint a separator after,
-                    // regardless of its `separator_style()`.
+                    // Last non-resizable pod — no separator below;
+                    // there's nothing to divide it from.
                     crate::container::SeparatorStyle::None
                 };
                 let frame_resp = Frame::new()
@@ -231,16 +271,23 @@ impl Normal {
                             pod_id,
                             pods_accent,
                         );
-                        if resp.dragged() && pod_widget_count > 0 {
+                        if resp.dragged() {
+                            // Drag delta maps 1:1 to the pod's
+                            // viewport height — no division by
+                            // widget count, since `Pod::show` now
+                            // treats this value as the slot's total
+                            // pixel height (clipping content beyond)
+                            // rather than scaling individual
+                            // widgets.
                             let key = crate::pod::Pod::widget_height_key(pod_id);
                             let cur = body_ui
                                 .ctx()
                                 .data_mut(|d| d.get_persisted::<f32>(key))
                                 .unwrap_or(crate::style::UNIT);
-                            let delta_per_widget =
-                                resp.drag_delta().y / pod_widget_count as f32;
-                            let new = (cur + delta_per_widget)
-                                .clamp(crate::pod::POD_MIN_WIDGET_H, crate::pod::POD_MAX_WIDGET_H);
+                            let new = (cur + resp.drag_delta().y).clamp(
+                                crate::pod::POD_MIN_WIDGET_H,
+                                crate::pod::POD_MAX_WIDGET_H,
+                            );
                             body_ui.ctx().data_mut(|d| d.insert_persisted(key, new));
                         }
                     } else {
@@ -291,6 +338,19 @@ impl Normal {
             acc.push(min_w);
             d.insert_temp(key, acc);
         });
+
+        // Per-container default-flow override (set via
+        // `Normal::initial_flow`). Persist on every frame the
+        // builder supplies a value so `crate::container::container_flow`
+        // (called from both this Normal AND the parent Pane2's
+        // auto-flow sum) sees the same target.
+        if let Some(initial) = self.initial_flow {
+            crate::container::set_container_initial_flow(
+                ui.ctx(),
+                self.pane_id,
+                initial,
+            );
+        }
 
         let title_side = self.anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
@@ -673,10 +733,13 @@ impl Normal {
                 let (_, content_h) = body_cfg.paint(&mut child, body);
                 // Record the body's intrinsic content height so
                 // next frame's `container_flow` auto-fit path can
-                // size the container to its actual content (capped
-                // at `CONTAINER_AUTOFIT_CAP`). Add back the
-                // `body_top_pad` we consumed above so the
-                // measurement reflects the FULL body slot the
+                // size the container to its actual content. The
+                // intrinsic is bounded only by `CONTAINER_MAX_FLOW`
+                // (= 1200 px) so widgets that expand on demand
+                // (color picker, …) can grow the container instead
+                // of being clipped behind the body's ScrollArea.
+                // Add back the `body_top_pad` we consumed above so
+                // the measurement reflects the FULL body slot the
                 // container needs, not just the post-pad part.
                 crate::container::record_container_intrinsic(
                     child.ctx(),

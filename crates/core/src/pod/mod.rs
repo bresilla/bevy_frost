@@ -23,8 +23,9 @@ use egui::{Color32, Id, Ui};
 use crate::container::SeparatorStyle;
 use crate::style::UNIT;
 use crate::widget::{
-    button::card_button, button_h, drag_value_h, progressbar_h, slider_h, text_input_h,
-    toggle_h,
+    button::{Button, FillStyle},
+    color_rgb, color_rgba, drag_value, dropdown, hybrid_select_row, progressbar, readout,
+    select_row, slider, text_input, toggle,
 };
 
 // ─── Per-widget responses ─────────────────────────────────────────
@@ -40,6 +41,13 @@ pub struct PodResponse {
     pub progress: Vec<ProgressResponse>,
     pub sliders: Vec<SliderResponse>,
     pub drag_values: Vec<DragValueResponse>,
+    pub dropdowns: Vec<DropdownResponse>,
+    pub selects: Vec<SelectResponse>,
+    pub hybrid_selects: Vec<HybridSelectPodResponse>,
+    pub colors: Vec<ColorResponse>,
+    pub readouts: Vec<ReadoutResponse>,
+    pub select_lists: Vec<SelectListResponse>,
+    pub hybrid_select_lists: Vec<HybridSelectListResponse>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,6 +82,61 @@ pub struct DragValueResponse {
     pub changed: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DropdownResponse {
+    pub selected: usize,
+    pub changed: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SelectResponse {
+    pub clicked: bool,
+    pub double_clicked: bool,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HybridSelectPodResponse {
+    pub body_clicked: bool,
+    pub body_double_clicked: bool,
+    pub radio_clicked: bool,
+    pub selected: bool,
+    pub radio_on: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ColorResponse {
+    /// RGBA in 0.0..=1.0. For `with_color_rgb`, alpha is always 1.0.
+    pub rgba: [f32; 4],
+    pub changed: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ReadoutResponse;
+
+#[derive(Clone, Debug, Default)]
+pub struct SelectListResponse {
+    /// Index of the row that was clicked this frame, if any.
+    pub clicked: Option<usize>,
+    /// Index of the row that was double-clicked this frame, if any.
+    pub double_clicked: Option<usize>,
+    /// Persisted "currently selected" index for the list.
+    pub selected: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HybridSelectListResponse {
+    /// Body click target — same as `SelectListResponse::clicked`.
+    pub body_clicked: Option<usize>,
+    pub body_double_clicked: Option<usize>,
+    /// Right-edge radio click — independent from body.
+    pub radio_clicked: Option<usize>,
+    pub selected: Option<usize>,
+    /// Persisted "pinned" radio index — at most one row pinned at a
+    /// time (the radio is single-select, like a real radio group).
+    pub pinned: Option<usize>,
+}
+
 // ─── Widget specs ─────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -86,6 +149,17 @@ struct SearchConfig {
 struct ButtonConfig {
     label: String,
     accent: Color32,
+    /// Optional second-row caption beneath the label (small dim text).
+    /// When `Some`, the button paints in the 2-row "card" shape and
+    /// reports its result in `PodResponse::card_buttons` instead of
+    /// `buttons`, so callers that rely on the index split keep
+    /// matching the right wire.
+    subtitle: Option<String>,
+    /// Optional leading icon glyph painted in `accent`.
+    glyph: Option<String>,
+    /// Optional CSS-style hover-fill animation. `None` falls back to
+    /// the standard hover/press tint.
+    animation: Option<FillStyle>,
 }
 
 #[derive(Clone)]
@@ -127,10 +201,59 @@ struct DragValueConfig {
 }
 
 #[derive(Clone)]
-struct CardButtonConfig {
-    glyph: String,
-    name: String,
-    subtitle: String,
+struct DropdownConfig {
+    options: Vec<String>,
+    initial: usize,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct SelectConfig {
+    label: String,
+    trailing: Option<String>,
+    selected_initial: bool,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct HybridSelectConfig {
+    label: String,
+    trailing: Option<String>,
+    selected_initial: bool,
+    radio_initial: bool,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct ColorConfig {
+    label: String,
+    initial: [f32; 4],
+    /// `true` shows the alpha slider in the picker (RGBA);
+    /// `false` keeps it opaque (RGB).
+    alpha: bool,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct ReadoutConfig {
+    label: String,
+    value: String,
+}
+
+#[derive(Clone)]
+struct SelectListConfig {
+    items: Vec<String>,
+    /// Optional trailing text per item (e.g. `#3`, `(2.4 MB)`).
+    /// When `Some`, length must match `items.len()`. When `None`,
+    /// rows render with no trailing column.
+    trailing: Option<Vec<String>>,
+    accent: Color32,
+}
+
+#[derive(Clone)]
+struct HybridSelectListConfig {
+    items: Vec<String>,
+    trailing: Option<Vec<String>>,
     accent: Color32,
 }
 
@@ -138,32 +261,78 @@ struct CardButtonConfig {
 /// declaration order; response indices match the order each widget
 /// kind was added (e.g. the third `with_button` shows up at
 /// `response.buttons[2]`).
-#[derive(Clone)]
+///
+/// Not `Clone` — the [`WidgetSpec::Custom`] variant carries a move-only
+/// closure (`Box<dyn FnOnce>`). Pod consumes its widget vec on
+/// `show(self, ui)`, so cloning was never needed in the first place;
+/// removing the derive lets the custom variant exist without
+/// special-casing.
 enum WidgetSpec {
     Search(SearchConfig),
     Button(ButtonConfig),
-    CardButton(CardButtonConfig),
     Toggle(ToggleConfig),
     Progress(ProgressConfig),
     Slider(SliderConfig),
     DragValue(DragValueConfig),
+    Dropdown(DropdownConfig),
+    Select(SelectConfig),
+    HybridSelect(HybridSelectConfig),
+    Color(ColorConfig),
+    Readout(ReadoutConfig),
+    /// Multi-row select list — ONE widget that paints N
+    /// `select_row`s. Use this instead of stacking N
+    /// [`WidgetSpec::Select`] entries when "the list IS the widget"
+    /// (the conceptual unit is the whole roster).
+    SelectList(SelectListConfig),
+    /// Multi-row hybrid select list — body click + right-edge radio
+    /// pin per row. Body selection is independent per row; the radio
+    /// is single-select across the list (only one row pinned at a
+    /// time), matching the "active layer / current camera target"
+    /// pattern.
+    HybridSelectList(HybridSelectListConfig),
+    /// Caller-supplied paint closure. Used as the integration point
+    /// for widgets that don't fit a flat config (recursive trees,
+    /// node graphs, code editors, …) — the closure draws into the
+    /// pod's `Ui`, allocating whatever vertical space it needs.
+    /// `unit_count` for `Custom` defaults to `1`; pass an explicit
+    /// hint via [`Pod::with_custom_units`] when the closure paints
+    /// significantly more rows.
+    Custom {
+        units: usize,
+        paint: Box<dyn FnOnce(&mut Ui) + Send + Sync>,
+    },
 }
 
 impl WidgetSpec {
     /// Number of 1U row-heights this widget consumes (for
     /// proportional resize accounting). Single-row widgets (search,
-    /// 1U button, toggle, drag-value) → 1; the chunky `card_button`
-    /// → ~1.7 (32 px ≈ 1.7U at default heights); 2-row widgets
-    /// (progressbar, slider) → 2.
+    /// 1U button, toggle, drag-value, dropdown, select) → 1; the
+    /// chunky button-with-subtitle → 2 (32 px ≈ 1.7U at default
+    /// heights, rounded up); 2-row widgets (progressbar, slider) → 2.
+    /// `Custom` returns its caller-supplied hint so the resize-handle
+    /// math still adds up.
     fn unit_count(&self) -> usize {
         match self {
             WidgetSpec::Search(_) => 1,
-            WidgetSpec::Button(_) => 1,
-            WidgetSpec::CardButton(_) => 2,
+            WidgetSpec::Button(cfg) => {
+                if cfg.subtitle.is_some() {
+                    2
+                } else {
+                    1
+                }
+            }
             WidgetSpec::Toggle(_) => 1,
             WidgetSpec::Progress(_) => 2,
             WidgetSpec::Slider(_) => 2,
             WidgetSpec::DragValue(_) => 1,
+            WidgetSpec::Dropdown(_) => 1,
+            WidgetSpec::Select(_) => 1,
+            WidgetSpec::HybridSelect(_) => 1,
+            WidgetSpec::Color(_) => 1,
+            WidgetSpec::Readout(_) => 1,
+            WidgetSpec::SelectList(cfg) => cfg.items.len().max(1),
+            WidgetSpec::HybridSelectList(cfg) => cfg.items.len().max(1),
+            WidgetSpec::Custom { units, .. } => *units,
         }
     }
 }
@@ -260,12 +429,78 @@ impl Pod {
         self
     }
 
-    /// Add a button widget. `label` is the centred caption.
+    /// Add a plain button widget. `label` is the centred caption.
     /// Click status is reported in `PodResponse::buttons[i]`.
     pub fn with_button(mut self, label: impl Into<String>, accent: Color32) -> Self {
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
             label: label.into(),
             accent,
+            subtitle: None,
+            glyph: None,
+            animation: None,
+        }));
+        self
+    }
+
+    /// Add a button with a small dim caption underneath the primary
+    /// label (chunky 2-row look). Click status is reported in
+    /// `PodResponse::card_buttons[i]` so callers can split the wires
+    /// from plain buttons.
+    pub fn with_button_subtitle(
+        mut self,
+        label: impl Into<String>,
+        subtitle: impl Into<String>,
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Button(ButtonConfig {
+            label: label.into(),
+            accent,
+            subtitle: Some(subtitle.into()),
+            glyph: None,
+            animation: None,
+        }));
+        self
+    }
+
+    /// Add a button with a CSS-style hover-fill animation overlay.
+    /// At rest the button paints the same as `with_button`; on hover
+    /// it paints `style` over a darker-accent fill.
+    pub fn with_button_animated(
+        mut self,
+        label: impl Into<String>,
+        accent: Color32,
+        style: FillStyle,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Button(ButtonConfig {
+            label: label.into(),
+            accent,
+            subtitle: None,
+            glyph: None,
+            animation: Some(style),
+        }));
+        self
+    }
+
+    /// Add a fully-configured button — combine any of subtitle,
+    /// glyph (Fluent icon name or literal), and animation in one
+    /// call. The simpler `with_button*` shortcuts cover the common
+    /// cases; reach for this when you need (e.g.) "icon + 2-row
+    /// label + animated hover" all together. Subtitle bumps the
+    /// height to 2U automatically.
+    pub fn with_button_styled(
+        mut self,
+        label: impl Into<String>,
+        accent: Color32,
+        subtitle: Option<impl Into<String>>,
+        glyph: Option<impl Into<String>>,
+        animation: Option<FillStyle>,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Button(ButtonConfig {
+            label: label.into(),
+            accent,
+            subtitle: subtitle.map(Into::into),
+            glyph: glyph.map(Into::into),
+            animation,
         }));
         self
     }
@@ -361,9 +596,9 @@ impl Pod {
         self
     }
 
-    /// Add a `card_button` — accent glyph on the left, primary
-    /// `name` + small `subtitle` stacked on the right. Click status
-    /// is reported in `PodResponse::card_buttons[i]`.
+    /// Add a "card" button — leading glyph + primary `name` + small
+    /// `subtitle`. Click status is reported in
+    /// `PodResponse::card_buttons[i]`.
     pub fn with_card_button(
         mut self,
         glyph: impl Into<String>,
@@ -371,12 +606,212 @@ impl Pod {
         subtitle: impl Into<String>,
         accent: Color32,
     ) -> Self {
-        self.widgets.push(WidgetSpec::CardButton(CardButtonConfig {
-            glyph: glyph.into(),
-            name: name.into(),
-            subtitle: subtitle.into(),
+        self.widgets.push(WidgetSpec::Button(ButtonConfig {
+            label: name.into(),
+            accent,
+            subtitle: Some(subtitle.into()),
+            glyph: Some(glyph.into()),
+            animation: None,
+        }));
+        self
+    }
+
+    /// Add a single-select dropdown. `options` is the menu list;
+    /// `initial` is the default index until the user picks something
+    /// (subsequent selections persist in the pod's ctx-data slot).
+    /// Result lands in `PodResponse::dropdowns[i]`.
+    pub fn with_dropdown(
+        mut self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        initial: usize,
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Dropdown(DropdownConfig {
+            options: options.into_iter().map(Into::into).collect(),
+            initial,
             accent,
         }));
+        self
+    }
+
+    /// Add a select row (single click target on the body). The
+    /// `selected` paint state persists in the pod's ctx-data slot —
+    /// each click toggles it. `trailing` is rendered dim-right.
+    /// Result lands in `PodResponse::selects[i]`.
+    pub fn with_select(
+        mut self,
+        label: impl Into<String>,
+        trailing: Option<impl Into<String>>,
+        selected_initial: bool,
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Select(SelectConfig {
+            label: label.into(),
+            trailing: trailing.map(Into::into),
+            selected_initial,
+            accent,
+        }));
+        self
+    }
+
+    /// Add a hybrid-select row (body click + right-edge radio
+    /// pin). The radio's `radio_on` state persists in its own
+    /// ctx-data slot. Result lands in `PodResponse::hybrid_selects[i]`.
+    pub fn with_hybrid_select(
+        mut self,
+        label: impl Into<String>,
+        trailing: Option<impl Into<String>>,
+        selected_initial: bool,
+        radio_initial: bool,
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::HybridSelect(HybridSelectConfig {
+            label: label.into(),
+            trailing: trailing.map(Into::into),
+            selected_initial,
+            radio_initial,
+            accent,
+        }));
+        self
+    }
+
+    /// Add an opaque sRGB colour swatch. Click expands the picker
+    /// inline below the row. Result lands in `PodResponse::colors[i]`
+    /// (alpha is fixed at 1.0 in the result).
+    pub fn with_color_rgb(
+        mut self,
+        label: impl Into<String>,
+        initial_rgb: [f32; 3],
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Color(ColorConfig {
+            label: label.into(),
+            initial: [initial_rgb[0], initial_rgb[1], initial_rgb[2], 1.0],
+            alpha: false,
+            accent,
+        }));
+        self
+    }
+
+    /// Add an sRGBA colour swatch (alpha slider in the picker).
+    /// Result lands in `PodResponse::colors[i]`.
+    pub fn with_color_rgba(
+        mut self,
+        label: impl Into<String>,
+        initial_rgba: [f32; 4],
+        accent: Color32,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Color(ColorConfig {
+            label: label.into(),
+            initial: initial_rgba,
+            alpha: true,
+            accent,
+        }));
+        self
+    }
+
+    /// Add a read-only readout row — label on the left, monospace
+    /// value on the right. Use for surfaces that just *display* a
+    /// piece of data (selected node path, current speed, active
+    /// tool, …). Result is reported in `PodResponse::readouts[i]`,
+    /// though the response carries no state — re-render the pod with
+    /// a new `value` to update what's shown.
+    pub fn with_readout(
+        mut self,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Readout(ReadoutConfig {
+            label: label.into(),
+            value: value.into(),
+        }));
+        self
+    }
+
+    /// Add a multi-row select list as ONE widget. Each item becomes a
+    /// `select_row`; selection state persists per-list (a single
+    /// "current row" index, like a single-select listbox) in
+    /// `PodResponse::select_lists[i].selected`. Pass `trailing` to
+    /// add a dim-right column per row; length must equal `items` or
+    /// the list is rendered without trailing.
+    pub fn with_select_list(
+        mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        trailing: Option<Vec<String>>,
+        accent: Color32,
+    ) -> Self {
+        let items: Vec<String> = items.into_iter().map(Into::into).collect();
+        let trailing = trailing.filter(|t| t.len() == items.len());
+        self.widgets.push(WidgetSpec::SelectList(SelectListConfig {
+            items,
+            trailing,
+            accent,
+        }));
+        self
+    }
+
+    /// Add a multi-row hybrid select list — body click + radio pin
+    /// per row, all bundled as ONE widget. Body select is single-row
+    /// (current selection); radio pin is also single-row (only one
+    /// row pinned at a time, like a real radio group). Result
+    /// indices land in `PodResponse::hybrid_select_lists[i]`.
+    pub fn with_hybrid_select_list(
+        mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        trailing: Option<Vec<String>>,
+        accent: Color32,
+    ) -> Self {
+        let items: Vec<String> = items.into_iter().map(Into::into).collect();
+        let trailing = trailing.filter(|t| t.len() == items.len());
+        self.widgets
+            .push(WidgetSpec::HybridSelectList(HybridSelectListConfig {
+                items,
+                trailing,
+                accent,
+            }));
+        self
+    }
+
+    /// Add a caller-supplied paint closure as a widget slot. Use for
+    /// custom rendering that doesn't fit one of the flat configs —
+    /// the canonical case being [`crate::widget::tree_row`], which is
+    /// recursive and needs the caller to walk its model.
+    ///
+    /// The closure runs inside the pod's per-slot `push_id` scope so
+    /// any `ui.id().with(...)` derivations stay unique across pods.
+    /// Allocate vertical space normally (`ui.allocate_exact_size` /
+    /// child uis); the pod's flow accounting resizes around whatever
+    /// the closure paints.
+    ///
+    /// `Custom` widgets surface no per-frame response back through
+    /// [`PodResponse`] — the closure owns its own state and reactions.
+    /// The unit hint defaults to `1`; call [`Pod::with_custom_units`]
+    /// when the closure paints more than one 1U row's worth so the
+    /// inter-pod drag-resize math remains proportional.
+    pub fn with_custom(
+        mut self,
+        paint: impl FnOnce(&mut Ui) + Send + Sync + 'static,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Custom {
+            units: 1,
+            paint: Box::new(paint),
+        });
+        self
+    }
+
+    /// Like [`Pod::with_custom`] but with an explicit "this slot
+    /// occupies N units of 1U row height" hint, used by the
+    /// inter-pod resize-handle to share drag delta across pods
+    /// proportionally to their content size.
+    pub fn with_custom_units(
+        mut self,
+        units: usize,
+        paint: impl FnOnce(&mut Ui) + Send + Sync + 'static,
+    ) -> Self {
+        self.widgets.push(WidgetSpec::Custom {
+            units: units.max(1),
+            paint: Box::new(paint),
+        });
         self
     }
 
@@ -385,19 +820,81 @@ impl Pod {
     pub fn show(self, ui: &mut Ui) -> PodResponse {
         let pod_id = self.id;
         let mut response = PodResponse::default();
-        // Inter-widget breathing space.
-        const WIDGET_SPACING: f32 = 4.0;
-        // Resolve the per-widget height: resizable pods read
-        // persisted size (written by Normal::show on drag of the
-        // inter-pod handle), defaulting to 1U.
-        let widget_h: f32 = if self.resizable {
-            ui.ctx()
+        if self.resizable {
+            // Compute the pod's natural total height — sum of widget
+            // unit_count × UNIT + inter-widget spacing — and resolve
+            // the viewport from the persisted handle (default =
+            // natural sum so a fresh pod shows everything; drag
+            // clamps to [POD_MIN, POD_MAX]).
+            let natural_units: usize =
+                self.widgets.iter().map(|w| w.unit_count()).sum();
+            let spacing_total = if self.widgets.len() > 1 {
+                (self.widgets.len() - 1) as f32 * POD_WIDGET_SPACING
+            } else {
+                0.0
+            };
+            let natural_h = (natural_units as f32) * UNIT + spacing_total;
+            let viewport_h = ui
+                .ctx()
                 .data_mut(|d| d.get_persisted::<f32>(Self::widget_height_key(pod_id)))
-                .unwrap_or(UNIT)
-                .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H)
+                .unwrap_or(natural_h)
+                .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H);
+            let avail_w = ui.available_width().max(1.0);
+            let (slot_rect, _) = ui.allocate_exact_size(
+                egui::vec2(avail_w, viewport_h),
+                egui::Sense::hover(),
+            );
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(slot_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            // `shrink_clip_rect` (= intersect with current clip) so a
+            // pod inside an already-clipped container can never grow
+            // its own clip. Hierarchy stays intact:
+            //   widget rect ⊆ pod slot ⊆ container body ⊆ pane.
+            child.shrink_clip_rect(slot_rect);
+            // Wrap the iteration in a vertical `ScrollArea` so when
+            // content exceeds the viewport, the user can SCROLL
+            // through the hidden rows — pods become first-class
+            // nested scrollable areas. `auto_shrink([false, false])`
+            // keeps the area filling the slot regardless of content
+            // size; `min_scrolled_height(0.0)` disables egui's
+            // default 64px floor that otherwise inflates inner_size
+            // for short pods. Bar visibility is `VisibleWhenNeeded`
+            // (the default) so the bar appears only when content
+            // overflows.
+            let widgets = self.widgets;
+            egui::ScrollArea::vertical()
+                .id_salt(pod_id.with("frost_pod_scroll"))
+                .auto_shrink([false, false])
+                .min_scrolled_height(0.0)
+                .show(&mut child, |inner| {
+                    paint_widgets(widgets, inner, &mut response, pod_id);
+                });
         } else {
-            UNIT
-        };
+            paint_widgets(self.widgets, ui, &mut response, pod_id);
+        }
+        response
+    }
+}
+
+/// Inter-widget vertical breathing space inside a pod. Used both
+/// when laying out widgets in [`paint_widgets`] and when computing a
+/// resizable pod's natural height in [`Pod::show`].
+const POD_WIDGET_SPACING: f32 = 4.0;
+
+/// Paint every widget in `widgets` into `ui`, accumulating responses
+/// into `response`. Shared between [`Pod::show`]'s plain (parent ui)
+/// and resizable (clipped child + ScrollArea) paths so the per-widget
+/// rendering logic lives in exactly one place.
+fn paint_widgets(
+    widgets: Vec<WidgetSpec>,
+    ui: &mut egui::Ui,
+    response: &mut PodResponse,
+    pod_id: Id,
+) {
+        const WIDGET_SPACING: f32 = POD_WIDGET_SPACING;
         // Per-kind stable indices: the Nth `with_search` keeps its
         // own ctx-data key independent of any buttons / toggles /
         // progress bars declared between them.
@@ -408,7 +905,14 @@ impl Pod {
         let mut progress_idx = 0usize;
         let mut slider_idx = 0usize;
         let mut drag_value_idx = 0usize;
-        for (slot_idx, spec) in self.widgets.into_iter().enumerate() {
+        let mut dropdown_idx = 0usize;
+        let mut select_idx = 0usize;
+        let mut hybrid_select_idx = 0usize;
+        let mut color_idx = 0usize;
+        let mut readout_idx = 0usize;
+        let mut select_list_idx = 0usize;
+        let mut hybrid_select_list_idx = 0usize;
+        for (slot_idx, spec) in widgets.into_iter().enumerate() {
             if slot_idx > 0 {
                 ui.add_space(WIDGET_SPACING);
             }
@@ -427,7 +931,7 @@ impl Pod {
                         .data(|d| d.get_temp::<String>(buf_key))
                         .unwrap_or_default();
                     let resp =
-                        text_input_h(ui, &mut buf, &cfg.placeholder, cfg.accent, widget_h);
+                        text_input(ui, &mut buf, &cfg.placeholder, cfg.accent);
                     let changed = resp.changed();
                     if changed {
                         ui.ctx().data_mut(|d| d.insert_temp(buf_key, buf.clone()));
@@ -444,16 +948,49 @@ impl Pod {
                     search_idx += 1;
                 }
                 WidgetSpec::Button(cfg) => {
-                    let resp = button_h(ui, &cfg.label, cfg.accent, widget_h);
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[button #{}]", button_idx),
-                    );
-                    response.buttons.push(ButtonResponse {
-                        clicked: resp.clicked(),
-                    });
-                    button_idx += 1;
+                    let has_subtitle = cfg.subtitle.is_some();
+                    // Card-shaped button (subtitle and/or glyph) gets
+                    // its own height + result wire so callers can
+                    // index them independently of plain buttons.
+                    let mut builder = Button::new(&cfg.label);
+                    if let Some(s) = &cfg.subtitle {
+                        builder = builder.subtitle(s);
+                    }
+                    if let Some(g) = &cfg.glyph {
+                        builder = builder.glyph(g);
+                    }
+                    if let Some(a) = cfg.animation {
+                        builder = builder.animation(a);
+                    }
+                    // No `.height()` override — let the Button
+                    // builder pick its natural default (24 px plain
+                    // / 39 px with subtitle). The pod's resize
+                    // handle is no longer allowed to scale the
+                    // button; if the pod's viewport is smaller than
+                    // the button's natural size, the button gets
+                    // clipped instead.
+                    let resp = builder.show(ui, cfg.accent);
+                    if has_subtitle {
+                        crate::debug::tag(
+                            ui,
+                            resp.rect,
+                            format!("widget[card_button #{}]", card_button_idx),
+                        );
+                        response.card_buttons.push(ButtonResponse {
+                            clicked: resp.clicked(),
+                        });
+                        card_button_idx += 1;
+                    } else {
+                        crate::debug::tag(
+                            ui,
+                            resp.rect,
+                            format!("widget[button #{}]", button_idx),
+                        );
+                        response.buttons.push(ButtonResponse {
+                            clicked: resp.clicked(),
+                        });
+                        button_idx += 1;
+                    }
                 }
                 WidgetSpec::Toggle(cfg) => {
                     let state_key = pod_id.with(("frost_pod_toggle_state", toggle_idx));
@@ -466,7 +1003,7 @@ impl Pod {
                             v
                         }
                     });
-                    let resp = toggle_h(ui, &cfg.label, &mut on, cfg.accent, widget_h);
+                    let resp = toggle(ui, &cfg.label, &mut on, cfg.accent);
                     let changed = resp.changed();
                     if changed {
                         ui.ctx().data_mut(|d| d.insert_persisted(state_key, on));
@@ -488,13 +1025,12 @@ impl Pod {
                     toggle_idx += 1;
                 }
                 WidgetSpec::Progress(cfg) => {
-                    let resp = progressbar_h(
+                    let resp = progressbar(
                         ui,
                         &cfg.label,
                         cfg.fraction,
                         &cfg.text,
                         cfg.accent,
-                        widget_h,
                     );
                     crate::debug::tag(
                         ui,
@@ -513,7 +1049,7 @@ impl Pod {
                         .ctx()
                         .data_mut(|d| d.get_persisted::<f64>(val_key))
                         .unwrap_or(cfg.value);
-                    let resp = slider_h(
+                    let resp = slider(
                         ui,
                         &cfg.label,
                         &mut val,
@@ -521,7 +1057,6 @@ impl Pod {
                         cfg.decimals,
                         &cfg.suffix,
                         cfg.accent,
-                        widget_h,
                     );
                     let changed = resp.changed();
                     if changed {
@@ -545,7 +1080,7 @@ impl Pod {
                         .ctx()
                         .data_mut(|d| d.get_persisted::<f64>(val_key))
                         .unwrap_or(cfg.value);
-                    let resp = drag_value_h(
+                    let resp = drag_value(
                         ui,
                         &cfg.label,
                         &mut val,
@@ -553,7 +1088,6 @@ impl Pod {
                         cfg.range.clone(),
                         cfg.decimals,
                         &cfg.suffix,
-                        widget_h,
                     );
                     let changed = resp.changed();
                     if changed {
@@ -570,26 +1104,268 @@ impl Pod {
                     });
                     drag_value_idx += 1;
                 }
-                WidgetSpec::CardButton(cfg) => {
-                    let resp = card_button(
+                WidgetSpec::Dropdown(cfg) => {
+                    let val_key =
+                        pod_id.with(("frost_pod_dropdown_idx", dropdown_idx));
+                    let mut sel: usize = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<usize>(val_key))
+                        .unwrap_or(cfg.initial)
+                        .min(cfg.options.len().saturating_sub(1));
+                    let opts: Vec<&str> =
+                        cfg.options.iter().map(String::as_str).collect();
+                    let resp = dropdown(
                         ui,
-                        &cfg.glyph,
-                        &cfg.name,
-                        &cfg.subtitle,
+                        ("frost_pod_dropdown", dropdown_idx),
+                        &mut sel,
+                        &opts,
                         cfg.accent,
                     );
+                    let changed = resp.changed();
+                    if changed {
+                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, sel));
+                    }
                     crate::debug::tag(
                         ui,
                         resp.rect,
-                        format!("widget[card_button #{}]", card_button_idx),
+                        format!("widget[dropdown #{}]", dropdown_idx),
                     );
-                    response.card_buttons.push(ButtonResponse {
-                        clicked: resp.clicked(),
+                    response.dropdowns.push(DropdownResponse {
+                        selected: sel,
+                        changed,
                     });
-                    card_button_idx += 1;
+                    dropdown_idx += 1;
+                }
+                WidgetSpec::Select(cfg) => {
+                    let sel_key =
+                        pod_id.with(("frost_pod_select_sel", select_idx));
+                    let mut selected: bool = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<bool>(sel_key))
+                        .unwrap_or(cfg.selected_initial);
+                    let resp = select_row(
+                        ui,
+                        ("frost_pod_select", select_idx),
+                        &cfg.label,
+                        cfg.trailing.as_deref(),
+                        selected,
+                        cfg.accent,
+                    );
+                    if resp.clicked() {
+                        selected = !selected;
+                        ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
+                    }
+                    crate::debug::tag(
+                        ui,
+                        resp.rect,
+                        format!("widget[select #{}]", select_idx),
+                    );
+                    response.selects.push(SelectResponse {
+                        clicked: resp.clicked(),
+                        double_clicked: resp.double_clicked(),
+                        selected,
+                    });
+                    select_idx += 1;
+                }
+                WidgetSpec::HybridSelect(cfg) => {
+                    let sel_key = pod_id
+                        .with(("frost_pod_hybrid_sel", hybrid_select_idx));
+                    let radio_key = pod_id
+                        .with(("frost_pod_hybrid_radio", hybrid_select_idx));
+                    let mut selected: bool = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<bool>(sel_key))
+                        .unwrap_or(cfg.selected_initial);
+                    let mut radio_on: bool = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<bool>(radio_key))
+                        .unwrap_or(cfg.radio_initial);
+                    let resp = hybrid_select_row(
+                        ui,
+                        ("frost_pod_hybrid", hybrid_select_idx),
+                        &cfg.label,
+                        cfg.trailing.as_deref(),
+                        selected,
+                        radio_on,
+                        cfg.accent,
+                    );
+                    if resp.body.clicked() {
+                        selected = !selected;
+                        ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
+                    }
+                    if resp.radio.clicked() {
+                        radio_on = !radio_on;
+                        ui.ctx().data_mut(|d| d.insert_persisted(radio_key, radio_on));
+                    }
+                    crate::debug::tag(
+                        ui,
+                        resp.body.rect,
+                        format!("widget[hybrid_select #{}]", hybrid_select_idx),
+                    );
+                    response.hybrid_selects.push(HybridSelectPodResponse {
+                        body_clicked: resp.body.clicked(),
+                        body_double_clicked: resp.body.double_clicked(),
+                        radio_clicked: resp.radio.clicked(),
+                        selected,
+                        radio_on,
+                    });
+                    hybrid_select_idx += 1;
+                }
+                WidgetSpec::Color(cfg) => {
+                    let val_key = pod_id.with(("frost_pod_color_val", color_idx));
+                    let mut rgba: [f32; 4] = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<[f32; 4]>(val_key))
+                        .unwrap_or(cfg.initial);
+                    let changed = if cfg.alpha {
+                        let resp =
+                            color_rgba(ui, &cfg.label, &mut rgba, cfg.accent);
+                        crate::debug::tag(
+                            ui,
+                            resp.rect,
+                            format!("widget[color_rgba #{}]", color_idx),
+                        );
+                        resp.changed()
+                    } else {
+                        let mut rgb = [rgba[0], rgba[1], rgba[2]];
+                        let resp = color_rgb(ui, &cfg.label, &mut rgb, cfg.accent);
+                        rgba[0] = rgb[0];
+                        rgba[1] = rgb[1];
+                        rgba[2] = rgb[2];
+                        rgba[3] = 1.0;
+                        crate::debug::tag(
+                            ui,
+                            resp.rect,
+                            format!("widget[color_rgb #{}]", color_idx),
+                        );
+                        resp.changed()
+                    };
+                    if changed {
+                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, rgba));
+                    }
+                    response.colors.push(ColorResponse { rgba, changed });
+                    color_idx += 1;
+                }
+                WidgetSpec::Readout(cfg) => {
+                    let resp = readout(ui, &cfg.label, &cfg.value);
+                    crate::debug::tag(
+                        ui,
+                        resp.rect,
+                        format!("widget[readout #{}]", readout_idx),
+                    );
+                    response.readouts.push(ReadoutResponse);
+                    readout_idx += 1;
+                }
+                WidgetSpec::SelectList(cfg) => {
+                    let sel_key = pod_id
+                        .with(("frost_pod_select_list_sel", select_list_idx));
+                    let mut selected: Option<usize> = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
+                        .unwrap_or(None);
+                    let mut clicked: Option<usize> = None;
+                    let mut double_clicked: Option<usize> = None;
+                    for (i, label) in cfg.items.iter().enumerate() {
+                        let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
+                        let resp = select_row(
+                            ui,
+                            ("frost_pod_select_list", select_list_idx, i),
+                            label,
+                            trailing,
+                            selected == Some(i),
+                            cfg.accent,
+                        );
+                        if resp.clicked() {
+                            clicked = Some(i);
+                            selected = Some(i);
+                        }
+                        if resp.double_clicked() {
+                            double_clicked = Some(i);
+                        }
+                    }
+                    if clicked.is_some() {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_persisted(sel_key, selected));
+                    }
+                    response.select_lists.push(SelectListResponse {
+                        clicked,
+                        double_clicked,
+                        selected,
+                    });
+                    select_list_idx += 1;
+                }
+                WidgetSpec::HybridSelectList(cfg) => {
+                    let sel_key = pod_id.with((
+                        "frost_pod_hybrid_select_list_sel",
+                        hybrid_select_list_idx,
+                    ));
+                    let pin_key = pod_id.with((
+                        "frost_pod_hybrid_select_list_pin",
+                        hybrid_select_list_idx,
+                    ));
+                    let mut selected: Option<usize> = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
+                        .unwrap_or(None);
+                    let mut pinned: Option<usize> = ui
+                        .ctx()
+                        .data_mut(|d| d.get_persisted::<Option<usize>>(pin_key))
+                        .unwrap_or(None);
+                    let mut body_clicked: Option<usize> = None;
+                    let mut body_double_clicked: Option<usize> = None;
+                    let mut radio_clicked: Option<usize> = None;
+                    for (i, label) in cfg.items.iter().enumerate() {
+                        let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
+                        let resp = hybrid_select_row(
+                            ui,
+                            (
+                                "frost_pod_hybrid_select_list",
+                                hybrid_select_list_idx,
+                                i,
+                            ),
+                            label,
+                            trailing,
+                            selected == Some(i),
+                            pinned == Some(i),
+                            cfg.accent,
+                        );
+                        if resp.body.clicked() {
+                            body_clicked = Some(i);
+                            selected = Some(i);
+                        }
+                        if resp.body.double_clicked() {
+                            body_double_clicked = Some(i);
+                        }
+                        if resp.radio.clicked() {
+                            radio_clicked = Some(i);
+                            // Single-select radio: clicking an
+                            // unpinned row pins it; clicking the
+                            // currently-pinned row unpins.
+                            pinned = if pinned == Some(i) { None } else { Some(i) };
+                        }
+                    }
+                    if body_clicked.is_some() {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_persisted(sel_key, selected));
+                    }
+                    if radio_clicked.is_some() {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_persisted(pin_key, pinned));
+                    }
+                    response
+                        .hybrid_select_lists
+                        .push(HybridSelectListResponse {
+                            body_clicked,
+                            body_double_clicked,
+                            radio_clicked,
+                            selected,
+                            pinned,
+                        });
+                    hybrid_select_list_idx += 1;
+                }
+                WidgetSpec::Custom { paint, .. } => {
+                    paint(ui);
                 }
             });
         }
-        response
-    }
 }

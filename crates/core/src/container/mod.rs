@@ -31,23 +31,27 @@ pub const CONTAINER_DEFAULT_FLOW: f32 = 200.0;
 pub const CONTAINER_MIN_FLOW: f32 = crate::style::UNIT;
 /// Upper bound on any container's persisted flow size.
 pub const CONTAINER_MAX_FLOW: f32 = 1200.0;
-/// Auto-fit cap for vertically-stacked containers. While in
-/// untouched "auto-fit" mode (no explicit drag yet), the flow
-/// size tracks the previous frame's measured content height BUT
-/// never exceeds this — past it the body's `ScrollArea` takes
-/// over.
-pub const CONTAINER_AUTOFIT_CAP: f32 = 8.0 * crate::style::UNIT;
+/// Legacy auto-fit cap for vertically-stacked containers — kept
+/// public so callers that want a hard cap can pass it as an
+/// explicit `Normal::initial_flow` override. The default
+/// auto-fit path (in [`container_flow`]) NO LONGER applies this
+/// cap; intrinsic content height is honoured up to
+/// [`CONTAINER_MAX_FLOW`], so widgets that expand on demand (color
+/// picker, future tree, …) extend the container to fit their
+/// content rather than getting clipped behind a `ScrollArea`.
+pub const CONTAINER_AUTOFIT_CAP: f32 = 10.0 * crate::style::UNIT;
 /// Hard minimum for *horizontally-stacked* containers (= width
 /// in vertical-strip panes — LM/RM). Their content doesn't drive
 /// width (the pods stack vertically inside, so width is just
-/// "available width"), so we pin a deliberate 12U default and
-/// floor — wide enough for a search field + chrome to read
-/// without cramping. The user CAN'T drag below this.
+/// "available width"), so we pin a deliberate floor — wide enough
+/// for a search field + chrome to read without cramping. The user
+/// CAN'T drag below this.
 pub const CONTAINER_HORIZONTAL_MIN_FLOW: f32 = 12.0 * crate::style::UNIT;
-/// First-frame default for horizontally-stacked containers, same
-/// as the floor — they start "comfortable" and grow on demand.
-pub const CONTAINER_HORIZONTAL_DEFAULT_FLOW: f32 =
-    CONTAINER_HORIZONTAL_MIN_FLOW;
+/// First-frame default for horizontally-stacked containers — sits
+/// 3U above the floor so a fresh container has room for a wider
+/// dropdown / labelled-select before the user has to drag it bigger,
+/// without overshooting the small accents the floor protects.
+pub const CONTAINER_HORIZONTAL_DEFAULT_FLOW: f32 = 15.0 * crate::style::UNIT;
 
 fn container_flow_key(cid: Id) -> Id {
     // Persisted ONLY when `set_container_flow` is called (= the
@@ -65,6 +69,32 @@ fn container_intrinsic_key(cid: Id) -> Id {
     // [`CONTAINER_AUTOFIT_CAP`] so very tall content scrolls
     // rather than ballooning the container.
     cid.with("frost_container_intrinsic")
+}
+
+fn container_initial_flow_key(cid: Id) -> Id {
+    // Per-container override for the autofit cap (vertically-
+    // stacked) or the fixed default (horizontally-stacked). Set
+    // by `Normal::initial_flow` and read by `container_flow`. If
+    // unset, the global `CONTAINER_AUTOFIT_CAP` /
+    // `CONTAINER_HORIZONTAL_DEFAULT_FLOW` apply.
+    cid.with("frost_container_initial_flow")
+}
+
+/// Read the per-container override for the autofit cap / default
+/// flow set by [`crate::container::Normal::initial_flow`]. Returns
+/// `None` when the container has no override (use the global
+/// default in that case).
+pub fn container_initial_flow(ctx: &egui::Context, cid: Id) -> Option<f32> {
+    ctx.data_mut(|d| d.get_persisted::<f32>(container_initial_flow_key(cid)))
+}
+
+/// Write the per-container default-flow override. Called by
+/// [`crate::container::Normal::show`] when the builder set
+/// `initial_flow`. Subsequent calls overwrite — the most recent
+/// value wins.
+pub fn set_container_initial_flow(ctx: &egui::Context, cid: Id, value: f32) {
+    let v = value.clamp(CONTAINER_MIN_FLOW, CONTAINER_MAX_FLOW);
+    ctx.data_mut(|d| d.insert_persisted(container_initial_flow_key(cid), v));
 }
 
 /// Read the flow-axis size the container should render at. The
@@ -100,15 +130,32 @@ pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -
     {
         return user.clamp(min_v, max_v);
     }
+    // Per-container override set via `Normal::initial_flow` —
+    // replaces the static "no measurement yet" default with a
+    // caller-chosen value. Once intrinsic content has been recorded,
+    // the container tracks that directly so widgets that expand on
+    // demand (color picker, future tree, …) extend the container to
+    // fit their content rather than getting clipped behind a
+    // ScrollArea. `MAX_FLOW` is still the upper backstop so a
+    // runaway body doesn't dominate the whole pane.
+    let override_default = container_initial_flow(ctx, cid);
     if is_horizontal_strip {
         if let Some(intrinsic) =
             ctx.data_mut(|d| d.get_persisted::<f32>(container_intrinsic_key(cid)))
         {
-            return intrinsic.min(CONTAINER_AUTOFIT_CAP).clamp(min_v, max_v);
+            return intrinsic.clamp(min_v, max_v);
         }
-        CONTAINER_DEFAULT_FLOW.clamp(min_v, max_v)
+        // No measurement yet → fall back to the override (if any)
+        // or the static `CONTAINER_DEFAULT_FLOW`. This way the
+        // very first frame already shows the caller's chosen size
+        // rather than 200 px of empty space.
+        override_default
+            .unwrap_or(CONTAINER_DEFAULT_FLOW)
+            .clamp(min_v, max_v)
     } else {
-        CONTAINER_HORIZONTAL_DEFAULT_FLOW.clamp(min_v, max_v)
+        override_default
+            .unwrap_or(CONTAINER_HORIZONTAL_DEFAULT_FLOW)
+            .clamp(min_v, max_v)
     }
 }
 

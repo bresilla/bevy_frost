@@ -95,10 +95,28 @@ impl Body {
                         ui.set_max_width(m);
                     }
                 }
+                // `ScrollBarVisibility::AlwaysHidden` — the
+                // container's auto-fit path now grows to the body's
+                // intrinsic content height (no `CONTAINER_AUTOFIT_CAP`
+                // applied), so content always fits and a visible
+                // scrollbar would be redundant. Worse, allowing the
+                // bar to auto-toggle creates a 1-frame oscillation
+                // when widgets expand on demand (color picker,
+                // dropdown popup, …): bar appears → reserves width →
+                // content reflows → measured intrinsic changes →
+                // container grows → bar disappears → repeat. Hiding
+                // the bar breaks the loop. Past `CONTAINER_MAX_FLOW`
+                // (= 1200 px) content gets clipped instead of
+                // scrolled — that's the intended escape hatch (the
+                // user can drag the container's resize handle for
+                // more space, or the caller can split the section).
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("frost_body_scroll_v")
                     .auto_shrink([false, false])
                     .min_scrolled_height(0.0)
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                    )
                     .show(ui, body);
                 // ScrollArea reports its inner content's natural
                 // size. The caller persists this so the container
