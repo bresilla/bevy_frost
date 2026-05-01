@@ -1258,7 +1258,6 @@ fn paint_corner_ticks(
     // value left them visibly floating outside the container).
     const START_OFFSET: f32 = 7.0;
     const SNAP_RATIO: f32 = 1.2;
-    const GAP_THRESHOLD: f64 = 0.2;
     // Gate at `1.0 - ε` (not `0.95`) so the snap starts only AFTER
     // this container's stagger fade has fully completed, not 5 %
     // before the end. `stagger_opacity` reaches exactly `1.0` at
@@ -1274,22 +1273,43 @@ fn paint_corner_ticks(
     /// "container has arrived" before the next motion starts.
     const DELAY_AFTER_FADE: f64 = 0.25;
     let snap_id = container_id.with("frost_corner_snap");
-    let last_paint_id = snap_id.with("last_paint");
+    let prev_active_id = snap_id.with("prev_active");
+    let prev_body_open_id = snap_id.with("prev_body_open");
     let first_seen_id = snap_id.with("first_seen");
     let now = ui.ctx().input(|i| i.time);
     let opacity_active = ui.opacity() >= OPACITY_GATE;
-    // `first_seen` semantics: `Some(t)` once opacity has been seen
-    // ≥ `OPACITY_GATE` at least once since the last reappearance.
-    // `None` while we're still mid-fade.
+    let body_open_now: bool = ui.ctx().data_mut(|d| {
+        d.get_persisted::<bool>(container_id.with("body_open"))
+            .unwrap_or(true)
+    });
+    // `first_seen` is the start-of-snap timestamp. It's set on
+    // either of two events and otherwise left alone, so idle paints
+    // never replay the animation:
+    //   1. Opacity transitions INACTIVE → ACTIVE — i.e. the per-
+    //      section staggered fade-in finishes after a real
+    //      reappearance (pane just opened or toggled). Fires for
+    //      ALL containers in the pane.
+    //   2. THIS container's `body_open` flips false → true — the
+    //      user unfolded the section. Fires for the single
+    //      affected container only; folding (true → false) doesn't
+    //      re-fire (the container is going away, the brackets just
+    //      track its shrinking edge).
     let first_seen: Option<f64> = ui.ctx().data_mut(|d| {
-        let just_reappeared = match d.get_temp::<f64>(last_paint_id) {
-            Some(t) => (now - t) > GAP_THRESHOLD,
-            None => true,
-        };
-        d.insert_temp(last_paint_id, now);
-        if just_reappeared {
-            // Pane reopened — clear the recorded first_seen so the
-            // snap re-fires when the fade-in completes again.
+        let prev_active = d.get_temp::<bool>(prev_active_id).unwrap_or(false);
+        d.insert_temp(prev_active_id, opacity_active);
+        let became_inactive = prev_active && !opacity_active;
+
+        let prev_body_open = d
+            .get_temp::<bool>(prev_body_open_id)
+            .unwrap_or(body_open_now);
+        d.insert_temp(prev_body_open_id, body_open_now);
+        let just_unfolded = !prev_body_open && body_open_now;
+
+        if became_inactive || just_unfolded {
+            // Either the whole pane started fading out (will fade
+            // back in shortly), or the user just unfolded this
+            // section. Drop the recorded `first_seen` so the next
+            // active frame re-arms the snap.
             d.remove::<f64>(first_seen_id);
         }
         let existing = d.get_temp::<f64>(first_seen_id);
@@ -1346,31 +1366,25 @@ fn paint_corner_ticks(
     // variant. The user picks an accent and expects to see THAT
     // colour; the brightness lift was producing a tick that read
     // off-hue from every other accent surface.
+    //
+    // Brackets sit at full opacity at rest. There's no breathing
+    // pulse — a slow alpha sine on the body-side accent reads as
+    // unwanted motion in the user's peripheral vision and forces a
+    // 30-fps repaint loop just to drive the fade. Snap-in still
+    // animates on first appearance / fold-unfold; once that
+    // settles, the brackets are static.
     let bracket_accent = accent;
-    let time = ui.ctx().input(|i| i.time) as f32;
-    let breath = {
-        const PERIOD: f32 = 3.4;
-        let phase = (time * std::f32::consts::TAU / PERIOD).cos();
-        0.78 + 0.11 * (1.0 - phase)
-    };
-    // Body-side accent pulses with breath; title-side contrast stays
-    // solid. No fade — brackets are visible at all positions in the
-    // snap so the fly-in reads clearly.
-    let accent_alpha = (255.0 * breath).round() as u8;
-    let contrast_alpha = 255_u8;
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(33));
     let accent_col = Color32::from_rgba_unmultiplied(
         bracket_accent.r(),
         bracket_accent.g(),
         bracket_accent.b(),
-        accent_alpha,
+        255,
     );
     let contrast_col = Color32::from_rgba_unmultiplied(
         contrast_col.r(),
         contrast_col.g(),
         contrast_col.b(),
-        contrast_alpha,
+        255,
     );
     // Body-side bracket colour LERPS from contrast (folded) to
     // accent (unfolded). Folded → all four corners paint in the
