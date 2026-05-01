@@ -20,6 +20,13 @@ use bevy_glacial::prelude::*;
 // PRO/GAME swap.
 use corekit::container::Normal;
 use corekit::pane::{PaneAnchor, Pane2, RailZone};
+// Re-exports from `frostcore` (via `bevy_frost::*`) — used for the
+// "scalable pod" demo slots (mix == 16 / 17) that show off a code
+// editor and node-graph canvas inside a `Pod::fill()` slot.
+use bevy_frost::code::{frost_code_editor, Syntax};
+use bevy_frost::snarl::{
+    frost_snarl, InPin, InPinId, OutPin, OutPinId, PinInfo, Snarl, SnarlPin, SnarlViewer,
+};
 use corekit::ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge,
     RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,
@@ -484,6 +491,28 @@ fn ui_system(
     corekit::style::set_theme(active_theme);
     corekit::style::apply_theme(ctx, *accent, *glass);
 
+    // Mirror the same Theme/Mode on `frostcore::style` — the
+    // wrapper widgets we still pull from frostcore (`frost_snarl`,
+    // `frost_code_editor`) read frostcore's parallel theme global
+    // for their fills, borders, and font sizes. Without this, the
+    // graph and code editor would always render with the default
+    // PRO Dark style regardless of the live theme cycle the rest
+    // of the UI follows. AccentColor / GlassOpacity are simple
+    // newtypes on each side, so the values transfer 1:1.
+    let frostcore_theme = match (family.0, mode.0) {
+        (0, 0) => frostcore::style::theme_pro(frostcore::style::Mode::Dark),
+        (0, 1) => frostcore::style::theme_pro(frostcore::style::Mode::Light),
+        (1, 0) => frostcore::style::theme_game(frostcore::style::Mode::Dark),
+        (1, 1) => frostcore::style::theme_game(frostcore::style::Mode::Light),
+        _      => frostcore::style::theme_pro(frostcore::style::Mode::Dark),
+    };
+    frostcore::style::set_theme(frostcore_theme);
+    frostcore::style::apply_theme(
+        ctx,
+        frostcore::style::AccentColor(accent.0),
+        frostcore::style::GlassOpacity(glass.0),
+    );
+
     // Surface egui's request_discard reasons + multipass-in-row
     // count to the terminal. egui only paints these as a red
     // PERF-WARNING overlay (see `Context::end_pass`), it doesn't
@@ -662,7 +691,10 @@ fn ui_system(
                                 let pod_seed = seed
                                     .wrapping_mul(0x9E37_79B9_7F4A_7C15)
                                     ^ (p as u64).wrapping_mul(0xD737_3348_5DDB_E5C5);
-                                let mix = (pod_seed >> 4) & 0b1111;
+                                // 5-bit mix (32 values) — adds slots 16
+                                // (code editor) and 17 (node graph)
+                                // beyond the original 16 widget kinds.
+                                let mix = (pod_seed >> 4) & 0b11111;
                                 // Only widgets that benefit from a
                                 // hide/reveal viewport (tree, select
                                 // lists) get the LineDots resizable
@@ -670,18 +702,18 @@ fn ui_system(
                                 // plain Line — the rule is "if there
                                 // is a dotted handle, dragging it
                                 // actually does something visible".
-                                let is_resizable =
-                                    matches!(mix, 9 | 10 | 14);
+                                // - Resizable: user-draggable handle
+                                //   reveals/hides rows. Visible dotted
+                                //   separator (LineDots).
+                                // - Fill: auto-expands to consume
+                                //   leftover container space; user
+                                //   can't drag. Plain Line separator
+                                //   (no drag handle, but still a
+                                //   visible divider so neighbour pods
+                                //   read distinct).
+                                let is_resizable = matches!(mix, 9 | 10);
+                                let is_fill = matches!(mix, 14 | 16 | 17);
                                 let is_last = p + 1 == pod_count;
-                                // Resizable pods always paint their
-                                // dotted handle below — including the
-                                // last pod in the container, so the
-                                // user can still drag the bottom
-                                // edge to shrink/grow it. Plain
-                                // (non-resizable) last pods
-                                // suppress the separator since
-                                // there's nothing below to divide
-                                // them from.
                                 let separator_style = if is_resizable {
                                     corekit::container::SeparatorStyle::LineDots
                                 } else if is_last {
@@ -693,6 +725,9 @@ fn ui_system(
                                     .with_separator(separator_style);
                                 if is_resizable {
                                     pod = pod.resizable();
+                                }
+                                if is_fill {
+                                    pod = pod.fill();
                                 }
                                 {
                                     // Single-widget per pod — keep
@@ -956,6 +991,72 @@ fn ui_system(
                                                 % LABELS.len();
                                             pod.with_readout(LABELS[pick], VALUES[pick])
                                         }
+                                        16 => {
+                                            // Code editor in a fill
+                                            // pod — buffer state
+                                            // persists in egui ctx
+                                            // data per pod_seed.
+                                            let code_id = egui::Id::new((
+                                                "frost_demo_code", pod_seed,
+                                            ));
+                                            pod.with_custom_units(10, move |ui| {
+                                                let mut text: String = ui
+                                                    .ctx()
+                                                    .data(|d| {
+                                                        d.get_temp::<String>(code_id)
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        DEFAULT_CODE.to_string()
+                                                    });
+                                                let avail =
+                                                    ui.available_size_before_wrap();
+                                                frost_code_editor(
+                                                    ui,
+                                                    code_id,
+                                                    &mut text,
+                                                    Syntax::rust(),
+                                                    accent_col,
+                                                    avail,
+                                                );
+                                                ui.ctx().data_mut(|d| {
+                                                    d.insert_temp(code_id, text)
+                                                });
+                                            })
+                                        }
+                                        17 => {
+                                            // Node graph in a fill
+                                            // pod — Snarl<GraphNode>
+                                            // round-trips through ctx
+                                            // data per pod_seed each
+                                            // frame.
+                                            let graph_id = egui::Id::new((
+                                                "frost_demo_graph", pod_seed,
+                                            ));
+                                            pod.with_custom_units(10, move |ui| {
+                                                let mut graph: Snarl<GraphNode> = ui
+                                                    .ctx()
+                                                    .data(|d| {
+                                                        d.get_temp::<
+                                                            Snarl<GraphNode>,
+                                                        >(graph_id)
+                                                    })
+                                                    .unwrap_or_else(default_graph);
+                                                let mut viewer = GraphViewer;
+                                                let avail =
+                                                    ui.available_size_before_wrap();
+                                                frost_snarl(
+                                                    ui,
+                                                    graph_id,
+                                                    &mut graph,
+                                                    &mut viewer,
+                                                    accent_col,
+                                                    avail,
+                                                );
+                                                ui.ctx().data_mut(|d| {
+                                                    d.insert_temp(graph_id, graph)
+                                                });
+                                            })
+                                        }
                                         _ => pod.with_button(
                                             format!("btn {}", s + 1),
                                             accent_col,
@@ -1057,18 +1158,58 @@ fn ui_system(
 // each node's path, so the tree survives reorders and theme switches
 // without the example having to thread its own `App`-level resource.
 
-const DEMO_TREE: &[(&str, &str, &str, &[&str])] = &[
-    ("/World",                "World",     "folder",    &["/World/Robot", "/World/Lights"]),
-    ("/World/Robot",          "Robot",     "person",    &["/World/Robot/base", "/World/Robot/arm"]),
-    ("/World/Robot/base",     "base",      "code",      &[]),
-    ("/World/Robot/arm",      "arm",       "code",      &["/World/Robot/arm/grip"]),
-    ("/World/Robot/arm/grip", "grip",      "code",      &[]),
-    ("/World/Lights",         "Lights",    "image",     &["/World/Lights/sun"]),
-    ("/World/Lights/sun",     "sun",       "image",     &[]),
+// Each row: `(path, name, icon, children, material_color)`.
+// `material_color` is painted as a `TreeIconKind::Color` swatch in
+// the row's right-gutter — matches the legacy demo's "where is the
+// red thing" affordance.
+type DemoTreeRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    egui::Color32,
+);
+
+const DEMO_TREE: &[DemoTreeRow] = &[
+    (
+        "/World", "World", "folder",
+        &["/World/Robot", "/World/Lights"],
+        egui::Color32::from_rgb(0x55, 0x6E, 0x9C),
+    ),
+    (
+        "/World/Robot", "Robot", "person",
+        &["/World/Robot/base", "/World/Robot/arm"],
+        egui::Color32::from_rgb(0xE0, 0x6C, 0x4F),
+    ),
+    (
+        "/World/Robot/base", "base", "code",
+        &[],
+        egui::Color32::from_rgb(0x4D, 0xA8, 0xDA),
+    ),
+    (
+        "/World/Robot/arm", "arm", "code",
+        &["/World/Robot/arm/grip"],
+        egui::Color32::from_rgb(0xE6, 0xB7, 0x3D),
+    ),
+    (
+        "/World/Robot/arm/grip", "grip", "code",
+        &[],
+        egui::Color32::from_rgb(0x9C, 0x55, 0xC0),
+    ),
+    (
+        "/World/Lights", "Lights", "image",
+        &["/World/Lights/sun"],
+        egui::Color32::from_rgb(0xF5, 0xC2, 0x42),
+    ),
+    (
+        "/World/Lights/sun", "sun", "image",
+        &[],
+        egui::Color32::from_rgb(0xFF, 0xE5, 0x6B),
+    ),
 ];
 
-fn demo_tree_node(path: &str) -> Option<&'static (&'static str, &'static str, &'static str, &'static [&'static str])> {
-    DEMO_TREE.iter().find(|(p, _, _, _)| *p == path)
+fn demo_tree_node(path: &str) -> Option<&'static DemoTreeRow> {
+    DEMO_TREE.iter().find(|(p, _, _, _, _)| *p == path)
 }
 
 fn demo_tree(ui: &mut egui::Ui, root_id: egui::Id, accent: egui::Color32) {
@@ -1099,7 +1240,9 @@ fn walk_demo_tree(
     accent: egui::Color32,
     clicked: &mut Option<String>,
 ) {
-    let Some((p, name, icon, children)) = demo_tree_node(path) else { return };
+    let Some((p, name, icon, children, material)) = demo_tree_node(path) else {
+        return;
+    };
     let is_branch = !children.is_empty();
     // Per-node persisted state.
     let exp_key = root_id.with(("frost_demo_tree_expanded", *p));
@@ -1117,12 +1260,22 @@ fn walk_demo_tree(
         .ctx()
         .data_mut(|d| d.get_persisted::<bool>(lock_key))
         .unwrap_or(false);
+    // `Color` slots are read-only — the slot still requires a `&mut
+    // bool` so the slice shape stays uniform across all rows; the
+    // boolean is never read or flipped, so a throwaway local
+    // suffices.
+    let mut swatch_dummy = false;
 
     let mut slots = [
         corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Eye, &mut eye_on)
             .with_tooltip("Toggle visibility"),
         corekit::widget::TreeIconSlot::new(corekit::widget::TreeIconKind::Lock, &mut lock_on)
             .with_tooltip("Toggle lock"),
+        corekit::widget::TreeIconSlot::new(
+            corekit::widget::TreeIconKind::Color(*material),
+            &mut swatch_dummy,
+        )
+        .with_tooltip("Material colour"),
     ];
     let resp = corekit::widget::tree_row(
         ui,
@@ -1151,3 +1304,178 @@ fn walk_demo_tree(
         }
     }
 }
+
+// ─── Demo node-graph (Snarl) ───────────────────────────────────────
+//
+// Tiny add-numbers graph reused from the legacy `demo.rs`. Purpose
+// here is to prove `Pod::fill()` hosts heavy embedded canvases (node
+// graph, code editor) without fighting the container's auto-fit.
+//
+// One `Snarl<GraphNode>` lives in egui ctx data per `pod_seed`, so
+// each pane's graph keeps its own state across frames; clones are
+// cheap (a few nodes + connections) so `get_temp` → render → write
+// back round-tripping is fine.
+
+#[derive(Clone)]
+enum GraphNode {
+    Number(f64),
+    Add,
+    Output,
+}
+
+impl GraphNode {
+    fn title(&self) -> &'static str {
+        match self {
+            GraphNode::Number(_) => "Number",
+            GraphNode::Add => "Add",
+            GraphNode::Output => "Output",
+        }
+    }
+    fn inputs(&self) -> usize {
+        match self {
+            GraphNode::Number(_) => 0,
+            GraphNode::Add => 2,
+            GraphNode::Output => 1,
+        }
+    }
+    fn outputs(&self) -> usize {
+        match self {
+            GraphNode::Number(_) => 1,
+            GraphNode::Add => 1,
+            GraphNode::Output => 0,
+        }
+    }
+}
+
+fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
+    match snarl.get_node(pin.id.node) {
+        Some(GraphNode::Number(v)) => *v,
+        Some(GraphNode::Add) => {
+            let mut sum = 0.0;
+            for i in 0..2 {
+                let in_pin = snarl.in_pin(InPinId { node: pin.id.node, input: i });
+                for remote in &in_pin.remotes {
+                    let out_pin = snarl.out_pin(*remote);
+                    sum += eval_output(snarl, &out_pin);
+                }
+            }
+            sum
+        }
+        _ => 0.0,
+    }
+}
+
+fn eval_input(snarl: &Snarl<GraphNode>, pin: &InPin) -> f64 {
+    pin.remotes
+        .iter()
+        .map(|remote| eval_output(snarl, &snarl.out_pin(*remote)))
+        .sum()
+}
+
+#[derive(Default)]
+struct GraphViewer;
+
+impl SnarlViewer<GraphNode> for GraphViewer {
+    fn title(&mut self, node: &GraphNode) -> String {
+        node.title().into()
+    }
+    fn inputs(&mut self, node: &GraphNode) -> usize {
+        node.inputs()
+    }
+    fn outputs(&mut self, node: &GraphNode) -> usize {
+        node.outputs()
+    }
+    fn show_input(
+        &mut self,
+        pin: &InPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        match snarl.get_node(pin.id.node) {
+            Some(GraphNode::Add) => {
+                let name = if pin.id.input == 0 { "a" } else { "b" };
+                if pin.remotes.is_empty() {
+                    ui.label(format!("{name} = 0"));
+                } else {
+                    ui.label(format!("{name} = {:.2}", eval_input(snarl, pin)));
+                }
+            }
+            Some(GraphNode::Output) => {
+                let v = eval_input(snarl, pin);
+                ui.label(format!("= {v:.3}"));
+            }
+            _ => {}
+        }
+        PinInfo::circle()
+    }
+    fn show_output(
+        &mut self,
+        pin: &OutPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        if let Some(GraphNode::Number(v)) = snarl.get_node_mut(pin.id.node) {
+            ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
+        } else if let Some(GraphNode::Add) = snarl.get_node(pin.id.node) {
+            let v = eval_output(snarl, pin);
+            ui.label(format!("= {v:.3}"));
+        }
+        PinInfo::circle()
+    }
+    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<GraphNode>) -> bool {
+        true
+    }
+    fn show_graph_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
+        ui.label("Add node");
+        if ui.button("Number").clicked() {
+            snarl.insert_node(pos, GraphNode::Number(0.0));
+            ui.close();
+        }
+        if ui.button("Add").clicked() {
+            snarl.insert_node(pos, GraphNode::Add);
+            ui.close();
+        }
+        if ui.button("Output").clicked() {
+            snarl.insert_node(pos, GraphNode::Output);
+            ui.close();
+        }
+    }
+}
+
+fn default_graph() -> Snarl<GraphNode> {
+    let mut g = Snarl::new();
+    let a = g.insert_node(egui::pos2(30.0, 40.0), GraphNode::Number(2.0));
+    let b = g.insert_node(egui::pos2(30.0, 130.0), GraphNode::Number(3.0));
+    let add = g.insert_node(egui::pos2(220.0, 80.0), GraphNode::Add);
+    let out = g.insert_node(egui::pos2(420.0, 80.0), GraphNode::Output);
+    g.connect(OutPinId { node: a, output: 0 }, InPinId { node: add, input: 0 });
+    g.connect(OutPinId { node: b, output: 0 }, InPinId { node: add, input: 1 });
+    g.connect(OutPinId { node: add, output: 0 }, InPinId { node: out, input: 0 });
+    g
+}
+
+const DEFAULT_CODE: &str = "// Frost code editor demo — Rust syntax highlighting.
+fn fibonacci(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut a: u64 = 0;
+    let mut b: u64 = 1;
+    for _ in 2..=n {
+        let next = a + b;
+        a = b;
+        b = next;
+    }
+    b
+}
+
+fn main() {
+    let label = \"fib(20)\";
+    println!(\"{label} = {}\", fibonacci(20));
+}
+";

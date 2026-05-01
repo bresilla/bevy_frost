@@ -335,6 +335,43 @@ impl WidgetSpec {
             WidgetSpec::Custom { units, .. } => *units,
         }
     }
+
+    /// Exact pixel height the widget will paint at when rendered by
+    /// [`Pod::show`]'s arms. Used by [`Pod::natural_h`] for the
+    /// fill-pod allocation math — must match what each arm in
+    /// [`paint_widgets`] actually produces, otherwise the fill
+    /// height drifts off by the rounding error per widget and the
+    /// bottom pod gets pushed past the body's clip.
+    fn natural_height_px(&self) -> f32 {
+        match self {
+            WidgetSpec::Search(_) => UNIT,
+            WidgetSpec::Button(cfg) => {
+                if cfg.subtitle.is_some() {
+                    crate::widget::button::BUTTON_ROW_H_SUBTITLE
+                } else {
+                    crate::widget::button::BUTTON_ROW_H
+                }
+            }
+            WidgetSpec::Toggle(_) => crate::widget::toggle::TOGGLE_ROW_H,
+            WidgetSpec::Progress(_) => {
+                2.0 * crate::widget::progressbar::PROGRESSBAR_ROW_H
+            }
+            WidgetSpec::Slider(_) => 2.0 * crate::widget::slider::SLIDER_ROW_H,
+            WidgetSpec::DragValue(_) => crate::widget::drag_value::DRAG_VALUE_ROW_H,
+            WidgetSpec::Dropdown(_) => crate::widget::dropdown::DROPDOWN_ROW_H,
+            WidgetSpec::Select(_) => crate::widget::select::SELECT_ROW_H,
+            WidgetSpec::HybridSelect(_) => crate::widget::select::SELECT_ROW_H,
+            WidgetSpec::Color(_) => crate::widget::color::COLOR_SWATCH_H,
+            WidgetSpec::Readout(_) => crate::widget::readout::READOUT_ROW_H,
+            WidgetSpec::SelectList(cfg) => {
+                cfg.items.len().max(1) as f32 * crate::widget::select::SELECT_ROW_H
+            }
+            WidgetSpec::HybridSelectList(cfg) => {
+                cfg.items.len().max(1) as f32 * crate::widget::select::SELECT_ROW_H
+            }
+            WidgetSpec::Custom { units, .. } => (*units as f32) * UNIT,
+        }
+    }
 }
 
 // ─── Pod ──────────────────────────────────────────────────────────
@@ -348,6 +385,13 @@ pub struct Pod {
     widgets: Vec<WidgetSpec>,
     separator: SeparatorStyle,
     resizable: bool,
+    /// `true` for pods that should auto-fill remaining vertical space
+    /// in their container. Caller marks at most one pod per container
+    /// with [`Pod::fill`]; the container computes its height as
+    /// `body_avail - sum(other_pods_natural)` and stashes it in ctx
+    /// data, so the fill pod ends up at exactly the right size to
+    /// soak up the leftover slack.
+    fill: bool,
 }
 
 /// Lower bound on the per-widget height of a [`Pod::resizable`]
@@ -369,6 +413,7 @@ impl Pod {
             widgets: Vec::new(),
             separator: SeparatorStyle::Line,
             resizable: false,
+            fill: false,
         }
     }
 
@@ -384,9 +429,62 @@ impl Pod {
         self.resizable
     }
 
-    /// Persistence key for the resizable per-widget height.
+    /// Mark this pod as the container's "fill" pod — it auto-expands
+    /// to occupy `container body height − sum(other pods' natural
+    /// heights)`. The user can't drag it; sizing is purely a function
+    /// of container size. Use for the pod that holds the variable-
+    /// content widget (tree, code editor, log tail) when other pods
+    /// in the container are fixed-size headers / footers.
+    ///
+    /// ONE pod per container should be `fill`; if multiple are marked,
+    /// only the first one in the pod list takes effect (others
+    /// behave as plain pods). Combined with `resizable()`, `fill`
+    /// wins (the user can't drag a fill pod).
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
+    }
+
+    pub fn is_fill(&self) -> bool {
+        self.fill
+    }
+
+    /// Pod's natural total pixel height — sum of every widget's
+    /// EXACT painted row height plus inter-widget spacing. Used by
+    /// the container's fill-height math; must equal what
+    /// [`paint_widgets`] actually produces so the fill pod's slot
+    /// fits the remaining space without pixel drift.
+    ///
+    /// Rounding to `unit_count * UNIT` (the cheaper coarse formula)
+    /// undercounts widgets like Button (24 vs 19.5), Select (20 vs
+    /// 19.5) and overcounts Toggle / Slider / Progress (18 vs 19.5).
+    /// The errors compound across the non-fill pods above the fill
+    /// pod and push the bottom pod past the body's clip — so we
+    /// need exact pixels here.
+    pub fn natural_h(&self) -> f32 {
+        let widget_h: f32 =
+            self.widgets.iter().map(|w| w.natural_height_px()).sum();
+        let spacing = if self.widgets.len() > 1 {
+            (self.widgets.len() - 1) as f32 * POD_WIDGET_SPACING
+        } else {
+            0.0
+        };
+        widget_h + spacing
+    }
+
+    /// Persistence key for the resizable per-widget height. Also
+    /// reused for the `fill` pod's externally-supplied viewport (set
+    /// by the container as `forced_height_key`); fill and resizable
+    /// share the same render path, just differ in where the height
+    /// comes from.
     pub fn widget_height_key(id: Id) -> Id {
         id.with("frost_pod_widget_height")
+    }
+
+    /// Ctx-data key the container writes the fill pod's computed
+    /// height under. Pod::show reads this when `self.fill` is set.
+    pub fn forced_height_key(id: Id) -> Id {
+        id.with("frost_pod_forced_height")
     }
 
     /// Number of widgets the pod will paint.
@@ -820,25 +918,37 @@ impl Pod {
     pub fn show(self, ui: &mut Ui) -> PodResponse {
         let pod_id = self.id;
         let mut response = PodResponse::default();
-        if self.resizable {
-            // Compute the pod's natural total height — sum of widget
-            // unit_count × UNIT + inter-widget spacing — and resolve
-            // the viewport from the persisted handle (default =
-            // natural sum so a fresh pod shows everything; drag
-            // clamps to [POD_MIN, POD_MAX]).
-            let natural_units: usize =
-                self.widgets.iter().map(|w| w.unit_count()).sum();
-            let spacing_total = if self.widgets.len() > 1 {
-                (self.widgets.len() - 1) as f32 * POD_WIDGET_SPACING
-            } else {
-                0.0
-            };
-            let natural_h = (natural_units as f32) * UNIT + spacing_total;
-            let viewport_h = ui
-                .ctx()
-                .data_mut(|d| d.get_persisted::<f32>(Self::widget_height_key(pod_id)))
-                .unwrap_or(natural_h)
-                .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H);
+        // Two paths share the same ScrollArea-clipped viewport
+        // implementation: `fill` (height supplied by the container)
+        // and `resizable` (height from the persisted user-drag handle).
+        // `fill` takes precedence when both flags are set so the
+        // container's calculation always wins over the drag handle.
+        let viewport_h: Option<f32> = if self.fill {
+            // Container writes the computed remaining-space height
+            // here BEFORE iterating the pods (see
+            // `Normal::show`'s pre-pass over the pod list). If
+            // missing — e.g. caller marked a pod `fill` but the
+            // container didn't pre-compute — fall back to natural
+            // so the pod still renders.
+            let key = Self::forced_height_key(pod_id);
+            Some(
+                ui.ctx()
+                    .data(|d| d.get_temp::<f32>(key))
+                    .unwrap_or_else(|| self.natural_h())
+                    .max(POD_MIN_WIDGET_H),
+            )
+        } else if self.resizable {
+            let natural_h = self.natural_h();
+            Some(
+                ui.ctx()
+                    .data_mut(|d| d.get_persisted::<f32>(Self::widget_height_key(pod_id)))
+                    .unwrap_or(natural_h)
+                    .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H),
+            )
+        } else {
+            None
+        };
+        if let Some(viewport_h) = viewport_h {
             let avail_w = ui.available_width().max(1.0);
             let (slot_rect, _) = ui.allocate_exact_size(
                 egui::vec2(avail_w, viewport_h),
@@ -854,24 +964,36 @@ impl Pod {
             // its own clip. Hierarchy stays intact:
             //   widget rect ⊆ pod slot ⊆ container body ⊆ pane.
             child.shrink_clip_rect(slot_rect);
-            // Wrap the iteration in a vertical `ScrollArea` so when
-            // content exceeds the viewport, the user can SCROLL
-            // through the hidden rows — pods become first-class
-            // nested scrollable areas. `auto_shrink([false, false])`
-            // keeps the area filling the slot regardless of content
-            // size; `min_scrolled_height(0.0)` disables egui's
-            // default 64px floor that otherwise inflates inner_size
-            // for short pods. Bar visibility is `VisibleWhenNeeded`
-            // (the default) so the bar appears only when content
-            // overflows.
             let widgets = self.widgets;
-            egui::ScrollArea::vertical()
-                .id_salt(pod_id.with("frost_pod_scroll"))
-                .auto_shrink([false, false])
-                .min_scrolled_height(0.0)
-                .show(&mut child, |inner| {
-                    paint_widgets(widgets, inner, &mut response, pod_id);
-                });
+            if self.resizable && !self.fill {
+                // Resizable pods get a vertical `ScrollArea` so when
+                // content exceeds the user-dragged viewport, the bar
+                // appears and rows scroll. `auto_shrink([false,
+                // false])` keeps the area filling the slot;
+                // `min_scrolled_height(0.0)` disables egui's default
+                // 64-px floor.
+                egui::ScrollArea::vertical()
+                    .id_salt(pod_id.with("frost_pod_scroll"))
+                    .auto_shrink([false, false])
+                    .min_scrolled_height(0.0)
+                    .show(&mut child, |inner| {
+                        paint_widgets(widgets, inner, &mut response, pod_id);
+                    });
+            } else {
+                // Fill pods skip the ScrollArea — the slot is already
+                // exactly the size the container computed, and
+                // embedded scrollable widgets (node graph, code
+                // editor) own their internal pan/zoom. Nesting a
+                // ScrollArea here makes those widgets fight the bar:
+                // their reported size oscillates as the bar appears /
+                // disappears, triggering their own re-layout (e.g.
+                // snarl's `initial placing` request_discard spam),
+                // which causes the pod to re-measure → loop. Plain
+                // `paint_widgets` inside the clipped `child` is
+                // exactly what fill pods want: hard clip, no
+                // outer-scroll feedback.
+                paint_widgets(widgets, &mut child, &mut response, pod_id);
+            }
         } else {
             paint_widgets(self.widgets, ui, &mut response, pod_id);
         }

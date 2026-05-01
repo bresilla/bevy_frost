@@ -215,7 +215,96 @@ impl Normal {
         let pods_total = pods.len();
         let pods_accent = self.accent;
         let mut out: Vec<crate::pod::PodResponse> = Vec::with_capacity(pods_total);
+        // ── Fill-pod pre-pass ──
+        //
+        // Snapshot the FIRST pod marked `fill()` (if any) — its
+        // height is computed once we know the container body's
+        // available_height, and stashed in ctx data BEFORE the pod
+        // iteration so `Pod::show` can read it. Per-pod chrome
+        // (Frame inner_margin = POD_PAD_Y on each side) plus
+        // separator strip thickness is included in the "other pods"
+        // budget so the fill pod's slot really is the leftover.
+        let fill_pod_idx = pods.iter().position(|p| p.is_fill());
+        // Per-pod chrome (top + bottom Frame inner_margin) on each pod.
+        let pod_chrome_each = (POD_PAD_Y as f32) * 2.0;
+        let separator_total_h = if pods_total > 1 {
+            (pods_total - 1) as f32
+                * crate::container::separator::SEPARATOR_STRIP_H
+        } else {
+            0.0
+        };
+        // Sum of every pod's natural height + per-pod chrome — this
+        // is the container's NATURAL body height, used to override
+        // the dynamic content measurement when a fill pod is present
+        // (otherwise the fill pod's stretched height feeds back into
+        // the auto-fit and the container grows monotonically).
+        let pods_natural_total_h: f32 = pods
+            .iter()
+            .map(|p| p.natural_h() + pod_chrome_each)
+            .sum::<f32>()
+            + separator_total_h;
+        let fill_pod_id_and_others_h: Option<(egui::Id, f32)> = fill_pod_idx
+            .map(|fi| {
+                let mut others_h = 0.0_f32;
+                for (i, p) in pods.iter().enumerate() {
+                    if i == fi {
+                        continue;
+                    }
+                    others_h += p.natural_h() + pod_chrome_each;
+                }
+                others_h += separator_total_h;
+                (pods[fi].id(), others_h)
+            });
+        // When a fill pod is present, stash the natural total for
+        // `record_container_intrinsic` to pick up — it'll record THAT
+        // instead of the dynamically measured content_h, breaking the
+        // grow-loop. Container's pane id == its CID (passed to
+        // `Normal::new` and threaded through here as `pane_id`).
+        let intrinsic_override_key = self.pane_id
+            .with("frost_container_intrinsic_natural_override");
+        if fill_pod_idx.is_some() {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp::<f32>(intrinsic_override_key, pods_natural_total_h);
+            });
+        } else {
+            ui.ctx()
+                .data_mut(|d| d.remove::<f32>(intrinsic_override_key));
+        }
         self.show_with_body(ui, |body_ui| {
+            // Compute the fill pod's height NOW that we're inside
+            // the container body and know its available_height.
+            // Stash it in ctx data so `Pod::show` picks it up when
+            // the fill pod's iteration arrives.
+            //
+            // The math:
+            //   body_avail = container_flow - body_top_pad  (top_pad
+            //     is consumed via `add_space` BEFORE body_cfg.paint
+            //     allocates its slot, so it's already excluded).
+            //   total budget = Σ (pod_natural + pod_chrome) + Σ separators
+            //
+            // `others_h` = sum of non-fill pod naturals + their chromes
+            //   + ALL separators. The fill pod's OWN Frame chrome
+            //   (`pod_chrome_each` = `POD_PAD_Y * 2`) is NOT included
+            //   — it wraps the fill pod's slot from outside. Subtract
+            //   it explicitly here so the slot we allocate for the
+            //   fill pod fits *inside* its chrome with the rest of
+            //   the body fitting around it.
+            //
+            // Subtracting `top_pad` here would be a double subtraction
+            // (it's already gone from body_avail) — that was the
+            // earlier off-by-12 bug that pushed the bottom pod past
+            // the body and clipped it.
+            if let Some((fill_id, others_h)) = fill_pod_id_and_others_h {
+                let body_avail = body_ui.available_height();
+                let fill_h = (body_avail - others_h - pod_chrome_each)
+                    .max(crate::pod::POD_MIN_WIDGET_H);
+                body_ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        crate::pod::Pod::forced_height_key(fill_id),
+                        fill_h,
+                    );
+                });
+            }
             for (i, pod) in pods.into_iter().enumerate() {
                 // Capture metadata BEFORE the pod is consumed by `show`.
                 let pod_id = pod.id();
@@ -733,18 +822,33 @@ impl Normal {
                 let (_, content_h) = body_cfg.paint(&mut child, body);
                 // Record the body's intrinsic content height so
                 // next frame's `container_flow` auto-fit path can
-                // size the container to its actual content. The
-                // intrinsic is bounded only by `CONTAINER_MAX_FLOW`
-                // (= 1200 px) so widgets that expand on demand
-                // (color picker, …) can grow the container instead
-                // of being clipped behind the body's ScrollArea.
-                // Add back the `body_top_pad` we consumed above so
-                // the measurement reflects the FULL body slot the
-                // container needs, not just the post-pad part.
+                // size the container. Two cases:
+                //
+                // * Fill pod present → `intrinsic_override_key` was
+                //   stashed earlier with the natural sum of all pods
+                //   + chrome + separators. Use THAT instead of the
+                //   measured `content_h` — otherwise the fill pod's
+                //   stretched height feeds back into the intrinsic
+                //   and the container grows monotonically each frame.
+                // * No fill pod → `content_h` IS the natural sum
+                //   (each pod allocates its own natural height), so
+                //   use the measurement directly. Lets expandable
+                //   widgets (color picker, etc.) still grow the
+                //   container.
+                let recorded_h = child
+                    .ctx()
+                    .data(|d| {
+                        d.get_temp::<f32>(
+                            pane_id.with(
+                                "frost_container_intrinsic_natural_override",
+                            ),
+                        )
+                    })
+                    .unwrap_or(content_h);
                 crate::container::record_container_intrinsic(
                     child.ctx(),
                     pane_id,
-                    content_h + body_top_pad,
+                    recorded_h + body_top_pad,
                 );
             };
 
