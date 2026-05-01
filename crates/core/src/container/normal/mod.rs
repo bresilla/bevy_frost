@@ -221,6 +221,13 @@ impl Normal {
                         let resp = crate::container::paint_separator_resize(
                             body_ui,
                             separator_after,
+                            // Inter-pod separators are always
+                            // horizontal — the body forces a
+                            // top_down layout, so pods stack
+                            // vertically inside the container
+                            // regardless of the parent pane's
+                            // orientation.
+                            crate::container::SeparatorOrient::Horizontal,
                             pod_id,
                             pods_accent,
                         );
@@ -237,7 +244,11 @@ impl Normal {
                             body_ui.ctx().data_mut(|d| d.insert_persisted(key, new));
                         }
                     } else {
-                        crate::container::paint_separator(body_ui, separator_after);
+                        crate::container::paint_separator(
+                            body_ui,
+                            separator_after,
+                            crate::container::SeparatorOrient::Horizontal,
+                        );
                     }
                     let sep_rect_after = body_ui.cursor();
                     // Tag the separator strip for the F10 inspector
@@ -403,25 +414,26 @@ impl Normal {
         let openness = pane::body_openness(ui.ctx(), pane_id);
         // Body's full flow-axis size when fully open. Used as the
         // child UI's `max_rect` extent so widgets ALWAYS render at
-        // their natural size; only the clip mask animates. Caller
-        // can override via `Normal::body_flow` for stacked layouts.
+        // their natural size; only the clip mask animates.
+        //
+        // Resolution order (first non-`None` wins):
+        //   1. `Normal::body_flow` builder override — explicit caller
+        //      control, e.g. for tests or fixed-height containers.
+        //   2. `crate::container::container_flow(self.pane_id)` —
+        //      the per-container persisted flow size, written by
+        //      the inter-container drag-resize handle.
+        //   3. The `CONTAINER_DEFAULT_*` fallback computed from
+        //      title strip + chrome.
         let full_body_flow = self.body_flow.unwrap_or_else(|| {
-            if horizontal_strip {
-                (CONTAINER_DEFAULT_HEIGHT
-                    - TITLE_ZONE_THICKNESS
-                    - pad_h
-                    - outer_h
-                    - TITLE_BODY_GAP_HALF * 2.0)
-                    .max(0.0)
-            } else {
-                (CONTAINER_DEFAULT_WIDTH
-                    - TITLE_ZONE_THICKNESS
-                    - pad_w
-                    - outer_w
-                    - TITLE_BODY_GAP_HALF * 2.0)
-                    .max(0.0)
-            }
+            // Persisted per-container flow takes precedence over
+            // the static fallback. Returns
+            // `CONTAINER_DEFAULT_FLOW` clamped on first read.
+            crate::container::container_flow(ui.ctx(), pane_id)
         });
+        // Publish this container's cid to the parent pane so
+        // `Pane2::show` can sum each container's LIVE persisted
+        // flow when it auto-sizes (`PaneResize::flow` off).
+        pane::publish_container_cid(ui.ctx(), parent_pane_id, pane_id);
         // Body slot size LERPS with `openness` to match Pane2's
         // lerp (both compute openness from the SAME `animate_bool`
         // call, so they animate in lockstep — no anchor drift).

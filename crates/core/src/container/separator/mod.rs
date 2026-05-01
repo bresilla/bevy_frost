@@ -1,39 +1,40 @@
-//! Frost-styled inter-pod separator. Two variants:
+//! Frost-styled separator. Two style variants × two orientations:
 //!
-//! * [`SeparatorStyle::Line`] — thin hairline rule across the
-//!   container's body width. Pure visual cue, no interaction.
+//! * [`SeparatorStyle::Line`] — thin hairline rule. Pure visual cue,
+//!   no interaction.
 //! * [`SeparatorStyle::LineDots`] — short rule on each side of three
-//!   centred dots. Same visual rhythm as the line variant; the
-//!   three dots are a placeholder for a future drag handle that will
-//!   resize the pod above (see `frostcore::widgets::splitter`).
+//!   centred dots. Same visual rhythm as the line variant; doubles
+//!   as a drag handle when painted via [`paint_separator_resize`].
+//! * [`SeparatorOrient::Horizontal`] — line runs left↔right; used
+//!   between vertically-stacked things (pods inside a container's
+//!   body, containers inside a horizontal-strip pane).
+//! * [`SeparatorOrient::Vertical`] — line runs top↕bottom; used
+//!   between horizontally-stacked things (containers inside a
+//!   vertical-strip pane).
 //!
-//! Both variants share the same total strip thickness so swapping
-//! variants on a pod doesn't shift its neighbours' positions. The
-//! ink colour matches the rest of the frost border family
-//! (`widget_border(accent)` softened to `border_subtle` alpha) so
-//! the separator reads as part of the same "border" language as
-//! every section frame and widget outline.
+//! The strip allocated in the parent ui is always [`SEPARATOR_STRIP_H`]
+//! pixels thick on the cross axis, regardless of style or
+//! orientation, so swapping any combination doesn't shift
+//! neighbouring positions. Ink colour comes from
+//! [`crate::style::outline_base`] — theme-luma-flipped, so the
+//! separator reads as a faint contrasting whisper on both Dark and
+//! Light themes.
 
 use std::hash::Hash;
 
-use egui::{vec2, Color32, Response, Sense, Stroke, Ui};
+use egui::{vec2, Color32, Rect, Response, Sense, Stroke, Ui};
 
 use crate::style;
 
 /// Alpha applied to [`style::outline_base`] when painting the
-/// separator. Low enough to whisper beneath section frames
-/// rather than compete with them — the line should hint at "this
-/// is where one pod ends and the next begins" without drawing the
-/// eye away from the actual content.
+/// separator. Low enough to whisper beneath section frames rather
+/// than compete with them.
 const SEPARATOR_ALPHA: u8 = 90;
 
-/// Vertical strip thickness — the rect EVERY separator reserves in
-/// the parent ui, both [`paint_separator`] (non-interactive) and
-/// [`paint_separator_resize`] (the drag-handle variant). Same value
-/// for both so swapping one variant for the other doesn't shift
-/// neighbouring pod positions, and tight enough that adjacent pods
-/// sit close together — the visual cue is the line / dots
-/// themselves, not a thick reserved gap.
+/// Cross-axis strip thickness — the rect EVERY separator reserves
+/// in the parent ui, every style and orientation. Same value for
+/// interactive and non-interactive variants so swapping doesn't
+/// shift neighbours.
 pub const SEPARATOR_STRIP_H: f32 = 2.0;
 /// Centre-to-centre spacing between the three dots in
 /// [`SeparatorStyle::LineDots`].
@@ -54,81 +55,94 @@ const EDGE_INSET: f32 = 2.0;
 /// touching.
 const GRIP_HALF_GAP: f32 = 3.0;
 
-/// Visual style for an inter-pod separator. The container reads
-/// each pod's chosen style and paints it BETWEEN that pod and the
-/// next (not after the last pod). See module docs.
+/// Visual style for a separator. See module docs.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SeparatorStyle {
-    /// No separator — pods sit flush with just the container's
-    /// inter-pod gap between them.
+    /// No separator — neighbours sit flush.
     None,
-    /// Plain thin hairline across the full width.
+    /// Plain thin hairline.
     #[default]
     Line,
-    /// Hairline + three centred dots + hairline. When the pod above
-    /// is [`crate::pod::Pod::resizable`], this becomes the drag
-    /// handle that grows / shrinks the pod (paint via
-    /// [`paint_separator_resize`]); otherwise it's purely visual.
+    /// Hairline + three centred dots + hairline. Doubles as a drag
+    /// handle when painted via [`paint_separator_resize`].
     LineDots,
 }
 
-/// Paint a separator into the parent `ui`. Allocates a strip of
-/// height [`SEPARATOR_STRIP_H`] across the available width, then
-/// paints into it according to `style`.
+/// Which axis the separator's line runs along.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SeparatorOrient {
+    /// Line runs left↔right; used between vertically-stacked items.
+    #[default]
+    Horizontal,
+    /// Line runs top↕bottom; used between horizontally-stacked items.
+    Vertical,
+}
+
+/// Paint a non-interactive separator into the parent `ui`.
 ///
-/// Colour comes from [`style::outline_base`], which auto-flips
-/// per theme luma — white-tinted on dark themes, black-tinted on
-/// light themes — so the separator stays a subtle whisper of the
-/// "opposite" colour against whichever surface the theme paints.
-/// Without that flip, a single `widget_border(accent)` recipe
-/// would render near-black on a Light theme and read as a heavy
-/// hard rule.
-pub fn paint_separator(ui: &mut Ui, style: SeparatorStyle) {
+/// Strip thickness on the cross axis is [`SEPARATOR_STRIP_H`];
+/// length on the main axis is the parent ui's `available_*`. Colour
+/// comes from [`style::outline_base`], which auto-flips per theme
+/// luma — white-tinted on Dark, black-tinted on Light.
+pub fn paint_separator(ui: &mut Ui, style: SeparatorStyle, orient: SeparatorOrient) {
     if matches!(style, SeparatorStyle::None) {
         return;
     }
-    let w = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(vec2(w, SEPARATOR_STRIP_H), Sense::hover());
+    let rect = allocate_strip(ui, orient);
     if !ui.is_rect_visible(rect) {
         return;
     }
-    paint_into(ui, rect, style, default_ink());
+    paint_into(ui, rect, style, orient, default_ink());
 }
 
-/// Interactive variant: same exact strip allocation as
-/// [`paint_separator`] (same [`SEPARATOR_STRIP_H`]) but with
-/// `Sense::drag` so the user can grab it. Returns the drag
-/// `Response` — the pod above is expected to grow / shrink in
-/// response to `response.drag_delta()`; it's the caller's job to
-/// clamp + persist the new size.
+/// Interactive variant: same allocation as [`paint_separator`] but
+/// with `Sense::drag` so the user can grab it. Returns the drag
+/// `Response` — the caller is expected to read `response.drag_delta()`
+/// and apply it to whatever size value owns the neighbour above (or
+/// to the left, for vertical orientation).
 ///
-/// On hover or drag, the line / dots paint in `accent` (so the
-/// affordance lights up clearly when the user reaches for it);
-/// otherwise it stays in the same theme-flipped subtle ink as
-/// [`paint_separator`].
+/// On hover or drag, line / dots paint in `accent`; otherwise the
+/// same theme-flipped subtle ink as [`paint_separator`]. Cursor
+/// flips to `ResizeVertical` for horizontal separators (drag changes
+/// vertical extent) and `ResizeHorizontal` for vertical separators.
 pub fn paint_separator_resize(
     ui: &mut Ui,
     style: SeparatorStyle,
+    orient: SeparatorOrient,
     id_salt: impl Hash,
     accent: Color32,
 ) -> Response {
-    let w = ui.available_width();
-    // Reserve with `Sense::hover` so `allocate_exact_size`'s
-    // auto-id doesn't claim our interaction id; the explicit
-    // `interact` call below owns the drag id under the caller-
-    // supplied salt.
-    let (rect, _) = ui.allocate_exact_size(vec2(w, SEPARATOR_STRIP_H), Sense::hover());
+    let rect = allocate_strip(ui, orient);
     let id = ui.id().with(("frost_separator_resize", id_salt));
+    let cursor = match orient {
+        SeparatorOrient::Horizontal => egui::CursorIcon::ResizeVertical,
+        SeparatorOrient::Vertical => egui::CursorIcon::ResizeHorizontal,
+    };
     let resp = ui
         .interact(rect, id, Sense::drag())
-        .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+        .on_hover_cursor(cursor);
     if !ui.is_rect_visible(rect) {
         return resp;
     }
     let bright = resp.hovered() || resp.dragged();
     let ink = if bright { accent } else { default_ink() };
-    paint_into(ui, rect, style, ink);
+    paint_into(ui, rect, style, orient, ink);
     resp
+}
+
+/// Allocate the strip rect — the cross axis is `SEPARATOR_STRIP_H`,
+/// the main axis is `available_width()` / `available_height()`.
+/// Reserved with `Sense::hover` so `allocate_exact_size`'s auto-id
+/// doesn't claim the interaction id; the explicit `interact` call
+/// in [`paint_separator_resize`] owns the drag id under the
+/// caller-supplied salt.
+fn allocate_strip(ui: &mut Ui, orient: SeparatorOrient) -> Rect {
+    let size = match orient {
+        SeparatorOrient::Horizontal => vec2(ui.available_width(), SEPARATOR_STRIP_H),
+        SeparatorOrient::Vertical => vec2(SEPARATOR_STRIP_H, ui.available_height()),
+    };
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    rect
 }
 
 /// Theme-flipped ink shared by [`paint_separator`] and the rest
@@ -138,8 +152,15 @@ fn default_ink() -> Color32 {
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), SEPARATOR_ALPHA)
 }
 
-fn paint_into(ui: &Ui, rect: egui::Rect, style: SeparatorStyle, ink: Color32) {
+fn paint_into(ui: &Ui, rect: Rect, style: SeparatorStyle, orient: SeparatorOrient, ink: Color32) {
     let stroke = Stroke::new(RULE_W, ink);
+    match orient {
+        SeparatorOrient::Horizontal => paint_horizontal(ui, rect, style, ink, stroke),
+        SeparatorOrient::Vertical => paint_vertical(ui, rect, style, ink, stroke),
+    }
+}
+
+fn paint_horizontal(ui: &Ui, rect: Rect, style: SeparatorStyle, ink: Color32, stroke: Stroke) {
     let mid_y = rect.center().y;
     match style {
         SeparatorStyle::None => {}
@@ -165,6 +186,38 @@ fn paint_into(ui: &Ui, rect: egui::Rect, style: SeparatorStyle, ink: Color32) {
             ui.painter().hline(
                 (mid_x + half)..=(rect.right() - EDGE_INSET),
                 mid_y,
+                stroke,
+            );
+        }
+    }
+}
+
+fn paint_vertical(ui: &Ui, rect: Rect, style: SeparatorStyle, ink: Color32, stroke: Stroke) {
+    let mid_x = rect.center().x;
+    match style {
+        SeparatorStyle::None => {}
+        SeparatorStyle::Line => {
+            ui.painter().vline(
+                mid_x,
+                (rect.top() + EDGE_INSET)..=(rect.bottom() - EDGE_INSET),
+                stroke,
+            );
+        }
+        SeparatorStyle::LineDots => {
+            let mid_y = rect.center().y;
+            for dy in [-DOT_SPACING, 0.0, DOT_SPACING] {
+                ui.painter()
+                    .circle_filled(egui::pos2(mid_x, mid_y + dy), DOT_R, ink);
+            }
+            let half = DOT_SPACING + DOT_R + GRIP_HALF_GAP;
+            ui.painter().vline(
+                mid_x,
+                (rect.top() + EDGE_INSET)..=(mid_y - half),
+                stroke,
+            );
+            ui.painter().vline(
+                mid_x,
+                (mid_y + half)..=(rect.bottom() - EDGE_INSET),
                 stroke,
             );
         }

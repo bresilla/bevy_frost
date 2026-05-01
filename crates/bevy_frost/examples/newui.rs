@@ -590,19 +590,17 @@ fn ui_system(
             // (shouldn't happen — every pane button is in RIBBON_ITEMS).
             let anchor = live_anchor(button_id).unwrap_or(default_anchor);
             Pane2::new(button_id, label, anchor, accent_col)
-                .resize(corekit::pane::PaneResize::BOTH)
+                // Pane only resizes on the SPAN axis — flow-axis
+                // size auto-derives from the sum of container body
+                // flows + per-container chrome. Each container's
+                // own size is dragged via the inter-container
+                // separator below.
+                .resize(corekit::pane::PaneResize::SPAN)
                 .show(ctx, |body_ui| {
                     // Three independent containers, each with its own
                     // toggle state (id derived from the pane's button
                     // id + an index).
                     const CONTAINERS_PER_PANE: usize = 3;
-                    // Approximate per-container chrome on the main
-                    // axis (title strip + section padding + outer
-                    // margins + title-body gap). Used to convert the
-                    // pane's user-resized body main extent into a
-                    // body_flow per container so the containers
-                    // collectively fill the pane on the flow axis.
-                    const CHROME_PER_CONTAINER: f32 = 38.0;
                     // Build the default id list in declaration order,
                     // then ask the pane for the user's persisted
                     // drag-reorder order — which preserves any drag
@@ -617,29 +615,21 @@ fn ui_system(
                         pane_egui_id,
                         &defaults,
                     );
-                    // Pull the pane's user-resized body main extent
-                    // and split it across the containers, subtracting
-                    // each one's chrome. Resizing the pane on its
-                    // inner edge (drag handle) updates this value;
-                    // the next frame's body_flow_per_container grows
-                    // / shrinks accordingly so the stack of
-                    // containers always spans the pane edge-to-edge.
-                    let pane_body_flow = corekit::pane::user_flow(
-                        body_ui.ctx(),
-                        pane_egui_id,
-                    );
-                    // No artificial floor on the per-container body
-                    // slot — the pane's flow-axis resize handle
-                    // already refuses to shrink below the registered
-                    // container chrome floor, so when the user pushes
-                    // the pane to that floor `body_flow_per_container`
-                    // naturally lands at 0 and each container shows
-                    // just its title strip without overflow.
-                    let body_flow_per_container = ((pane_body_flow
-                        - CHROME_PER_CONTAINER * CONTAINERS_PER_PANE as f32)
-                        / CONTAINERS_PER_PANE as f32)
-                        .max(0.0);
-                    for cid in order {
+                    // Container-resize-handle orientation matches
+                    // the container stack direction: vertical-strip
+                    // panes (Left/Right rail middle, corner-zone
+                    // Top/Bottom) stack containers along X, so the
+                    // dot handle runs top↕bottom (vertical);
+                    // horizontal-strip panes stack along Y, so the
+                    // handle runs left↔right (horizontal).
+                    let containers_stack_horizontally =
+                        !anchor.title_side().is_horizontal_strip();
+                    let dots_orient = if containers_stack_horizontally {
+                        corekit::container::SeparatorOrient::Vertical
+                    } else {
+                        corekit::container::SeparatorOrient::Horizontal
+                    };
+                    for cid in order.into_iter() {
                         // Recover the original index for the title /
                         // text-input key so renaming after a reorder
                         // still maps each id back to "container N".
@@ -694,8 +684,47 @@ fn ui_system(
                             .collect();
                         Normal::new(title, anchor, accent_col, cid)
                             .icon("settings")
-                            .body_flow(body_flow_per_container)
                             .show(body_ui, pods);
+                        // Container resize handle — three dots,
+                        // painted AFTER every container including
+                        // the last. Drag delta updates THIS
+                        // container's persisted flow size; the
+                        // pane auto-grows to fit.
+                        //
+                        // For bottom / right-anchored panes the
+                        // body extends in the negative axis
+                        // direction (bottom_up / right_to_left), so
+                        // the handle painted "after" the container
+                        // ends up on the side AWAY from the title
+                        // (above for bottom, left for right). To
+                        // grow the container, the user drags the
+                        // handle FURTHER from the title — which is
+                        // a NEGATIVE axis delta. Negate so the
+                        // grow direction matches the cursor in
+                        // both anchorings.
+                        let title_at_end =
+                            anchor.title_side().is_at_end();
+                        let resp = corekit::pane::paint_container_dots(
+                            body_ui,
+                            dots_orient,
+                            cid,
+                            accent_col,
+                        );
+                        if resp.dragged() {
+                            let cur =
+                                corekit::container::container_flow(body_ui.ctx(), cid);
+                            let raw = if containers_stack_horizontally {
+                                resp.drag_delta().x
+                            } else {
+                                resp.drag_delta().y
+                            };
+                            let delta = if title_at_end { -raw } else { raw };
+                            corekit::container::set_container_flow(
+                                body_ui.ctx(),
+                                cid,
+                                cur + delta,
+                            );
+                        }
                     }
                 });
         }

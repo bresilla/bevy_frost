@@ -1826,17 +1826,19 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // value, which keeps the header strip from looking crammed
         // against the corner ticks.
         section_pad_x: 3,
-        section_pad_y: 4,
+        section_pad_y: 2,
         section_body_indent: 8.0,
-        // GAME stacking: containers feel like discrete tiles. Wide
-        // gaps between adjacent containers (and between the first
-        // container and the pane title) read as deliberate
-        // separators; the span-axis margin is tight so each
-        // container is almost flush with the pane edge.
-        section_outer_margin_flow_title: 9,
+        // GAME stacking: tighter than the original 9, but still
+        // a touch more breathing room than PRO between the pane
+        // title strip and the first container so it doesn't crowd
+        // the title chrome. `flow_body = 0` keeps adjacent
+        // containers tight; the inter-container dot handle
+        // provides the visible gap. Span margin stays tight so
+        // each container is almost flush with the pane edge.
+        section_outer_margin_flow_title: 6,
         section_outer_margin_flow_body: 0,
         section_outer_margin_span: 1,
-        section_body_inner_top_pad: 8.0,
+        section_body_inner_top_pad: 0.0,
         pane_title_chromatic_aberration: true,
         // GAME — slower fold / unfold so the banner expansion reads
         // as a deliberate "scene change" cue.

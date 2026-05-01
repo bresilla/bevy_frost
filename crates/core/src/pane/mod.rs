@@ -16,9 +16,12 @@
 //! * `mod.rs` (this file) — `Pane2` builder + render entry point.
 
 mod anchor;
+mod dots;
 mod drag;
 mod layout;
 mod title;
+
+pub use dots::paint_container_dots;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
 pub use drag::{
@@ -235,13 +238,76 @@ pub fn container_min_flows(ctx: &egui::Context, pane_id: Id) -> Vec<f32> {
         .unwrap_or_default()
 }
 
-/// Clear both per-pane container-min accumulators. Called by
-/// `Pane2::show` at the top of every frame so containers can
-/// re-register fresh on the body callback.
+/// Clear all four per-pane body-bookkeeping accumulators (min
+/// widths, min flows, container cids, extra body flow). Called by
+/// `Pane2::show` at the top of every frame so the body callback
+/// can re-register fresh.
 fn clear_container_min_widths(ctx: &egui::Context, pane_id: Id) {
     ctx.data_mut(|d| {
         d.remove::<Vec<f32>>(container_mins_key(pane_id));
         d.remove::<Vec<f32>>(container_min_flows_key(pane_id));
+        d.remove::<Vec<Id>>(container_cids_key(pane_id));
+        d.remove::<f32>(body_extra_flow_key(pane_id));
+    });
+}
+
+fn container_cids_key(pane_id: Id) -> Id {
+    pane_id.with("frost_pane_container_cids")
+}
+
+fn body_extra_flow_key(pane_id: Id) -> Id {
+    pane_id.with("frost_pane_body_extra_flow")
+}
+
+/// Read the list of container CIDs registered against `pane_id`
+/// during this frame's body callback. Returned in container
+/// declaration order. Used by [`Pane2::show`] to compute the
+/// pane's auto-flow when `PaneResize::flow` is off — pane size =
+/// sum of `crate::container::container_flow(cid)` over these cids
+/// + per-container chrome + sum of extra body chrome + pane chrome.
+///
+/// Storing CIDs (not flow values) lets the pane re-fetch each
+/// container's LIVE persisted flow when it sizes itself, so a drag
+/// that updates the persisted value at the END of frame N is
+/// visible to the pane sizer on frame N+1's first read — without
+/// the extra publish-vs-render lag that comes from caching values.
+pub fn published_container_cids(ctx: &egui::Context, pane_id: Id) -> Vec<Id> {
+    ctx.data(|d| d.get_temp::<Vec<Id>>(container_cids_key(pane_id)))
+        .unwrap_or_default()
+}
+
+/// Append `cid` to the per-pane container CID list. Called by
+/// `Normal::show` each frame.
+pub fn publish_container_cid(ctx: &egui::Context, pane_id: Id, cid: Id) {
+    ctx.data_mut(|d| {
+        let key = container_cids_key(pane_id);
+        let mut acc: Vec<Id> = d.get_temp(key).unwrap_or_default();
+        acc.push(cid);
+        d.insert_temp(key, acc);
+    });
+}
+
+/// Sum of additional body-flow allocations (e.g. inter-container
+/// drag handles painted via [`paint_container_dots`]) registered
+/// against `pane_id` this frame. Pane auto-flow accounting adds
+/// this on top of `published_container_body_flows + per-container
+/// chrome` so the pane stays sized to fit everything its body
+/// callback paints, not just the containers themselves.
+pub fn published_body_extra_flow(ctx: &egui::Context, pane_id: Id) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(body_extra_flow_key(pane_id)))
+        .unwrap_or(0.0)
+}
+
+/// Add `flow` to the per-pane "extra body chrome" total. Called by
+/// any caller that paints extra flow-axis content inside a
+/// `Pane2` body — the inter-container drag-handle in
+/// [`paint_container_dots`] uses this to make sure the pane
+/// auto-grows to include each handle's strip height.
+pub fn publish_body_extra_flow(ctx: &egui::Context, pane_id: Id, flow: f32) {
+    ctx.data_mut(|d| {
+        let key = body_extra_flow_key(pane_id);
+        let cur: f32 = d.get_temp(key).unwrap_or(0.0);
+        d.insert_temp(key, cur + flow);
     });
 }
 
@@ -422,6 +488,11 @@ impl Pane2 {
         let title_side_for_pane = self.anchor.title_side();
         let horizontal_strip_pane = title_side_for_pane.is_horizontal_strip();
         let prev_mins = container_min_widths(ctx, self.id);
+        // Snapshot LAST frame's container cids and extra body flow
+        // BEFORE the clear below wipes them — these feed the pane's
+        // auto-flow calculation further down (line ~565).
+        let prev_cids_snapshot = published_container_cids(ctx, self.id);
+        let prev_extra_flow_snapshot = published_body_extra_flow(ctx, self.id);
         if !prev_mins.is_empty() {
             if self.resize.flow && !horizontal_strip_pane {
                 let need_main: f32 = prev_mins.iter().sum();
@@ -473,16 +544,33 @@ impl Pane2 {
         let collapsed_flow =
             TITLE_STRIP_THICKNESS + body_flow_collapsed + PANE_FRAME_CHROME;
         // Pane main when fully open = title + body + frame chrome.
-        // The user-resize body main is consulted only when
-        // `PaneResize::main` is enabled — otherwise the pane keeps
-        // its baseline `DEFAULT_FLOW_OPEN`. Either way the
-        // resize handle itself takes ZERO layout space (it's an
-        // invisible interact rect overlaying the inner edge inside
-        // the painted pane).
+        //
+        // When `PaneResize::flow` is ON, the user drives this with
+        // the inner-edge resize handle and the body slot is split
+        // evenly across containers (legacy behaviour).
+        //
+        // When `PaneResize::flow` is OFF — the new "individually
+        // resizable containers" model — the pane auto-sizes from
+        // the previous frame's per-container body-flow registrations,
+        // i.e. each container's persisted flow PLUS the per-
+        // container chrome (title strip + padding + outer margins).
+        // Empty accumulator (first frame, no body callback yet) →
+        // fall back to `DEFAULT_FLOW_OPEN` so the pane appears at
+        // a reasonable size before the body has had a chance to
+        // run.
         let body_flow_open = if self.resize.flow {
             user_flow(ctx, self.id)
-        } else {
+        } else if prev_cids_snapshot.is_empty() {
             DEFAULT_FLOW_OPEN
+        } else {
+            let chrome_per_container = body_flow_collapsed;
+            let sum_body: f32 = prev_cids_snapshot
+                .iter()
+                .map(|cid| crate::container::container_flow(ctx, *cid))
+                .sum();
+            sum_body
+                + chrome_per_container * (prev_cids_snapshot.len() as f32)
+                + prev_extra_flow_snapshot
         };
         let expanded_flow = TITLE_STRIP_THICKNESS + body_flow_open + PANE_FRAME_CHROME;
         let pane_flow =
