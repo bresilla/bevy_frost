@@ -16,8 +16,11 @@
 // ─── Sizing fundamentals ───────────────────────────────────────────
 
 /// Body text size, in pixels. Drives the [`UNIT`] derivation below
-/// — change here only if the entire frost type ramp moves.
-pub const BODY_FONT_SIZE: f32 = 14.0;
+/// — change here only if the entire frost type ramp moves. Matches
+/// `frostcore::style::apply_theme`'s body text style (13 px), so
+/// corekit and frostcore widgets line up side-by-side at the same
+/// scale.
+pub const BODY_FONT_SIZE: f32 = 13.0;
 
 /// Foundational row-height unit, in pixels. The canonical "1 row"
 /// measurement for every frost widget — derived as body font size

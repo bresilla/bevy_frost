@@ -673,11 +673,50 @@ fn ui_system(
                                 {
                                     pod = pod.resizable();
                                 }
+                                // Mix of widget kinds — the demo
+                                // rotates between search / button /
+                                // labelled-toggle / progressbar so
+                                // the pod widget API shows all
+                                // four. `pod_seed` is stable per
+                                // (cid, pod_index), so each pod
+                                // keeps its widget mix across
+                                // frames.
                                 for s in 0..search_count {
-                                    pod = pod.with_search(
-                                        format!("pod {} · search {}…", p + 1, s + 1),
-                                        accent_col,
-                                    );
+                                    let mix = (pod_seed >> (s * 3)) & 0b111;
+                                    pod = match mix {
+                                        0 | 1 => pod.with_search(
+                                            format!(
+                                                "pod {} · search {}…",
+                                                p + 1,
+                                                s + 1
+                                            ),
+                                            accent_col,
+                                        ),
+                                        2 | 3 => pod.with_button(
+                                            format!("pod {} · btn {}", p + 1, s + 1),
+                                            accent_col,
+                                        ),
+                                        4 | 5 => pod.with_toggle_initial(
+                                            format!("toggle {}", s + 1),
+                                            accent_col,
+                                            (pod_seed >> 8) & 1 == 1,
+                                        ),
+                                        _ => {
+                                            let frac = (((pod_seed >> (s * 5))
+                                                & 0xFF)
+                                                as f32)
+                                                / 255.0;
+                                            pod.with_progress(
+                                                format!("progress {}", s + 1),
+                                                frac,
+                                                format!(
+                                                    "{:.0}%",
+                                                    frac * 100.0
+                                                ),
+                                                accent_col,
+                                            )
+                                        }
+                                    };
                                 }
                                 pod
                             })
