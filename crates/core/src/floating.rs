@@ -1,61 +1,114 @@
-//! Compatibility shim — minimal `floating_window_for_item` +
-//! `PaneBuilder` API that maps old-frostcore-style panels onto the
-//! new [`crate::pane::Pane2`] system.
-//!
-//! Apps written against `frostcore::floating::floating_window_for_item`
-//! call into this shim; new code should target [`crate::pane::Pane2`]
-//! directly. The shim swaps in `Pane2` underneath, so the visual
-//! ends up identical but the caller doesn't have to migrate every
-//! `pane.section(...)` call site.
+//! Compatibility shim — `floating_window_for_item` + `PaneBuilder`
+//! API mapped onto the new [`crate::pane::Pane2`] +
+//! [`crate::container::Normal`] system. Apps written against
+//! `frostcore::floating::floating_window_for_item` keep their call
+//! sites; the visuals are the new corekit's pane chrome + container
+//! chrome wrapping the legacy widget calls inside.
 //!
 //! What's supported:
 //!
 //! * [`floating_window_for_item`] — single per-item floating panel,
 //!   anchored to the item's ribbon edge + cluster. Picks a
 //!   `PaneAnchor::*Rail(*)` from the [`RibbonDef`] / [`RibbonCluster`].
-//! * [`PaneBuilder::section`] — collapsible section inside the
-//!   panel body. Routes to [`crate::widget::section`] (a frosted
-//!   `CollapsingState`-backed frame).
-//!
-//! What's NOT supported (ad-hoc additions kept in old frostcore):
-//!
-//! * `section_with` (icon-prefixed sections) → use [`PaneBuilder::section`]
-//!   and add the icon manually inside the body.
-//! * `section_order` (drag-reorder of sections) → not relevant
-//!   without the pane's container plumbing; use the new
-//!   [`crate::pane::Pane2`] + [`crate::container::Normal`] path
-//!   for that capability.
+//! * [`PaneBuilder::section`] — each section becomes a separate
+//!   [`crate::container::Normal`] inside the pane, with the caller's
+//!   body painted via [`crate::pod::Pod::with_custom`]. So the
+//!   visual is the same as `demo.rs` (container header + accent
+//!   banner + fold chevron) and the body is whatever raw egui +
+//!   legacy-widget code the caller passes in.
 
 use egui::Vec2;
 
+use crate::container::Normal;
 use crate::pane::{Pane2, PaneAnchor, PaneResize, RailZone};
+use crate::pod::Pod;
 use crate::ribbon::{
     find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonEdge, RibbonItem,
     RibbonPlacement,
 };
 
 /// Caller-facing handle inside a `floating_window_for_item` body.
-/// Forwards `section(...)` calls to [`crate::widget::section`].
+/// Each `section(...)` call paints one [`Normal`] container.
 pub struct PaneBuilder<'a> {
     ui: &'a mut egui::Ui,
+    pane_id: egui::Id,
+    anchor: PaneAnchor,
     accent: egui::Color32,
 }
 
 impl<'a> PaneBuilder<'a> {
-    fn new(ui: &'a mut egui::Ui, accent: egui::Color32) -> Self {
-        Self { ui, accent }
+    fn new(
+        ui: &'a mut egui::Ui,
+        pane_id: egui::Id,
+        anchor: PaneAnchor,
+        accent: egui::Color32,
+    ) -> Self {
+        Self { ui, pane_id, anchor, accent }
     }
 
-    /// Render a collapsible section. Same signature as the old
-    /// `frostcore::floating::PaneBuilder::section`.
+    /// Render one container in the pane. The caller's `body` runs
+    /// inside a [`Pod::with_custom`] so any combination of legacy
+    /// frostcore widgets (`wide_button`, `readout_row`, `chip`, …)
+    /// or raw egui calls works inside.
+    ///
+    /// `default_open` is honoured by the container's persisted
+    /// fold state — first-frame paints respect it; subsequent
+    /// frames use the user's last toggle. Same semantics the old
+    /// `frostcore::floating::PaneBuilder::section` shipped.
     pub fn section(
         &mut self,
         id_salt: &str,
         title: &str,
         default_open: bool,
-        body: impl FnOnce(&mut egui::Ui),
+        body: impl FnOnce(&mut egui::Ui) + Send + Sync + 'static,
     ) {
-        crate::widget::section(self.ui, id_salt, title, self.accent, default_open, body);
+        let cid = self.pane_id.with(("frost_compat_section", id_salt));
+        // First-frame default-open seeding — once the user toggles
+        // the chevron, the persisted value takes over.
+        let body_open_key = cid.with("body_open");
+        let already_set: bool = self
+            .ui
+            .ctx()
+            .data_mut(|d| d.get_persisted::<bool>(body_open_key))
+            .is_some();
+        if !already_set {
+            self.ui
+                .ctx()
+                .data_mut(|d| d.insert_persisted(body_open_key, default_open));
+        }
+
+        let pod = Pod::new(cid.with("pod")).with_custom(body);
+        Normal::new(title, self.anchor, self.accent, cid).show(self.ui, vec![pod]);
+    }
+
+    /// Same as [`PaneBuilder::section`] but lets the caller provide
+    /// an icon glyph for the container title strip — mirrors the
+    /// legacy `section_with` shape.
+    pub fn section_with(
+        &mut self,
+        id_salt: &str,
+        title: &str,
+        icon: &'static str,
+        default_open: bool,
+        body: impl FnOnce(&mut egui::Ui) + Send + Sync + 'static,
+    ) {
+        let cid = self.pane_id.with(("frost_compat_section", id_salt));
+        let body_open_key = cid.with("body_open");
+        let already_set: bool = self
+            .ui
+            .ctx()
+            .data_mut(|d| d.get_persisted::<bool>(body_open_key))
+            .is_some();
+        if !already_set {
+            self.ui
+                .ctx()
+                .data_mut(|d| d.insert_persisted(body_open_key, default_open));
+        }
+
+        let pod = Pod::new(cid.with("pod")).with_custom(body);
+        Normal::new(title, self.anchor, self.accent, cid)
+            .icon(icon)
+            .show(self.ui, vec![pod]);
     }
 }
 
@@ -78,14 +131,7 @@ fn pane_anchor_for(def: &RibbonDef, cluster: RibbonCluster) -> PaneAnchor {
 /// Show a floating panel for a declared ribbon item. Anchor +
 /// rail-zone are derived from the item's resolved
 /// `(ribbon, cluster)`. The panel is only painted when `*open` is
-/// `true`; the caller is responsible for toggling it (typically
-/// via the matching ribbon button or a keyboard shortcut).
-///
-/// `size` is the (width, height) the body should aim for. The new
-/// `Pane2` system auto-sizes around its actual content, so this
-/// argument is treated as a hint only — the visible pane may end
-/// up smaller (auto-fold) or larger (when the body declares
-/// minimum widths via the container system).
+/// `true`.
 pub fn floating_window_for_item(
     ctx: &egui::Context,
     ribbons: &[RibbonDef],
@@ -109,11 +155,12 @@ pub fn floating_window_for_item(
         return;
     };
     let anchor = pane_anchor_for(def, cluster);
+    let pane_id = egui::Id::new(item_id);
 
     Pane2::new(item_id, title, anchor, accent)
         .resize(PaneResize::SPAN)
         .show(ctx, |body_ui| {
-            let mut builder = PaneBuilder::new(body_ui, accent);
+            let mut builder = PaneBuilder::new(body_ui, pane_id, anchor, accent);
             add_contents(&mut builder);
         });
 }
