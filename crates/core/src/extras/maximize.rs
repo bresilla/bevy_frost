@@ -37,7 +37,7 @@ use std::hash::Hash;
 
 use egui;
 
-use corekit::style::{glass_alpha_window, glass_fill};
+use crate::style::{glass_alpha_window, glass_fill};
 
 /// The egui data key that [`maximizable`] uses to store the
 /// maximise-flag for a given `id_salt`. Exposed so callers can do
@@ -109,7 +109,7 @@ pub fn maximizable(
                 egui::Align2::CENTER_CENTER,
                 "(maximised)",
                 egui::FontId::proportional(12.0),
-                corekit::style::on_section_dim(),
+                crate::style::on_section_dim(),
             );
         }
 
@@ -127,7 +127,7 @@ pub fn maximizable(
                 ui.set_min_size(screen.size());
                 ui.set_max_size(screen.size());
                 let frame = egui::Frame::new()
-                    .fill(glass_fill(corekit::style::theme().bg_panel, accent, glass_alpha_window()))
+                    .fill(glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window()))
                     .corner_radius(egui::CornerRadius::ZERO)
                     .inner_margin(egui::Margin::ZERO);
                 frame.show(ui, |ui| {
@@ -236,22 +236,22 @@ fn paint_ribbon_style_chip(
     let bg = if active {
         let blend = |a: u8, b: u8| ((a as f32) * 0.75 + (b as f32) * 0.25).round() as u8;
         let tinted = egui::Color32::from_rgb(
-            blend(corekit::style::theme().bg_raised.r(), accent.r()),
-            blend(corekit::style::theme().bg_raised.g(), accent.g()),
-            blend(corekit::style::theme().bg_raised.b(), accent.b()),
+            blend(crate::style::theme().bg_raised.r(), accent.r()),
+            blend(crate::style::theme().bg_raised.g(), accent.g()),
+            blend(crate::style::theme().bg_raised.b(), accent.b()),
         );
         glass_fill(tinted, accent, glass_alpha_window())
     } else if hovered {
-        glass_fill(corekit::style::theme().bg_raised, accent, glass_alpha_window())
+        glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_window())
     } else {
-        glass_fill(corekit::style::theme().bg_panel, accent, glass_alpha_window())
+        glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window())
     };
-    let stroke = if active { accent } else { corekit::style::widget_border(accent) };
+    let stroke = if active { accent } else { crate::style::widget_border(accent) };
     painter.rect(
         rect,
-        egui::CornerRadius::same(corekit::style::theme().radius_md),
+        egui::CornerRadius::same(crate::style::theme().radius_md),
         bg,
-        egui::Stroke::new(corekit::style::theme().border_width, stroke),
+        egui::Stroke::new(crate::style::theme().border_width, stroke),
         egui::StrokeKind::Inside,
     );
 }
@@ -267,7 +267,7 @@ fn paint_fullscreen_arrows(
     hovered: bool,
 ) {
     let color = if inward {
-        corekit::style::on_section()
+        crate::style::on_section()
     } else if hovered {
         accent
     } else {

@@ -29,9 +29,15 @@
 //! }
 //! ```
 
-pub mod extras;
 pub mod gizmo_material;
 pub mod prelude;
+
+// `extras` (vendored snarl + code_editor + maximize) lives in
+// `corekit` so the egui-only `egui_frost` facade can ship the same
+// graph + code wrappers without dragging Bevy in. Re-exported here
+// at the legacy `bevy_frost::extras::*` path so existing call
+// sites stay put.
+pub use corekit::extras;
 
 // Re-export `corekit` so apps can keep going through `bevy_frost::*`
 // for state types, widgets, the pane / ribbon / pod systems, etc.

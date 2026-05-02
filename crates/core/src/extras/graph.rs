@@ -40,7 +40,7 @@ pub use crate::extras::snarl::{
 };
 
 use crate::extras::maximize::maximizable;
-use corekit::style::{
+use crate::style::{
     glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
 };
 
@@ -52,7 +52,7 @@ use corekit::style::{
 /// What the returned style pins down:
 ///
 /// * **Node frame** — `BG_2_RAISED` glass fill + `widget_border`
-///   stroke + `corekit::style::theme().radius_md` corner, matching
+///   stroke + `crate::style::theme().radius_md` corner, matching
 ///   [`section`](crate::widgets::foldable::section) so nodes look
 ///   like first-class frost surfaces.
 /// * **Background** — `BG_1_PANEL` glass fill behind everything,
@@ -65,9 +65,9 @@ use corekit::style::{
 /// selection interactions remain familiar to upstream users.
 pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     let node_frame = egui::Frame::new()
-        .fill(glass_fill(corekit::style::theme().bg_raised, accent, glass_alpha_card()))
-        .stroke(egui::Stroke::new(corekit::style::theme().border_width, widget_border(accent)))
-        .corner_radius(egui::CornerRadius::same(corekit::style::theme().radius_md))
+        .fill(glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_card()))
+        .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(8, 4));
 
     // Header frame — same corners + border but transparent fill so
@@ -76,7 +76,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     let header_frame = egui::Frame::new()
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
-        .corner_radius(egui::CornerRadius::same(corekit::style::theme().radius_md))
+        .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_md))
         .inner_margin(egui::Margin::symmetric(6, 3));
 
     // Background mirrors the code-editor recipe — `pane_fill(accent)`
@@ -84,7 +84,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     // PRO's neutral `bg_panel` both flow in here automatically. The
     // node graph and the code editor now visually share the same
     // canvas surface.
-    let canvas_base = corekit::style::pane_fill(accent);
+    let canvas_base = crate::style::pane_fill(accent);
     let bg_fill = glass_fill(canvas_base, accent, glass_alpha_window());
 
     // Grid stroke — `contrast_text_for(canvas_base)` at low alpha so
@@ -92,7 +92,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     // canvas, darker on a light one. Alpha 28 keeps it firmly in
     // the "there but quiet" tier: visible enough to read as a grid,
     // not loud enough to compete with the nodes.
-    let grid_base = corekit::style::contrast_text_for(canvas_base);
+    let grid_base = crate::style::contrast_text_for(canvas_base);
     let grid_stroke = egui::Stroke::new(
         1.0,
         egui::Color32::from_rgba_unmultiplied(grid_base.r(), grid_base.g(), grid_base.b(), 28),
@@ -104,8 +104,8 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         bg_frame: Some(
             egui::Frame::new()
                 .fill(bg_fill)
-                .stroke(egui::Stroke::new(corekit::style::theme().border_width, widget_border(accent)))
-                .corner_radius(egui::CornerRadius::same(corekit::style::theme().radius_lg))
+                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
                 .inner_margin(egui::Margin::same(2)),
         ),
         // Accent-tinted semi-transparent grid across the canvas —
@@ -120,10 +120,10 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // reserved for panel chrome / borders so the graph itself
         // doesn't change colour every time the user re-tints the
         // theme.
-        pin_fill: Some(corekit::style::on_section()),
+        pin_fill: Some(crate::style::on_section()),
         pin_stroke: Some(egui::Stroke::new(
-            corekit::style::theme().snarl_pin_width,
-            corekit::style::on_section_dim(),
+            crate::style::theme().snarl_pin_width,
+            crate::style::on_section_dim(),
         )),
         wire_width: Some(1.5),
         wire_style: None,

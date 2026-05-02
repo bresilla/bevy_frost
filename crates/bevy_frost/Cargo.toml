@@ -14,16 +14,11 @@ readme = "README.md"
 # firewall, gizmo material) plus the vendored extras (node graph +
 # code editor) under `bevy_frost::extras::*`.
 corekit = { workspace = true, features = ["bevy"] }
-# Direct egui dep — needed by the vendored extras (snarl + code
-# editor) which use `use egui::{...}` paths inside their own
-# modules.
+# Direct egui dep — needed by the input-firewall plugin and the
+# `gizmo_material` shader. The vendored extras (snarl + code
+# editor) now live in corekit so their transitive deps move with
+# them — no `egui-scale`/`slab`/`smallvec` here anymore.
 egui = { workspace = true }
-# Transitive deps of the vendored extras — see
-# `src/extras/{snarl,code_editor}`. Pinned to the same versions
-# the legacy `frostcore` Cargo.toml used.
-egui-scale = "0.3"
-slab = "0.4"
-smallvec = { version = "1.15", features = ["const_new"] }
 bevy = { workspace = true, features = [
     "std",
     "async_executor",
@@ -65,17 +60,14 @@ bevy_egui = { workspace = true, features = [
 mimalloc = { workspace = true }
 
 [features]
-# Markers for the cfg-gates the vendored extras (snarl + code
-# editor) carry from their upstream crates. `egui` + `editor` are
-# default-on so the vendored code compiles with full egui
-# integration; `serde` + `egui-probe` are no-op markers kept here
-# to silence "unexpected cfg" warnings (they were stripped during
-# the vendoring pass to keep the sub-crates lean).
+# Forward to corekit's matching feature flags so consumers can
+# pick which vendored extras (snarl + code editor) compile in,
+# without having to know corekit owns them now.
 default = ["egui", "editor"]
-egui = []
-editor = []
-serde = []
-egui-probe = []
+egui = ["corekit/egui"]
+editor = ["corekit/editor"]
+serde = ["corekit/serde"]
+egui-probe = ["corekit/egui-probe"]
 
 [dev-dependencies]
 # `bevy_glacial` — used by the demo example only (camera /

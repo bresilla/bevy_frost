@@ -29,6 +29,7 @@
 pub mod command_palette;
 pub mod container;
 pub mod debug;
+pub mod extras;
 pub mod floating;
 pub mod icons;
 pub mod pane;
