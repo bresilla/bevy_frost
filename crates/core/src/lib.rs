@@ -26,6 +26,7 @@
 //! * [`ribbon`] — edge button strips.
 //! * [`icons`] — Fluent UI System Icon glyph painter.
 
+pub mod command_palette;
 pub mod container;
 pub mod debug;
 pub mod icons;
@@ -39,6 +40,31 @@ pub mod widget;
 // canonical name is `corekit::UNIT`. Every widget is sized in
 // multiples of this. See [`style::UNIT`] for the definition.
 pub use style::{BODY_FONT_SIZE, UNIT};
+
+// ─── Top-level convenience re-exports ─────────────────────────────
+//
+// `bevy_frost::prelude::*` glob-imports `corekit::*`, so anything
+// re-exported here surfaces directly under the consumer's prelude
+// (`use bevy_frost::prelude::*;` → `RibbonOpen`, `AccentColor`, …
+// in scope). These are the names the old `frostcore` crate
+// surfaced — keeping them callable via the same paths means apps
+// that hadn't fully migrated to nested-module imports still
+// compile against corekit without breakage.
+
+pub use command_palette::{command_palette, CommandPaletteState, PaletteItem};
+pub use ribbon::{
+    draw_assembly, find_item, find_ribbon, RibbonClick, RibbonCluster, RibbonDef, RibbonDrag,
+    RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,
+    RibbonWidth,
+};
+pub use style::{
+    apply_theme, set_glass_opacity, AccentColor, GlassOpacity,
+};
+
+// `widgets` is the legacy module name for `widget`. Several apps
+// still import `bevy_frost::widgets::*` — keep an alias so they
+// compile.
+pub use widget as widgets;
 
 // Re-export of the bundled `iconflow` crate so consumers can reach
 // `iconflow::list(Pack::Fluentui)`, `Pack`, etc. without their own
