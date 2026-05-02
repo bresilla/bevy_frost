@@ -135,18 +135,18 @@ pub fn pretty_slider(
     crate::widget::slider(ui, label, value, range, decimals, suffix, accent)
 }
 
-/// Dropdown trigger — alias for [`crate::widget::dropdown`]. The
-/// `id_salt` defaults to the `options` pointer; pass an explicit
-/// salt at the call site if multiple dropdowns share the same
-/// option list.
-pub fn dropdown_control(
+/// Dropdown trigger — alias for [`crate::widget::dropdown`].
+/// Same 5-arg shape: caller passes a hashable `id_salt` so
+/// multiple dropdowns sharing the same option list don't collide
+/// on persisted open/closed state.
+pub fn dropdown_control<H: std::hash::Hash>(
     ui: &mut egui::Ui,
-    options: &[&str],
+    id_salt: H,
     selected: &mut usize,
+    options: &[&str],
     accent: egui::Color32,
 ) -> egui::Response {
-    let salt = options.as_ptr() as usize;
-    crate::widget::dropdown(ui, salt, selected, options, accent)
+    crate::widget::dropdown(ui, id_salt, selected, options, accent)
 }
 
 /// 1px hairline separator across the available row width — matches
