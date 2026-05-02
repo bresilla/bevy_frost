@@ -21,7 +21,6 @@ use egui::Vec2;
 
 use crate::container::Normal;
 use crate::pane::{Pane2, PaneAnchor, PaneResize, RailZone};
-use crate::pod::Pod;
 use crate::ribbon::{
     find_item, find_ribbon, RibbonCluster, RibbonDef, RibbonEdge, RibbonItem,
     RibbonPlacement,
@@ -60,25 +59,11 @@ impl<'a> PaneBuilder<'a> {
         id_salt: &str,
         title: &str,
         default_open: bool,
-        body: impl FnOnce(&mut egui::Ui) + Send + Sync + 'static,
+        body: impl FnOnce(&mut egui::Ui),
     ) {
         let cid = self.pane_id.with(("frost_compat_section", id_salt));
-        // First-frame default-open seeding — once the user toggles
-        // the chevron, the persisted value takes over.
-        let body_open_key = cid.with("body_open");
-        let already_set: bool = self
-            .ui
-            .ctx()
-            .data_mut(|d| d.get_persisted::<bool>(body_open_key))
-            .is_some();
-        if !already_set {
-            self.ui
-                .ctx()
-                .data_mut(|d| d.insert_persisted(body_open_key, default_open));
-        }
-
-        let pod = Pod::new(cid.with("pod")).with_custom(body);
-        Normal::new(title, self.anchor, self.accent, cid).show(self.ui, vec![pod]);
+        seed_default_open(self.ui.ctx(), cid, default_open);
+        Normal::new(title, self.anchor, self.accent, cid).show_raw(self.ui, body);
     }
 
     /// Same as [`PaneBuilder::section`] but lets the caller provide
@@ -90,25 +75,25 @@ impl<'a> PaneBuilder<'a> {
         title: &str,
         icon: &'static str,
         default_open: bool,
-        body: impl FnOnce(&mut egui::Ui) + Send + Sync + 'static,
+        body: impl FnOnce(&mut egui::Ui),
     ) {
         let cid = self.pane_id.with(("frost_compat_section", id_salt));
-        let body_open_key = cid.with("body_open");
-        let already_set: bool = self
-            .ui
-            .ctx()
-            .data_mut(|d| d.get_persisted::<bool>(body_open_key))
-            .is_some();
-        if !already_set {
-            self.ui
-                .ctx()
-                .data_mut(|d| d.insert_persisted(body_open_key, default_open));
-        }
-
-        let pod = Pod::new(cid.with("pod")).with_custom(body);
+        seed_default_open(self.ui.ctx(), cid, default_open);
         Normal::new(title, self.anchor, self.accent, cid)
             .icon(icon)
-            .show(self.ui, vec![pod]);
+            .show_raw(self.ui, body);
+    }
+}
+
+/// First-frame seed for a container's persisted `body_open`. Once
+/// the user toggles the fold chevron, the persisted value takes
+/// over — this only fires while the slot is unset.
+fn seed_default_open(ctx: &egui::Context, cid: egui::Id, default_open: bool) {
+    let key = cid.with("body_open");
+    let already_set: bool =
+        ctx.data_mut(|d| d.get_persisted::<bool>(key)).is_some();
+    if !already_set {
+        ctx.data_mut(|d| d.insert_persisted(key, default_open));
     }
 }
 

@@ -406,6 +406,19 @@ impl Normal {
         out
     }
 
+    /// Paint the container chrome (title strip, accent banner,
+    /// frame, fold animation) with a caller-supplied body closure
+    /// instead of the canonical pod list. Use only for
+    /// compatibility shims that need to host non-`'static` content
+    /// (e.g. closures borrowing Bevy `Res`/`ResMut` parameters);
+    /// regular call sites should still go through
+    /// [`Normal::show`] with [`crate::pod::Pod`] entries so the
+    /// pod separator / fill / resize plumbing stays wired.
+    pub fn show_raw(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+        let pane_id = self.pane_id;
+        ui.push_id(pane_id, |ui| self.show_with_body(ui, body));
+    }
+
     fn show_with_body(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
         // Register this container's MIN WIDTH with the parent pane
         // so the pane's resize handles can refuse to shrink the
