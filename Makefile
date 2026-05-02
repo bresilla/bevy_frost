@@ -49,7 +49,7 @@ run-newui:
 # out of the box on nix systems; override with `RUN_WITH=` on
 # distros with a native Vulkan driver.
 run-egui:
-	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run -p egui_frost --example simple
+	@DISPLAY=$(DISPLAY) $(RUN_WITH) $(CARGO) run -p egui_frost --example demo
 
 r: run
 
