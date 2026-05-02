@@ -38,7 +38,9 @@ pub mod prelude;
 pub use corekit::*;
 
 use bevy::ecs::message::{MessageReader, Messages};
-use bevy::input::mouse::{MouseButtonInput, MouseWheel};
+use bevy::input::mouse::{
+    AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButtonInput, MouseWheel,
+};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -174,6 +176,8 @@ fn consume_egui_input_system(
     mut wheel_events: ResMut<Messages<MouseWheel>>,
     mut button_events: MessageReader<MouseButtonInput>,
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
+    mut accumulated_scroll: ResMut<AccumulatedMouseScroll>,
+    mut accumulated_motion: ResMut<AccumulatedMouseMotion>,
     mut pressed_over_pane: Local<HashSet<MouseButton>>,
 ) {
     let Ok(window) = primary_window.single() else { return };
@@ -213,9 +217,26 @@ fn consume_egui_input_system(
     }
 
     // Wheel: simple cursor-over-pane gate — wheel events are
-    // one-shot, no ongoing-interaction concept.
+    // one-shot, no ongoing-interaction concept. Drain BOTH the
+    // raw `MouseWheel` event queue AND Bevy's pre-accumulated
+    // `AccumulatedMouseScroll` resource — the latter is what most
+    // camera scripts read (`Res<AccumulatedMouseScroll>`), and it's
+    // already populated by Bevy's input pipeline by the time this
+    // system runs (`.after(EguiPreUpdateSet::ProcessInput)`), so
+    // clearing the events alone leaves the accumulated delta
+    // visible to downstream consumers.
+    //
+    // Same story for `AccumulatedMouseMotion` — orbit-style cameras
+    // read it directly to drive yaw/pitch on RMB drag, and would
+    // otherwise see motion deltas accumulated over the UI. Buttons
+    // on the pane are already masked above, so the camera shouldn't
+    // be in "drag" mode at this point — but zero the motion delta
+    // anyway to defend against viewport cameras that orbit on plain
+    // mouse motion.
     if cursor_over_pane {
         wheel_events.clear();
+        accumulated_scroll.delta = Vec2::ZERO;
+        accumulated_motion.delta = Vec2::ZERO;
     }
 
     // Clear the published-rects list now that we've consumed it.
