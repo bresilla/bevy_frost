@@ -109,6 +109,16 @@ pub struct Normal {
     /// pane reaches that bound. Defaults to
     /// [`CONTAINER_DEFAULT_MIN_WIDTH`] when not set.
     min_width: Option<f32>,
+    /// `Some(side)` when [`Normal::show_tabs`] is rendering this
+    /// container — folder-tabs project from `side` (chosen
+    /// perpendicular to the title strip). The Frame reacts: the
+    /// `side`-facing outer_margin is zeroed (so the active tab can
+    /// extend across the container's painted edge with no gap) and
+    /// the two corners adjacent to `side` are squared (so the
+    /// active-tab notch lands on a flat edge). Stroke is kept — it
+    /// reads as the container's outline framing the inactive empty
+    /// tabs alongside it. Internal; not a builder.
+    tabbed_strip_side: Option<TitleSide>,
 }
 
 impl Normal {
@@ -127,6 +137,7 @@ impl Normal {
             body_flow: None,
             initial_flow: None,
             min_width: None,
+            tabbed_strip_side: None,
         }
     }
 
@@ -200,6 +211,334 @@ impl Normal {
         ui.push_id(pane_id, |ui| self.show_inner(ui, pods)).inner
     }
 
+    /// Render the container as a tabbed panel: folder-tabs project
+    /// from the title-facing edge of the container. The ACTIVE tab
+    /// fills with the container's body colour and merges into the
+    /// container body (notching the container's outline at that
+    /// x-range). Inactive tabs are 1 px outlined empty boxes
+    /// floating above the container — the parent pane bg shows
+    /// through them.
+    ///
+    /// 0 tabs: no-op (returns empty `Vec`).
+    /// 1 tab : delegates to [`Normal::show`] with that tab's pods, no
+    ///         strip is drawn (single tab → no choice to present).
+    /// ≥2    : strip rendered, active tab's pods drive the body.
+    ///
+    /// The active index persists per-container (keyed on `pane_id`)
+    /// across frames.
+    ///
+    /// v1 supports top-title containers (strip projects upward).
+    /// Other anchors fall back to plain [`Normal::show`] of the
+    /// active tab; full strip support per anchor will land later.
+    pub fn show_tabs(
+        self,
+        ui: &mut Ui,
+        tabs: Vec<super::Tab>,
+    ) -> Vec<crate::pod::PodResponse> {
+        if tabs.is_empty() {
+            return Vec::new();
+        }
+        if tabs.len() == 1 {
+            let mut tabs = tabs;
+            let only = tabs.pop().unwrap();
+            let me = Self {
+                title: only.title,
+                icon: Some(only.icon),
+                ..self
+            };
+            return me.show(ui, only.pods);
+        }
+        let pane_id = self.pane_id;
+        ui.push_id(pane_id, |ui| self.show_inner_tabbed(ui, tabs)).inner
+    }
+
+    fn show_inner_tabbed(
+        self,
+        ui: &mut Ui,
+        mut tabs: Vec<super::Tab>,
+    ) -> Vec<crate::pod::PodResponse> {
+        let title_side = self.anchor.title_side();
+        // Strip ALWAYS sits perpendicular to the title:
+        //   Top/Bottom title (horizontal title) → strip on Left.
+        //   Left/Right title (vertical title)   → strip on Top.
+        // The strip projects FROM that container edge, so corner
+        // squaring + outer-margin zeroing live on the same edge.
+        let strip_side = match title_side {
+            TitleSide::Top | TitleSide::Bottom => TitleSide::Left,
+            TitleSide::Left | TitleSide::Right => TitleSide::Top,
+        };
+
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx: usize = ui.ctx().data_mut(|d| {
+            let stored = d
+                .get_persisted::<usize>(active_idx_key)
+                .unwrap_or(0);
+            let clamped = stored.min(tabs.len() - 1);
+            if clamped != stored {
+                d.insert_persisted(active_idx_key, clamped);
+            }
+            clamped
+        });
+
+        let tab_meta: Vec<(String, Icon<'static>)> = tabs
+            .iter()
+            .map(|t| (t.title.clone(), t.icon))
+            .collect();
+        let active_pods = std::mem::take(&mut tabs[active_idx].pods);
+        let active_title = tab_meta[active_idx].0.clone();
+        let active_icon = tab_meta[active_idx].1;
+
+        let me = Self {
+            title: active_title,
+            icon: Some(active_icon),
+            tabbed_strip_side: Some(strip_side),
+            ..self
+        };
+        let accent = me.accent;
+        let pane_id = me.pane_id;
+
+        // Corner-tick suppression key — set AFTER the strip is laid
+        // out (geometric overlap check requires the real strip
+        // rect). Read by `paint_corner_ticks` for the NEXT frame's
+        // paint; for static state previous frame's value is
+        // identical, so the visual stays correct between clicks.
+        let blocked_key = pane_id.with("frost_tabbed_blocked_corner");
+        let openness_for_block =
+            pane::body_openness(ui.ctx(), pane_id);
+
+        // Strip + cell sizing:
+        //   STRIP_THICKNESS — perpendicular to the strip's long axis;
+        //     keeps the icon close to the corner / pane edge (small
+        //     pad = STRIP_THICKNESS - icon_size, halved on each side).
+        //   TAB_LEN — cell extent ALONG the long axis; sets the
+        //     active fill's footprint and the inner pad around the
+        //     icon along that axis.
+        //   TAB_GAP — extra spacing BETWEEN cells along the long
+        //     axis; combines with cell-internal padding to set the
+        //     visual rhythm between icons.
+        const STRIP_THICKNESS: f32 = 24.0;
+        const TAB_LEN: f32 = 28.0;
+        const TAB_GAP: f32 = 6.0;
+        // Active tab fill bleeds INTO the container by this many px
+        // so it overpaints the container's adjacent stroke — no
+        // visible seam between tab and body.
+        const TAB_OVERLAP: f32 = 2.5;
+
+        // Title-side chrome that sits between the container's outer
+        // edge and the body's leading edge:
+        //   outer.title — Frame's outer-margin on the title-facing side
+        //   TITLE_THK   — title row itself
+        //   2 × HALF    — full title-body gap (both halves)
+        // The strip's title-facing end is offset by this amount so
+        // its first tab sits at the body's leading edge, not in the
+        // gap or the title.
+        let theme_now = style::theme();
+        let outer_title = theme_now.section_outer_margin_flow_title as f32;
+        let title_offset =
+            outer_title + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF * 2.0;
+
+        // Carve the container's max_rect from the parent's available
+        // rect, leaving STRIP_THICKNESS of headroom on the strip side.
+        // The container itself renders inside this max_rect with the
+        // parent's layout (TopDown / BottomUp / LeftToRight /
+        // RightToLeft), so title/body stacking matches what a
+        // non-tabbed Normal would produce under the same anchor.
+        //
+        // PRO themes leave breathing room on the strip's OUTER side
+        // so the visible distance "tab content → pane edge" matches
+        // "body content → pane edge" on the OPPOSITE side. The body's
+        // content sits inset by `outer_span + section_pad_x` from the
+        // pane: `outer_span` is the Frame's outer-margin gap, and
+        // `section_pad_x` is the Frame's inner padding before the
+        // first widget. Mirror that sum on the strip's outer side.
+        // GAME themes don't paint that margin so the shift stays 0.
+        let parent_layout = *ui.layout();
+        let avail = ui.available_rect_before_wrap();
+        let strip_outer_inset: f32 = if theme_now.name.starts_with("GAME") {
+            0.0
+        } else {
+            (theme_now.section_outer_margin_span as f32)
+                + (theme_now.section_pad_x as f32)
+        };
+        let container_max_rect = match strip_side {
+            TitleSide::Left => egui::Rect::from_min_max(
+                pos2(
+                    avail.left() + strip_outer_inset + STRIP_THICKNESS,
+                    avail.top(),
+                ),
+                avail.right_bottom(),
+            ),
+            TitleSide::Top => egui::Rect::from_min_max(
+                pos2(
+                    avail.left(),
+                    avail.top() + strip_outer_inset + STRIP_THICKNESS,
+                ),
+                avail.right_bottom(),
+            ),
+            // strip_side is always Left or Top under the match above.
+            _ => avail,
+        };
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(container_max_rect)
+                .layout(parent_layout),
+        );
+        let out = me.show(&mut child, active_pods);
+        let used = child.min_rect();
+
+        // Place the strip ALIGNED to where the container actually
+        // rendered. `used` already accounts for parent layout
+        // direction (BottomUp / RightToLeft anchor at the
+        // far edge), so deriving strip_rect from `used` keeps the
+        // strip sitting flush against the container regardless of
+        // anchor. The strip's title-facing END pulls back by
+        // `title_offset` so it doesn't overlap the title row.
+        let strip_rect = match (strip_side, title_side) {
+            (TitleSide::Left, TitleSide::Top) => egui::Rect::from_min_max(
+                pos2(used.left() - STRIP_THICKNESS, used.top() + title_offset),
+                pos2(used.left(), used.bottom()),
+            ),
+            (TitleSide::Left, TitleSide::Bottom) => egui::Rect::from_min_max(
+                pos2(used.left() - STRIP_THICKNESS, used.top()),
+                pos2(used.left(), used.bottom() - title_offset),
+            ),
+            (TitleSide::Top, TitleSide::Left) => egui::Rect::from_min_max(
+                pos2(used.left() + title_offset, used.top() - STRIP_THICKNESS),
+                pos2(used.right(), used.top()),
+            ),
+            (TitleSide::Top, TitleSide::Right) => egui::Rect::from_min_max(
+                pos2(used.left(), used.top() - STRIP_THICKNESS),
+                pos2(used.right() - title_offset, used.top()),
+            ),
+            // Other (strip_side, title_side) pairings can't occur
+            // given the strip_side derivation above.
+            _ => egui::Rect::from_min_size(used.left_top(), vec2(0.0, 0.0)),
+        };
+        paint_folder_tabs(
+            ui,
+            strip_rect,
+            &tab_meta,
+            active_idx,
+            accent,
+            pane_id,
+            active_idx_key,
+            strip_side,
+            TAB_LEN,
+            TAB_GAP,
+            TAB_OVERLAP,
+        );
+
+        // Geometric corner-tick suppression. Compute the active tab
+        // cell's REAL rect (mirrors `paint_folder_tabs`'s base layout),
+        // then check intersection against each of the four corner
+        // tick footprints. If the active cell overlaps a corner's
+        // L-bracket zone, stash the corner index — `paint_corner_ticks`
+        // (running on the NEXT paint) will skip that corner's two
+        // line segments. Tall strips with the active tab nowhere near
+        // the bottom no longer drop the bottom tick.
+        let theme_now_for_block = style::theme();
+        let tick_len = theme_now_for_block.section_corner_ticks;
+        let blocked_corner: Option<u8> =
+            if tick_len > 0.0 && openness_for_block > 0.5 {
+                let pad = style::section_padding();
+                let used_outer = egui::Rect::from_min_max(
+                    pos2(
+                        used.left() - pad.left as f32,
+                        used.top() - pad.top as f32,
+                    ),
+                    pos2(
+                        used.right() + pad.right as f32,
+                        used.bottom() + pad.bottom as f32,
+                    ),
+                );
+                let active_cell = match strip_side {
+                    TitleSide::Left | TitleSide::Right => {
+                        let cell_top = strip_rect.top()
+                            + (active_idx as f32) * (TAB_LEN + TAB_GAP);
+                        egui::Rect::from_min_size(
+                            pos2(strip_rect.left(), cell_top),
+                            vec2(strip_rect.width(), TAB_LEN),
+                        )
+                    }
+                    TitleSide::Top | TitleSide::Bottom => {
+                        let cell_left = strip_rect.left()
+                            + (active_idx as f32) * (TAB_LEN + TAB_GAP);
+                        egui::Rect::from_min_size(
+                            pos2(cell_left, strip_rect.top()),
+                            vec2(TAB_LEN, strip_rect.height()),
+                        )
+                    }
+                };
+                // L-bracket footprint per corner: a small square at
+                // the corner with side = tick_len + a couple of px
+                // slack so the suppression triggers when the active
+                // cell visually butts against the bracket, not just
+                // overlaps it.
+                let zone = tick_len + 2.0;
+                let zones: [(u8, egui::Rect); 4] = [
+                    (
+                        0,
+                        egui::Rect::from_min_size(
+                            used_outer.left_top(),
+                            vec2(zone, zone),
+                        ),
+                    ),
+                    (
+                        1,
+                        egui::Rect::from_min_size(
+                            pos2(
+                                used_outer.right() - zone,
+                                used_outer.top(),
+                            ),
+                            vec2(zone, zone),
+                        ),
+                    ),
+                    (
+                        2,
+                        egui::Rect::from_min_size(
+                            pos2(
+                                used_outer.left(),
+                                used_outer.bottom() - zone,
+                            ),
+                            vec2(zone, zone),
+                        ),
+                    ),
+                    (
+                        3,
+                        egui::Rect::from_min_size(
+                            pos2(
+                                used_outer.right() - zone,
+                                used_outer.bottom() - zone,
+                            ),
+                            vec2(zone, zone),
+                        ),
+                    ),
+                ];
+                zones
+                    .iter()
+                    .find(|(_, z)| active_cell.intersects(*z))
+                    .map(|(idx, _)| *idx)
+            } else {
+                None
+            };
+        ui.ctx().data_mut(|d| {
+            if let Some(c) = blocked_corner {
+                d.insert_temp(blocked_key, c);
+            } else {
+                d.remove::<u8>(blocked_key);
+            }
+        });
+
+        // Advance the parent layout past the union of strip + body.
+        // `allocate_rect` takes a concrete rect (in absolute coords)
+        // and updates the parent's used-rect / cursor accordingly,
+        // which works for any layout direction (TopDown advances
+        // downward, BottomUp upward, etc.).
+        let union_rect = strip_rect.union(used);
+        ui.allocate_rect(union_rect, Sense::hover());
+        out
+    }
+
     fn show_inner(
         self,
         ui: &mut Ui,
@@ -210,7 +549,12 @@ impl Normal {
         // section_padding so most of the breathing room around pod
         // content lives in the pod chrome, not the container chrome.
         const POD_PAD_X: i8 = 8;
-        const POD_PAD_Y: i8 = 6;
+        // Top + bottom padding inside each pod's Frame. Halved
+        // (was 6) — the larger value left a visibly fat gap above
+        // and below every widget row, making short rows look
+        // sparse. 3 keeps a touch of breathing room without the
+        // air gap.
+        const POD_PAD_Y: i8 = 3;
         let pods: Vec<crate::pod::Pod> = pods.into_iter().collect();
         let pods_total = pods.len();
         let pods_accent = self.accent;
@@ -999,7 +1343,7 @@ impl Normal {
         // body-facing margin lives on the OPPOSITE edge. Cross-axis
         // (the two sides parallel to the title strip) always uses
         // `cross`.
-        let outer = match title_side {
+        let mut outer = match title_side {
             TitleSide::Top => egui::Margin {
                 left: cross, right: cross,
                 top: main_title, bottom: main_body,
@@ -1017,6 +1361,37 @@ impl Normal {
                 left: main_body, right: main_title,
             },
         };
+        let mut corners = CornerRadius::same(theme.radius_md);
+        if let Some(side) = self.tabbed_strip_side {
+            // Zero the strip-side outer margin so the active tab
+            // (allocated to that side in the outer wrapper) can
+            // extend across the Frame's painted edge with no gap of
+            // pane bg between them. Square the two corners adjacent
+            // to that edge so the active-tab notch lands on a flat
+            // edge, not a rounded curve.
+            match side {
+                TitleSide::Top => {
+                    outer.top = 0;
+                    corners.nw = 0;
+                    corners.ne = 0;
+                }
+                TitleSide::Bottom => {
+                    outer.bottom = 0;
+                    corners.sw = 0;
+                    corners.se = 0;
+                }
+                TitleSide::Left => {
+                    outer.left = 0;
+                    corners.nw = 0;
+                    corners.sw = 0;
+                }
+                TitleSide::Right => {
+                    outer.right = 0;
+                    corners.ne = 0;
+                    corners.se = 0;
+                }
+            }
+        }
         if style::section_show_frame() {
             Frame::new()
                 .fill(style::glass_fill(
@@ -1024,7 +1399,7 @@ impl Normal {
                     self.accent,
                     style::glass_alpha_card(),
                 ))
-                .corner_radius(CornerRadius::same(theme.radius_md))
+                .corner_radius(corners)
                 .stroke(Stroke::new(theme.border_width, style::widget_border(self.accent)))
                 .inner_margin(style::section_padding())
                 .outer_margin(outer)
@@ -1034,6 +1409,278 @@ impl Normal {
                 .outer_margin(outer)
         }
     }
+}
+
+/// Paint folder-style tabs into `strip_rect`, projecting from
+/// `strip_side` of the container.
+///
+/// Each tab is a `tab_len`-by-`STRIP_THICKNESS` rectangle with
+/// rounded corners on the OUTER edge (away from the container) and
+/// square corners on the INNER edge (towards the container) — that's
+/// the folder-tab silhouette tipped on its side.
+///
+/// * **Active tab**: filled with `glass_fill(section_fill, accent, …)`
+///   — the SAME color the container body paints — and the rect is
+///   extended `tab_overlap` px INWARD so the fill draws over the
+///   container's adjacent stroke at this tab's range. Result: no
+///   visible seam between tab and body — they read as one shape.
+/// * **Inactive tab**: 1 px stroke around all four sides, no fill.
+///   Pane bg shows through. Hover adds a faint accent overlay.
+fn paint_folder_tabs(
+    ui: &mut Ui,
+    strip_rect: egui::Rect,
+    tab_meta: &[(String, Icon<'static>)],
+    active_idx: usize,
+    accent: Color32,
+    pane_id: Id,
+    active_idx_key: Id,
+    strip_side: TitleSide,
+    tab_len: f32,
+    tab_gap: f32,
+    tab_overlap: f32,
+) {
+    let theme = style::theme();
+    let active_fill = style::glass_fill(
+        style::section_fill(accent),
+        accent,
+        style::glass_alpha_card(),
+    );
+    // Icon size for tab cells. Bumped well above the standard widget
+    // icon size (~14) so tab icons read clearly at a glance — they're
+    // the only label the strip carries.
+    let icon_size: f32 = 20.0;
+    // GAME profiles want HIGH-CONTRAST monochrome glyphs (pure black
+    // on light, pure white on dark) by default for inactive tabs.
+    // PRO profiles use `theme.text_secondary` as the inactive base.
+    let is_game = theme.name.starts_with("GAME");
+    // Active-tab background tweaks per theme:
+    //   * GAME: square the outer corners (radius 0) — the squared
+    //     pane chrome already has zero corner radius elsewhere, so a
+    //     rounded tab background reads as inconsistent.
+    //   * PRO: keep the rounded corners. The whole strip is shifted
+    //     inward at the LAYOUT level (see `strip_outer_inset` in
+    //     `show_inner_tabbed`), so the tab background needs no
+    //     per-cell contraction here.
+    let tab_radius: u8 = if is_game { 0 } else { 5 };
+    let game_glyph_col = if theme.is_light {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    };
+    let inactive_base = if is_game {
+        game_glyph_col
+    } else {
+        theme.text_secondary
+    };
+    // Inactive cells paint their icon at REDUCED alpha across all
+    // themes — at full strength they competed with the active tab.
+    // ~78 % lands between "fully visible" and "ghosted out": the
+    // active tab still dominates, but inactive icons stay legible
+    // enough to read as switchable options at a glance.
+    let inactive_glyph_col = inactive_base.gamma_multiply(0.78);
+    // Strip orientation: vertical (stack top-to-bottom) for Left/Right
+    // strips, horizontal (flow left-to-right) for Top/Bottom strips.
+    let strip_horizontal =
+        matches!(strip_side, TitleSide::Top | TitleSide::Bottom);
+
+    for (i, (_title, icn)) in tab_meta.iter().enumerate() {
+        let (base_rect, active_rect, corners) = match strip_side {
+            TitleSide::Left => {
+                let cell_top =
+                    strip_rect.top() + (i as f32) * (tab_len + tab_gap);
+                if cell_top + tab_len > strip_rect.bottom() + 0.5 {
+                    break;
+                }
+                let base = egui::Rect::from_min_size(
+                    pos2(strip_rect.left(), cell_top),
+                    vec2(strip_rect.width(), tab_len),
+                );
+                // Active extends RIGHTWARD into the container.
+                let active = egui::Rect::from_min_max(
+                    base.min,
+                    pos2(base.max.x + tab_overlap, base.max.y),
+                );
+                let corners = CornerRadius {
+                    nw: tab_radius,
+                    sw: tab_radius,
+                    ne: 0,
+                    se: 0,
+                };
+                (base, active, corners)
+            }
+            TitleSide::Right => {
+                let cell_top =
+                    strip_rect.top() + (i as f32) * (tab_len + tab_gap);
+                if cell_top + tab_len > strip_rect.bottom() + 0.5 {
+                    break;
+                }
+                let base = egui::Rect::from_min_size(
+                    pos2(strip_rect.left(), cell_top),
+                    vec2(strip_rect.width(), tab_len),
+                );
+                let active = egui::Rect::from_min_max(
+                    pos2(base.min.x - tab_overlap, base.min.y),
+                    base.max,
+                );
+                let corners = CornerRadius {
+                    ne: tab_radius,
+                    se: tab_radius,
+                    nw: 0,
+                    sw: 0,
+                };
+                (base, active, corners)
+            }
+            TitleSide::Top => {
+                let cell_left =
+                    strip_rect.left() + (i as f32) * (tab_len + tab_gap);
+                if cell_left + tab_len > strip_rect.right() + 0.5 {
+                    break;
+                }
+                let base = egui::Rect::from_min_size(
+                    pos2(cell_left, strip_rect.top()),
+                    vec2(tab_len, strip_rect.height()),
+                );
+                let active = egui::Rect::from_min_max(
+                    base.min,
+                    pos2(base.max.x, base.max.y + tab_overlap),
+                );
+                let corners = CornerRadius {
+                    nw: tab_radius,
+                    ne: tab_radius,
+                    sw: 0,
+                    se: 0,
+                };
+                (base, active, corners)
+            }
+            TitleSide::Bottom => {
+                let cell_left =
+                    strip_rect.left() + (i as f32) * (tab_len + tab_gap);
+                if cell_left + tab_len > strip_rect.right() + 0.5 {
+                    break;
+                }
+                let base = egui::Rect::from_min_size(
+                    pos2(cell_left, strip_rect.top()),
+                    vec2(tab_len, strip_rect.height()),
+                );
+                let active = egui::Rect::from_min_max(
+                    pos2(base.min.x, base.min.y - tab_overlap),
+                    base.max,
+                );
+                let corners = CornerRadius {
+                    sw: tab_radius,
+                    se: tab_radius,
+                    nw: 0,
+                    ne: 0,
+                };
+                (base, active, corners)
+            }
+        };
+        let is_active = i == active_idx;
+        let paint_rect = if is_active { active_rect } else { base_rect };
+        let resp = ui.interact(
+            base_rect,
+            pane_id.with("frost_tab_btn").with(i),
+            Sense::click(),
+        );
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            ui.ctx()
+                .data_mut(|d| d.insert_persisted(active_idx_key, i));
+        }
+        if is_active {
+            // Active tab background — same rounded rect we had before
+            // (rounded on the strip-outer edges, square on the
+            // body-facing edges, extending `tab_overlap` past the
+            // body's edge so the fill overpaints the container's
+            // adjacent stroke at this tab's range).
+            ui.painter()
+                .rect_filled(paint_rect, corners, active_fill);
+            // Active tab GLYPH — replace the Fluent icon with a solid
+            // triangle pointing INTO the container. Filled with raw
+            // accent. Sized to MATCH the visual mass of the Fluent
+            // glyphs the inactive tabs use: a 20 px FontId glyph
+            // typically renders at ~70 % of the nominal size after
+            // line-height padding, so the triangle scales to that.
+            let triangle_extent = icon_size * 0.7;
+            let half = triangle_extent * 0.5;
+            // Inset from the body-facing edge of the cell. The
+            // triangle is shifted so its TIP sits this many px in
+            // from the body edge, biasing the whole arrow toward
+            // the body and leaving more breathing room on the
+            // outer (corner / pane) edge — the user explicitly
+            // wanted the "<" arrow tucked closer to the body.
+            const TIP_INSET_FROM_BODY: f32 = 2.0;
+            let centre = match strip_side {
+                TitleSide::Left => pos2(
+                    base_rect.right() - TIP_INSET_FROM_BODY - half,
+                    base_rect.center().y,
+                ),
+                TitleSide::Right => pos2(
+                    base_rect.left() + TIP_INSET_FROM_BODY + half,
+                    base_rect.center().y,
+                ),
+                TitleSide::Top => pos2(
+                    base_rect.center().x,
+                    base_rect.bottom() - TIP_INSET_FROM_BODY - half,
+                ),
+                TitleSide::Bottom => pos2(
+                    base_rect.center().x,
+                    base_rect.top() + TIP_INSET_FROM_BODY + half,
+                ),
+            };
+            let pts = match strip_side {
+                TitleSide::Left => vec![
+                    pos2(centre.x - half, centre.y - half),
+                    pos2(centre.x - half, centre.y + half),
+                    pos2(centre.x + half, centre.y),
+                ],
+                TitleSide::Right => vec![
+                    pos2(centre.x + half, centre.y - half),
+                    pos2(centre.x + half, centre.y + half),
+                    pos2(centre.x - half, centre.y),
+                ],
+                TitleSide::Top => vec![
+                    pos2(centre.x - half, centre.y - half),
+                    pos2(centre.x + half, centre.y - half),
+                    pos2(centre.x, centre.y + half),
+                ],
+                TitleSide::Bottom => vec![
+                    pos2(centre.x - half, centre.y + half),
+                    pos2(centre.x + half, centre.y + half),
+                    pos2(centre.x, centre.y - half),
+                ],
+            };
+            ui.painter().add(egui::Shape::convex_polygon(
+                pts,
+                accent,
+                Stroke::NONE,
+            ));
+        } else {
+            // Inactive tabs paint NO background — bare icon at
+            // reduced alpha so the active tab dominates the strip.
+            crate::icons::paint_section_icon(
+                ui,
+                base_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                *icn,
+                icon_size,
+                inactive_glyph_col,
+            );
+        }
+        crate::debug::tag(
+            ui,
+            base_rect,
+            format!(
+                "Tab[{}]{}",
+                i,
+                if is_active { "*" } else { "" }
+            ),
+        );
+    }
+    let _ = strip_horizontal;
+    crate::debug::tag(ui, strip_rect, "TabStrip".to_string());
 }
 
 /// Paint the title strip into `rect`. Theme-aware:
@@ -1770,20 +2417,60 @@ fn paint_corner_ticks(
     // gives the GAME chrome more visual weight.
     let stroke = |c: Color32| Stroke::new(2.0, c);
 
-    let shapes: [egui::Shape; 8] = [
+    // Tabbed-container corner suppression. `Normal::show_tabs`
+    // stashes the index of the corner the active tab visually
+    // overlaps — bit 0 = TL, 1 = TR, 2 = BL, 3 = BR — so that
+    // corner's L-bracket can be hidden while the active tab sits
+    // there. Reads stale (`None`) for non-tabbed containers, and
+    // for tabbed containers whose active tab isn't at an extreme.
+    let blocked_corner: Option<u8> = ui.ctx().data(|d| {
+        d.get_temp::<u8>(container_id.with("frost_tabbed_blocked_corner"))
+    });
+    let mut shapes: Vec<egui::Shape> = Vec::with_capacity(8);
+    if blocked_corner != Some(0) {
         // ┌ top-left
-        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], stroke(tl)),
-        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], stroke(tl)),
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(lx, ty), egui::pos2(lx + len, ty)],
+            stroke(tl),
+        ));
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(lx, ty), egui::pos2(lx, ty + len)],
+            stroke(tl),
+        ));
+    }
+    if blocked_corner != Some(1) {
         // ┐ top-right
-        egui::Shape::line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], stroke(tr)),
-        egui::Shape::line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], stroke(tr)),
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(rx - len, ty), egui::pos2(rx, ty)],
+            stroke(tr),
+        ));
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(rx, ty), egui::pos2(rx, ty + len)],
+            stroke(tr),
+        ));
+    }
+    if blocked_corner != Some(2) {
         // └ bottom-left
-        egui::Shape::line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], stroke(bl)),
-        egui::Shape::line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], stroke(bl)),
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(lx, by - len), egui::pos2(lx, by)],
+            stroke(bl),
+        ));
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(lx, by), egui::pos2(lx + len, by)],
+            stroke(bl),
+        ));
+    }
+    if blocked_corner != Some(3) {
         // ┘ bottom-right
-        egui::Shape::line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], stroke(br)),
-        egui::Shape::line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], stroke(br)),
-    ];
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(rx - len, by), egui::pos2(rx, by)],
+            stroke(br),
+        ));
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(rx, by - len), egui::pos2(rx, by)],
+            stroke(br),
+        ));
+    }
     ui.painter().extend(shapes);
 }
 

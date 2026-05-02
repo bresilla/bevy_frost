@@ -18,6 +18,7 @@ pub mod tabbed;
 pub use body::Body;
 pub use normal::Normal;
 pub use separator::{paint_separator, paint_separator_resize, SeparatorOrient, SeparatorStyle};
+pub use tabbed::Tab;
 
 use egui::Id;
 
