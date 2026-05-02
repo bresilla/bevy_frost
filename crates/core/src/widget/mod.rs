@@ -12,6 +12,7 @@ pub mod color;
 pub mod context_menu;
 pub mod drag_value;
 pub mod dropdown;
+pub mod foldable;
 pub mod keybinding;
 pub mod legacy;
 pub mod progressbar;
@@ -31,6 +32,7 @@ pub use badge::{
 };
 pub use chip::{chip, chip_colored, CHIP_H};
 pub use context_menu::context_menu_frost;
+pub use foldable::section;
 pub use color::{color_rgb, color_rgba, COLOR_SWATCH_H};
 pub use drag_value::{axis_drag, axis_drag_h, drag_value, drag_value_h};
 pub use dropdown::{dropdown, dropdown_h, DROPDOWN_ROW_H};

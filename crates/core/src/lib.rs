@@ -29,6 +29,7 @@
 pub mod command_palette;
 pub mod container;
 pub mod debug;
+pub mod floating;
 pub mod icons;
 pub mod pane;
 pub mod pod;
@@ -52,6 +53,7 @@ pub use style::{BODY_FONT_SIZE, UNIT};
 // compile against corekit without breakage.
 
 pub use command_palette::{command_palette, CommandPaletteState, PaletteItem};
+pub use floating::{floating_window_for_item, PaneBuilder};
 pub use ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonClick, RibbonCluster, RibbonDef, RibbonDrag,
     RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,
@@ -59,6 +61,26 @@ pub use ribbon::{
 };
 pub use style::{
     apply_theme, set_glass_opacity, AccentColor, GlassOpacity,
+};
+
+// Surface the free widget functions at the crate root so
+// `use bevy_frost::prelude::*;` brings every standalone widget
+// (`wide_button`, `readout_row`, `chip`, `toggle`, `tree_row`,
+// `keybinding_row`, `badge_row`, `context_menu_frost`, …) into
+// scope. The TYPE-style names (`Button`, `TreeIconSlot`, …) sit
+// here too so trait-shaped widgets compose without a longer path.
+pub use widget::{
+    badge_row, badge_row_colored, button, button_h, card_button, chip, chip_colored,
+    color_rgb, color_rgba, context_menu_frost, drag_value, drag_value_h, dropdown,
+    dropdown_control, dropdown_h, hybrid_select_row, hybrid_select_row_h, key_chip,
+    keybinding_row, keybinding_row_h, labelled_row, labelled_row_custom_left, pretty_slider,
+    progressbar, progressbar_h, readout, readout_h, readout_row, row_separator,
+    search_field, select_row, select_row_h, slider, slider_h, sub_caption, text_input,
+    text_input_h, toggle, toggle_h, toggle_track_only, tree_row, wide_button, Button,
+    FillStyle, HybridSelectResponse, TreeIconKind, TreeIconSlot, TreeRowResponse,
+    BADGE_LABEL_COL_W, BADGE_ROW_H, BUTTON_LABEL_FONT, BUTTON_ROW_H, BUTTON_ROW_H_SUBTITLE,
+    CARD_BUTTON_ROW_H, CHIP_H, COLOR_SWATCH_H, DROPDOWN_ROW_H, HYBRID_SELECT_ROW_H,
+    KEYBINDING_ROW_H, LABEL_COL_WIDTH, READOUT_ROW_H, SELECT_ROW_H, TREE_INDENT, TREE_ROW_H,
 };
 
 // `widgets` is the legacy module name for `widget`. Several apps
