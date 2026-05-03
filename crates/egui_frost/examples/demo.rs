@@ -277,13 +277,21 @@ impl eframe::App for FrostApp {
 
 // ─── Container-rendering helper ────────────────────────────────────
 
-/// One container ready to render — its id, title, icon, and the pods
-/// to drop in its body. Used by [`render_containers`].
+/// One container ready to render — its id, title, icon, and either
+/// a pod list (single-body container) or a tab list (folder-tabbed
+/// container). Used by [`render_containers`]. Tabbed containers run
+/// through the SAME wrapper so they get the inter-container three-dot
+/// drag handle painted just like the regular containers.
 struct ContainerSpec {
     id: egui::Id,
     title: String,
     icon: &'static str,
-    pods: Vec<Pod>,
+    body: SpecBody,
+}
+
+enum SpecBody {
+    Pods(Vec<Pod>),
+    Tabs(Vec<corekit::container::Tab>),
 }
 
 /// Render a vertical stack of containers inside a pane body, with
@@ -322,9 +330,12 @@ fn render_containers(
     > = std::collections::HashMap::new();
     for cid in order.into_iter() {
         let Some(spec) = by_id.remove(&cid) else { continue };
-        let resp = Normal::new(spec.title.as_str(), anchor, accent, cid)
-            .icon(spec.icon)
-            .show(body_ui, spec.pods);
+        let normal = Normal::new(spec.title.as_str(), anchor, accent, cid)
+            .icon(spec.icon);
+        let resp = match spec.body {
+            SpecBody::Pods(pods) => normal.show(body_ui, pods),
+            SpecBody::Tabs(tabs) => normal.show_tabs(body_ui, tabs),
+        };
         responses.insert(cid, resp);
 
         // Skip painting the dot handle while THIS container is being
@@ -387,20 +398,20 @@ fn widgets_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) 
             id: cid(PANE_WIDGETS, "flags"),
             title: "Flags".into(),
             icon: "flag",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_WIDGETS, "flags", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_toggle_initial("power", accent, true),
                 Pod::new(pid(PANE_WIDGETS, "flags", 1))
                     .with_separator(SeparatorStyle::None)
                     .with_toggle_initial("headlights", accent, false),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_WIDGETS, "numbers"),
             title: "Numbers".into(),
             icon: "calculator",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_WIDGETS, "numbers", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("gravity", 9.81, 0.05, 0.0..=30.0, 2, " m/s²"),
@@ -410,13 +421,13 @@ fn widgets_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) 
                 Pod::new(pid(PANE_WIDGETS, "numbers", 2))
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("engine power", 750.0, 1.0, 0.0..=2000.0, 0, " kW"),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_WIDGETS, "bars"),
             title: "Bars".into(),
             icon: "gauge",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_WIDGETS, "bars", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_slider("throttle", 0.4, 0.0..=1.0, 2, "", accent),
@@ -426,13 +437,13 @@ fn widgets_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) 
                 Pod::new(pid(PANE_WIDGETS, "bars", 2))
                     .with_separator(SeparatorStyle::None)
                     .with_progress("fuel", 0.62, "62%", accent),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_WIDGETS, "buttons"),
             title: "Buttons".into(),
             icon: "button",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_WIDGETS, "buttons", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_button("Refuel", accent),
@@ -444,13 +455,13 @@ fn widgets_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) 
                         "Two-line card button with glyph + subtitle",
                         accent,
                     ),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_WIDGETS, "anim"),
             title: "Animated".into(),
             icon: "animation",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 anim("Slide left",         FillStyle::SlideLeft,              SeparatorStyle::Line,  0),
                 anim("Parallelogram",      FillStyle::Parallelogram,          SeparatorStyle::Line,  1),
                 anim("Parallelogram meet", FillStyle::ParallelogramMeet,      SeparatorStyle::Line,  2),
@@ -464,46 +475,84 @@ fn widgets_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) 
                 anim("Horizontal delayed", FillStyle::HorizontalSlideDelayed, SeparatorStyle::Line, 10),
                 anim("Vertical delayed",   FillStyle::VerticalSlideDelayed,   SeparatorStyle::Line, 11),
                 anim("Criss cross",        FillStyle::CrissCross,             SeparatorStyle::None, 12),
-            ],
+            ]),
         },
     ]);
 }
 
-/// **Containers pane** — Position + Rotation, axis-coloured drag values.
+/// **Containers pane** — two tabbed containers stacked: `Transform`
+/// (Position / Rotation / Scale) and `Velocity` (Linear / Angular).
 fn containers_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
     let pane_id = egui::Id::new(PANE_CONTAINERS);
     render_containers(body, pane_id, anchor, accent, vec![
         ContainerSpec {
-            id: cid(PANE_CONTAINERS, "pos"),
-            title: "Position".into(),
-            icon: "axis",
-            pods: vec![
-                Pod::new(pid(PANE_CONTAINERS, "pos", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("X", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
-                Pod::new(pid(PANE_CONTAINERS, "pos", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("Y", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
-                Pod::new(pid(PANE_CONTAINERS, "pos", 2))
-                    .with_separator(SeparatorStyle::None)
-                    .with_drag_value("Z", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
-            ],
+            id: cid(PANE_CONTAINERS, "xform"),
+            title: "Transform".into(),
+            icon: "cube",
+            body: SpecBody::Tabs(vec![
+                corekit::container::Tab::new("Position", "arrow-move").pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "pos", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
+                    Pod::new(pid(PANE_CONTAINERS, "pos", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
+                    Pod::new(pid(PANE_CONTAINERS, "pos", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
+                ]),
+                corekit::container::Tab::new("Rotation", "arrow-rotate-clockwise").pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                ]),
+                corekit::container::Tab::new("Scale", "maximize").pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "scl", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 1.0, 0.01, 0.01..=100.0, 3, "×"),
+                    Pod::new(pid(PANE_CONTAINERS, "scl", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 1.0, 0.01, 0.01..=100.0, 3, "×"),
+                    Pod::new(pid(PANE_CONTAINERS, "scl", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 1.0, 0.01, 0.01..=100.0, 3, "×"),
+                ]),
+            ]),
         },
         ContainerSpec {
-            id: cid(PANE_CONTAINERS, "rot"),
-            title: "Rotation".into(),
-            icon: "rotate",
-            pods: vec![
-                Pod::new(pid(PANE_CONTAINERS, "rot", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 2))
-                    .with_separator(SeparatorStyle::None)
-                    .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-            ],
+            id: cid(PANE_CONTAINERS, "vel"),
+            title: "Velocity".into(),
+            icon: "flash",
+            body: SpecBody::Tabs(vec![
+                corekit::container::Tab::new("Linear", "arrow-trending").pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "vlin", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
+                    Pod::new(pid(PANE_CONTAINERS, "vlin", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
+                    Pod::new(pid(PANE_CONTAINERS, "vlin", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
+                ]),
+                corekit::container::Tab::new("Angular", "arrow-rotate-counterclockwise").pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "vang", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
+                    Pod::new(pid(PANE_CONTAINERS, "vang", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
+                    Pod::new(pid(PANE_CONTAINERS, "vang", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
+                ]),
+            ]),
         },
     ]);
 }
@@ -548,7 +597,7 @@ fn scene_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             id: cid(PANE_SCENE, "scene"),
             title: "Scene".into(),
             icon: "folder",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_SCENE, "scene", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_search("filter by name / path…", accent),
@@ -564,18 +613,18 @@ fn scene_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                 Pod::new(pid(PANE_SCENE, "scene", 3))
                     .with_separator(SeparatorStyle::None)
                     .with_readout("selected", selected_display),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_SCENE, "flat"),
             title: "Flat list".into(),
             icon: "list",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_SCENE, "flat", 0))
                     .with_separator(SeparatorStyle::LineDots)
                     .resizable()
                     .with_hybrid_select_list(entities, Some(trailing), accent),
-            ],
+            ]),
         },
     ]);
 }
@@ -602,7 +651,7 @@ fn theme_pane(
             id: profile_id,
             title: "Profile".into(),
             icon: "person",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_THEME, "profile", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_dropdown(["PRO", "GAME"], family.0 as usize, accent),
@@ -612,13 +661,13 @@ fn theme_pane(
                 Pod::new(pid(PANE_THEME, "profile", 2))
                     .with_separator(SeparatorStyle::None)
                     .with_toggle_initial("pastel accent", accent, pastel.0),
-            ],
+            ]),
         },
         ContainerSpec {
             id: accent_id,
             title: "Accent".into(),
             icon: "color",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_THEME, "accent", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_color_rgb(
@@ -633,17 +682,17 @@ fn theme_pane(
                 Pod::new(pid(PANE_THEME, "accent", 1))
                     .with_separator(SeparatorStyle::None)
                     .with_color_rgba("tint", tint.0, accent),
-            ],
+            ]),
         },
         ContainerSpec {
             id: glass_id,
             title: "Glass".into(),
             icon: "glasses",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_THEME, "glass", 0))
                     .with_separator(SeparatorStyle::None)
                     .with_slider("opacity", glass.0 as f64, 1.0..=100.0, 0, "%", accent),
-            ],
+            ]),
         },
     ]);
     // Wire response → mutable state.
@@ -697,7 +746,7 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             id: cid(PANE_KEYS, "mouse"),
             title: "Mouse".into(),
             icon: "cursor",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_KEYS, "mouse", 0))
                     .with_separator(SeparatorStyle::None)
                     .with_keybindings(vec![
@@ -706,13 +755,13 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         ("Scroll", "log-smooth zoom"),
                         ("LMB cube", "re-tint UI accent"),
                     ]),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_KEYS, "layout"),
             title: "Layout".into(),
             icon: "grid",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_KEYS, "layout", 0))
                     .with_separator(SeparatorStyle::None)
                     .with_keybindings(vec![
@@ -721,13 +770,13 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         ("Drag btn", "reorder ribbon"),
                         ("F12", "egui debug overlay"),
                     ]),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_KEYS, "global"),
             title: "Global".into(),
             icon: "keyboard",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_KEYS, "global", 0))
                     .with_separator(SeparatorStyle::None)
                     .with_keybindings(vec![
@@ -735,7 +784,7 @@ fn keys_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         ("Ctrl+P", "command palette"),
                         ("Esc", "close palette"),
                     ]),
-            ],
+            ]),
         },
     ]);
 }
@@ -749,7 +798,7 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             id: cid(PANE_ABOUT, "info"),
             title: "bevy_frost".into(),
             icon: "info",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_ABOUT, "info", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_readout("version", env!("CARGO_PKG_VERSION")),
@@ -762,13 +811,13 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                 Pod::new(pid(PANE_ABOUT, "info", 3))
                     .with_separator(SeparatorStyle::None)
                     .with_readout("egui", "0.33"),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_ABOUT, "features"),
             title: "Features".into(),
             icon: "tag",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_ABOUT, "features", 0))
                     .with_separator(SeparatorStyle::None)
                     .with_tag_items(
@@ -792,13 +841,13 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         ],
                         accent,
                     ),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_ABOUT, "stats"),
             title: "Stage stats".into(),
             icon: "info",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_ABOUT, "stats", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_badge_row(
@@ -841,7 +890,7 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         ],
                         accent,
                     ),
-            ],
+            ]),
         },
     ]);
 }
@@ -859,7 +908,7 @@ fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
             id: cid(PANE_EDITOR, "graph"),
             title: "Node graph".into(),
             icon: "flowchart",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_EDITOR, "graph", 0))
                     .with_separator(SeparatorStyle::None)
                     .fill()
@@ -875,13 +924,13 @@ fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         );
                         ui.ctx().data_mut(|d| d.insert_temp(graph_id, graph));
                     }),
-            ],
+            ]),
         },
         ContainerSpec {
             id: cid(PANE_EDITOR, "code"),
             title: "Source".into(),
             icon: "code",
-            pods: vec![
+            body: SpecBody::Pods(vec![
                 Pod::new(pid(PANE_EDITOR, "code", 0))
                     .with_separator(SeparatorStyle::None)
                     .fill()
@@ -896,7 +945,7 @@ fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                         );
                         ui.ctx().data_mut(|d| d.insert_temp(code_id, text));
                     }),
-            ],
+            ]),
         },
     ]);
 }

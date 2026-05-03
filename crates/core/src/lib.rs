@@ -32,6 +32,7 @@ pub mod debug;
 pub mod extras;
 pub mod floating;
 pub mod icons;
+pub mod layer;
 pub mod pane;
 pub mod pod;
 pub mod ribbon;

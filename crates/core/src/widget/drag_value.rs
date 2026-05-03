@@ -62,16 +62,27 @@ pub fn drag_value_h(
             on_panel(),
         );
     }
-    // Place the DragValue inside its own child UI so egui's
-    // own widget chrome (border/fill) paints inside `input_rect`
-    // exactly.
+    // Place the DragValue inside its own child UI so we can override
+    // text + spacing without bleeding to siblings. `add_sized` uses
+    // `centered_and_justified`, which only stretches main-axis and
+    // leaves the button's natural HEIGHT (~15 px) centered in the
+    // 18 px row — pushing the text + frame off the row's centreline.
+    // `ui.put(rect, widget)` forces the widget into the exact
+    // `input_rect`, so frame + text both span the full row and
+    // share a centreline with the label glyph painted on the left.
+    // Button vertical padding is also zeroed so the inner text
+    // anchors at the rect's geometric centre rather than 1 px below.
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(input_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    child.add_sized(
-        egui::vec2(input_w, height),
+    child.style_mut().override_font_id = Some(egui::FontId::proportional(
+        (BODY_FONT_SIZE * scale).round(),
+    ));
+    child.style_mut().spacing.button_padding.y = 0.0;
+    child.put(
+        input_rect,
         egui::DragValue::new(value)
             .speed(speed)
             .range(range)
@@ -140,8 +151,13 @@ pub fn axis_drag_h(
             .max_rect(input_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    child.add_sized(
-        egui::vec2(input_w, height),
+    child.style_mut().override_font_id = Some(egui::FontId::new(
+        (BODY_FONT_SIZE * scale).round(),
+        egui::FontFamily::Monospace,
+    ));
+    child.style_mut().spacing.button_padding.y = 0.0;
+    child.put(
+        input_rect,
         egui::DragValue::new(value)
             .speed(speed)
             .fixed_decimals(decimals)

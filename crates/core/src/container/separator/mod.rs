@@ -27,10 +27,9 @@ use egui::{vec2, Color32, Rect, Response, Sense, Stroke, Ui};
 use crate::style;
 
 /// Alpha applied to the title-divider colour when painting the
-/// separator. `255` so the inter-pod separator paints at the same
-/// opacity as the hairline under the container title — the two
-/// horizontal rules read as identical strokes.
-const SEPARATOR_ALPHA: u8 = 255;
+/// separator. Halved across all themes — the full-strength rule
+/// claimed too much of the user's eye on every row.
+const SEPARATOR_ALPHA: u8 = 128;
 
 /// Cross-axis strip thickness — the rect EVERY separator reserves
 /// in the parent ui, every style and orientation. Same value for
@@ -48,9 +47,10 @@ const DOT_R: f32 = 0.9;
 /// as part of the same border family.
 const RULE_W: f32 = 1.0;
 /// Inset from the edge of the parent ui where the line / flanking
-/// rules begin. Keeps the separator from butting up against the
-/// container's chrome.
-const EDGE_INSET: f32 = 2.0;
+/// rules begin. Effectively zero — the rule runs the full width
+/// of the strip the parent allocated, so no breathing gap remains
+/// between the rule's ends and whatever sits on either side.
+const EDGE_INSET: f32 = 0.0;
 /// Gap between the dot cluster and the start of each flanking rule
 /// in the `LineDots` variant — keeps the dots and the rules from
 /// touching.
@@ -150,7 +150,9 @@ fn allocate_strip(ui: &mut Ui, orient: SeparatorOrient) -> Rect {
 /// state of [`paint_separator_resize`]. Pulls from the active
 /// theme's `border_subtle` so inter-pod separators match the
 /// hairline divider painted under each container's title — the two
-/// horizontal rules in a section read as the same family.
+/// horizontal rules in a section read as the same family. Alpha
+/// is the half-strength `SEPARATOR_ALPHA` across all themes so the
+/// rule reads as a quiet whisper rather than a hard divider.
 fn default_ink() -> Color32 {
     let base = style::theme().border_subtle;
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), SEPARATOR_ALPHA)
