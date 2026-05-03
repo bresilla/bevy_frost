@@ -119,6 +119,19 @@ pub struct Normal {
     /// reads as the container's outline framing the inactive empty
     /// tabs alongside it. Internal; not a builder.
     tabbed_strip_side: Option<TitleSide>,
+    /// Per-instance override for the title row's thickness
+    /// (perpendicular to the title strip's long axis). When `None`,
+    /// the global [`TITLE_ZONE_THICKNESS`] applies. Set by the
+    /// GAME-tabbed render path to double the title row so the
+    /// icon + label tab buttons have room to stack vertically.
+    title_thickness_override: Option<f32>,
+    /// `true` to suppress the GAME-theme accent banner that
+    /// otherwise paints across the title row. The GAME-tabbed
+    /// render path sets this so each tab cell can paint its OWN
+    /// background colour independently — without the banner under
+    /// them, transparent inactive cells reveal the pane bg
+    /// (instead of the title's accent fill bleeding through).
+    suppress_banner: bool,
 }
 
 impl Normal {
@@ -138,6 +151,8 @@ impl Normal {
             initial_flow: None,
             min_width: None,
             tabbed_strip_side: None,
+            title_thickness_override: None,
+            suppress_banner: false,
         }
     }
 
@@ -255,8 +270,18 @@ impl Normal {
     fn show_inner_tabbed(
         self,
         ui: &mut Ui,
-        mut tabs: Vec<super::Tab>,
+        tabs: Vec<super::Tab>,
     ) -> Vec<crate::pod::PodResponse> {
+        // GAME profiles render an entirely different tab layout:
+        // the container's title row IS the tab strip, divided into
+        // N equal slots, each slot drawing icon-on-top + label-below.
+        // PRO keeps the side-strip folder-tab look. Dispatch here so
+        // the rest of `show_inner_tabbed` (PRO path) stays simple.
+        if style::theme().name.starts_with("GAME") {
+            return self.show_inner_tabbed_game(ui, tabs);
+        }
+
+        let mut tabs = tabs;
         let title_side = self.anchor.title_side();
         // Strip ALWAYS sits perpendicular to the title:
         //   Top/Bottom title (horizontal title) → strip on Left.
@@ -296,15 +321,6 @@ impl Normal {
         };
         let accent = me.accent;
         let pane_id = me.pane_id;
-
-        // Corner-tick suppression key — set AFTER the strip is laid
-        // out (geometric overlap check requires the real strip
-        // rect). Read by `paint_corner_ticks` for the NEXT frame's
-        // paint; for static state previous frame's value is
-        // identical, so the visual stays correct between clicks.
-        let blocked_key = pane_id.with("frost_tabbed_blocked_corner");
-        let openness_for_block =
-            pane::body_openness(ui.ctx(), pane_id);
 
         // Strip + cell sizing:
         //   STRIP_THICKNESS — perpendicular to the strip's long axis;
@@ -428,107 +444,6 @@ impl Normal {
             TAB_OVERLAP,
         );
 
-        // Geometric corner-tick suppression. Compute the active tab
-        // cell's REAL rect (mirrors `paint_folder_tabs`'s base layout),
-        // then check intersection against each of the four corner
-        // tick footprints. If the active cell overlaps a corner's
-        // L-bracket zone, stash the corner index — `paint_corner_ticks`
-        // (running on the NEXT paint) will skip that corner's two
-        // line segments. Tall strips with the active tab nowhere near
-        // the bottom no longer drop the bottom tick.
-        let theme_now_for_block = style::theme();
-        let tick_len = theme_now_for_block.section_corner_ticks;
-        let blocked_corner: Option<u8> =
-            if tick_len > 0.0 && openness_for_block > 0.5 {
-                let pad = style::section_padding();
-                let used_outer = egui::Rect::from_min_max(
-                    pos2(
-                        used.left() - pad.left as f32,
-                        used.top() - pad.top as f32,
-                    ),
-                    pos2(
-                        used.right() + pad.right as f32,
-                        used.bottom() + pad.bottom as f32,
-                    ),
-                );
-                let active_cell = match strip_side {
-                    TitleSide::Left | TitleSide::Right => {
-                        let cell_top = strip_rect.top()
-                            + (active_idx as f32) * (TAB_LEN + TAB_GAP);
-                        egui::Rect::from_min_size(
-                            pos2(strip_rect.left(), cell_top),
-                            vec2(strip_rect.width(), TAB_LEN),
-                        )
-                    }
-                    TitleSide::Top | TitleSide::Bottom => {
-                        let cell_left = strip_rect.left()
-                            + (active_idx as f32) * (TAB_LEN + TAB_GAP);
-                        egui::Rect::from_min_size(
-                            pos2(cell_left, strip_rect.top()),
-                            vec2(TAB_LEN, strip_rect.height()),
-                        )
-                    }
-                };
-                // L-bracket footprint per corner: a small square at
-                // the corner with side = tick_len + a couple of px
-                // slack so the suppression triggers when the active
-                // cell visually butts against the bracket, not just
-                // overlaps it.
-                let zone = tick_len + 2.0;
-                let zones: [(u8, egui::Rect); 4] = [
-                    (
-                        0,
-                        egui::Rect::from_min_size(
-                            used_outer.left_top(),
-                            vec2(zone, zone),
-                        ),
-                    ),
-                    (
-                        1,
-                        egui::Rect::from_min_size(
-                            pos2(
-                                used_outer.right() - zone,
-                                used_outer.top(),
-                            ),
-                            vec2(zone, zone),
-                        ),
-                    ),
-                    (
-                        2,
-                        egui::Rect::from_min_size(
-                            pos2(
-                                used_outer.left(),
-                                used_outer.bottom() - zone,
-                            ),
-                            vec2(zone, zone),
-                        ),
-                    ),
-                    (
-                        3,
-                        egui::Rect::from_min_size(
-                            pos2(
-                                used_outer.right() - zone,
-                                used_outer.bottom() - zone,
-                            ),
-                            vec2(zone, zone),
-                        ),
-                    ),
-                ];
-                zones
-                    .iter()
-                    .find(|(_, z)| active_cell.intersects(*z))
-                    .map(|(idx, _)| *idx)
-            } else {
-                None
-            };
-        ui.ctx().data_mut(|d| {
-            if let Some(c) = blocked_corner {
-                d.insert_temp(blocked_key, c);
-            } else {
-                d.remove::<u8>(blocked_key);
-            }
-        });
-
         // Advance the parent layout past the union of strip + body.
         // `allocate_rect` takes a concrete rect (in absolute coords)
         // and updates the parent's used-rect / cursor accordingly,
@@ -536,6 +451,85 @@ impl Normal {
         // downward, BottomUp upward, etc.).
         let union_rect = strip_rect.union(used);
         ui.allocate_rect(union_rect, Sense::hover());
+        out
+    }
+
+    /// GAME-theme tabbed render: the container's TITLE ROW is divided
+    /// into N equal slots — one per tab — each slot showing icon
+    /// stacked above label. The active slot fills with a contrasting
+    /// colour against the title banner. The container's regular title
+    /// text + floating icon are suppressed (replaced by the tab
+    /// strip). Body still renders normally underneath.
+    fn show_inner_tabbed_game(
+        self,
+        ui: &mut Ui,
+        mut tabs: Vec<super::Tab>,
+    ) -> Vec<crate::pod::PodResponse> {
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx: usize = ui.ctx().data_mut(|d| {
+            let stored =
+                d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
+            let clamped = stored.min(tabs.len() - 1);
+            if clamped != stored {
+                d.insert_persisted(active_idx_key, clamped);
+            }
+            clamped
+        });
+        let tab_meta: Vec<(String, Icon<'static>)> = tabs
+            .iter()
+            .map(|t| (t.title.clone(), t.icon))
+            .collect();
+        let active_pods = std::mem::take(&mut tabs[active_idx].pods);
+
+        // Render the container with NO title text and NO floating
+        // icon. The banner still paints over the title row (GAME
+        // theme always paints it), giving us a clean accent zone to
+        // stamp tab buttons on top of. `tabbed_strip_side` stays
+        // `None` — we don't want the side-strip chrome adjustments.
+        // Title row is DOUBLED (`title_thickness_override` = 2 ×
+        // `TITLE_ZONE_THICKNESS`) so the icon + label tab buttons
+        // have room to stack vertically without crushing.
+        let pane_id = self.pane_id;
+        let accent = self.accent;
+        let me = Self {
+            title: String::new(),
+            icon: None,
+            tabbed_strip_side: None,
+            title_thickness_override: Some(TITLE_ZONE_THICKNESS * 2.0),
+            suppress_banner: true,
+            ..self
+        };
+        let out = me.show(ui, active_pods);
+
+        // Read the title rect that `paint_title` stashed during
+        // render. If absent (folded container or first frame), skip
+        // the tab paint — there's nothing to overlay on.
+        let title_rect: Option<egui::Rect> = ui
+            .ctx()
+            .data(|d| d.get_temp(pane_id.with("frost_normal_title_rect")));
+        let Some(title_rect) = title_rect else {
+            return out;
+        };
+        // Extend the rect outward by `inner_margin` so cells reach
+        // the Frame's painted edge (= where the banner used to draw)
+        // and there's no uncoloured ring of pane bg around the strip.
+        let theme = style::theme();
+        let inner_x = theme.section_pad_x as f32;
+        let inner_y = theme.section_pad_y as f32;
+        let title_rect = egui::Rect::from_min_max(
+            pos2(title_rect.left() - inner_x, title_rect.top() - inner_y),
+            pos2(title_rect.right() + inner_x, title_rect.bottom()),
+        );
+
+        paint_top_tabs(
+            ui,
+            title_rect,
+            &tab_meta,
+            active_idx,
+            accent,
+            pane_id,
+            active_idx_key,
+        );
         out
     }
 
@@ -889,10 +883,16 @@ impl Normal {
             (outer_avail.y - pad_h - outer_h - stroke_w).max(0.0)
         };
 
+        // Resolve the title row's perpendicular extent: per-instance
+        // override (set by GAME-tabbed render path) wins over the
+        // global default. Used both for the title's allocated slot
+        // and for the GAME banner's bottom edge below.
+        let title_thickness =
+            self.title_thickness_override.unwrap_or(TITLE_ZONE_THICKNESS);
         let title_size = if horizontal_strip {
-            vec2(span_inner, TITLE_ZONE_THICKNESS)
+            vec2(span_inner, title_thickness)
         } else {
-            vec2(TITLE_ZONE_THICKNESS, span_inner)
+            vec2(title_thickness, span_inner)
         };
 
         // Shared body recipe — applies the span-axis clamp so child
@@ -905,7 +905,12 @@ impl Normal {
         let accent = self.accent;
         let icon = self.icon;
 
-        let banner_filled = style::theme().title_strip_filled;
+        // GAME themes paint an accent banner across the title row.
+        // Suppress it when `suppress_banner` is set (GAME tabbed path)
+        // so each tab cell owns its own background and a transparent
+        // inactive cell reveals pane bg, not the banner accent.
+        let banner_filled =
+            style::theme().title_strip_filled && !self.suppress_banner;
 
         // Open state + animation are stored on the parent pane's
         // id (NOT `ui.id()`) so `Pane2::show` and `Normal::show`
@@ -1247,26 +1252,26 @@ impl Normal {
                             egui::pos2(painted_l, painted_t),
                             egui::pos2(
                                 painted_r,
-                                used.top() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                                used.top() + title_thickness + TITLE_BODY_GAP_HALF,
                             ),
                         ),
                         TitleSide::Bottom => egui::Rect::from_min_max(
                             egui::pos2(
                                 painted_l,
-                                used.bottom() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                                used.bottom() - title_thickness - TITLE_BODY_GAP_HALF,
                             ),
                             egui::pos2(painted_r, painted_b),
                         ),
                         TitleSide::Left => egui::Rect::from_min_max(
                             egui::pos2(painted_l, painted_t),
                             egui::pos2(
-                                used.left() + TITLE_ZONE_THICKNESS + TITLE_BODY_GAP_HALF,
+                                used.left() + title_thickness + TITLE_BODY_GAP_HALF,
                                 painted_b,
                             ),
                         ),
                         TitleSide::Right => egui::Rect::from_min_max(
                             egui::pos2(
-                                used.right() - TITLE_ZONE_THICKNESS - TITLE_BODY_GAP_HALF,
+                                used.right() - title_thickness - TITLE_BODY_GAP_HALF,
                                 painted_t,
                             ),
                             egui::pos2(painted_r, painted_b),
@@ -1683,6 +1688,142 @@ fn paint_folder_tabs(
     crate::debug::tag(ui, strip_rect, "TabStrip".to_string());
 }
 
+/// Paint GAME-theme tab buttons over the container's title rect,
+/// dividing the row into N equal slots — one per tab. Each slot
+/// stacks an icon on top of a short label. The active slot fills
+/// with `pane_fill(accent)` (= the body's dark fill) so it inverts
+/// out of the surrounding accent banner; inactive slots stay
+/// transparent and let the banner show through. Click on any slot
+/// persists the new active idx for next frame.
+fn paint_top_tabs(
+    ui: &mut Ui,
+    title_rect: egui::Rect,
+    tab_meta: &[(String, Icon<'static>)],
+    active_idx: usize,
+    accent: Color32,
+    pane_id: Id,
+    active_idx_key: Id,
+) {
+    if tab_meta.is_empty() {
+        return;
+    }
+    // Inverted-from-default tab states for testing:
+    //   inactive → solid accent fill.
+    //   active   → transparent (pane bg shows through).
+    // Glyphs use the contrast colour appropriate for the surface
+    // each cell ends up sitting on.
+    let inactive_fill = accent;
+    let active_text_col =
+        style::contrast_text_for(style::pane_fill(accent));
+    let inactive_text_col = style::contrast_text_for(inactive_fill);
+
+    // Icon sizing — inactive cells render at 80 % of the base size
+    // (smaller, quieter). Active cell starts ~37 % bigger than
+    // inactive when folded and grows to roughly the cell's full
+    // height when unfolded, so it reads as a prominent "lift"
+    // without fully covering the label below. (Bumped 5 % over
+    // the previous 1.3 / 1.7 multipliers per the user.)
+    let base_icon_size: f32 = 22.0;
+    let inactive_icon_size = base_icon_size * 0.8;
+    let active_folded = inactive_icon_size * 1.365;
+    let active_unfolded = active_folded * 1.785;
+    let openness = pane::body_openness(ui.ctx(), pane_id);
+    let openness_t = smoothstep(openness);
+    let active_icon_size = egui::lerp(active_folded..=active_unfolded, openness_t);
+    let label_font_size: f32 = 11.0;
+    let n = tab_meta.len() as f32;
+    let cell_w = (title_rect.width() / n).max(0.0);
+    if cell_w <= 0.0 {
+        return;
+    }
+    for (i, (title, icn)) in tab_meta.iter().enumerate() {
+        let cell_left = title_rect.left() + (i as f32) * cell_w;
+        let cell_rect = egui::Rect::from_min_size(
+            pos2(cell_left, title_rect.top()),
+            vec2(cell_w, title_rect.height()),
+        );
+        let resp = ui.interact(
+            cell_rect,
+            pane_id.with("frost_top_tab").with(i),
+            Sense::click(),
+        );
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            ui.ctx()
+                .data_mut(|d| d.insert_persisted(active_idx_key, i));
+        }
+        let is_active = i == active_idx;
+        let glyph_col = if is_active {
+            active_text_col
+        } else {
+            inactive_text_col
+        };
+        if !is_active {
+            ui.painter().rect_filled(
+                cell_rect,
+                CornerRadius::ZERO,
+                inactive_fill,
+            );
+        }
+        // Stack the icon and label vertically inside the cell.
+        // Icon centred in the upper half, label in the lower half.
+        // Each cell tracks an `active_t` (0..1) animated value —
+        // 1 while it's the active tab, 0 otherwise. The icon size
+        // lerps between the inactive and active sizes via that
+        // value, so when a different tab is clicked the previously-
+        // active icon SHRINKS and the newly-active icon GROWS at
+        // the same time, smoothly, instead of popping in/out.
+        let cx = cell_rect.center().x;
+        let active_target = if is_active { 1.0 } else { 0.0 };
+        let active_t = ui.ctx().animate_value_with_time(
+            pane_id.with("frost_top_tab_active").with(i),
+            active_target,
+            0.2,
+        );
+        let icon_size =
+            egui::lerp(inactive_icon_size..=active_icon_size, active_t);
+        let icon_centre_y = cell_rect.top() + cell_rect.height() * 0.32;
+        crate::icons::paint_section_icon(
+            ui,
+            pos2(cx, icon_centre_y),
+            egui::Align2::CENTER_CENTER,
+            *icn,
+            icon_size,
+            glyph_col,
+        );
+        // Active label slides DOWN by one font-size on click —
+        // egui's `animate_value_with_time` smooths the shift so
+        // the move reads as an animation, not a teleport.
+        let shift_target = if is_active { label_font_size } else { 0.0 };
+        let label_shift = ui.ctx().animate_value_with_time(
+            pane_id.with("frost_top_tab_label_shift").with(i),
+            shift_target,
+            0.2,
+        );
+        let label_centre_y =
+            cell_rect.top() + cell_rect.height() * 0.74 + label_shift;
+        ui.painter().text(
+            pos2(cx, label_centre_y),
+            egui::Align2::CENTER_CENTER,
+            title.to_uppercase(),
+            egui::FontId::proportional(label_font_size),
+            glyph_col,
+        );
+        crate::debug::tag(
+            ui,
+            cell_rect,
+            format!(
+                "TopTab[{}]{}",
+                i,
+                if is_active { "*" } else { "" }
+            ),
+        );
+    }
+    crate::debug::tag(ui, title_rect, "TopTabStrip".to_string());
+}
+
 /// Paint the title strip into `rect`. Theme-aware:
 /// * Title size, letter-spacing, font family, brackets, chevron all
 ///   from `theme()`.
@@ -1704,6 +1845,14 @@ fn paint_title(
     icon: Option<Icon<'_>>,
     pane_id: Id,
 ) {
+    // Publish the title's allocated rect for callers that need to
+    // know exactly where the title row landed — used by
+    // `Normal::show_tabs` (GAME path) to overlay tab buttons on the
+    // title row after the container has rendered.
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(pane_id.with("frost_normal_title_rect"), rect);
+    });
+
     let theme = style::theme();
     let title_side = anchor.title_side();
     let filled = theme.title_strip_filled;
@@ -2075,17 +2224,18 @@ fn paint_floating_icon(
     };
 
     let _ = icon_rect;
-    // Render on `Order::Foreground` so the icon sits above ribbon
-    // buttons (`Order::Middle`) and the pane chrome
-    // (`Order::Background`). Foreground-layer painters do NOT
-    // inherit the parent ui's opacity, so during the stagger fade
-    // the icon would otherwise pop in at full alpha while the
-    // container chrome was still fading. Mirror the parent's
-    // opacity onto this layer's painter so the icon fades with
-    // its container.
-    let layer_id = egui::LayerId::new(
-        egui::Order::Foreground,
+    // Floating icon paints at the `CONTAINER_FLOATING_ICON` tier —
+    // above container chrome and corner ticks, below any
+    // fullscreen / maximize overlay so the icon doesn't bleed
+    // through a maximised node graph / code editor.
+    // Foreground-layer painters do NOT inherit the parent ui's
+    // opacity, so during the stagger fade the icon would otherwise
+    // pop in at full alpha while the container chrome was still
+    // fading. Mirror the parent's opacity onto this layer's
+    // painter so the icon fades with its container.
+    let layer_id = crate::layer::layer_id(
         ui.id().with("frost_floating_icon_layer"),
+        crate::layer::z::CONTAINER_FLOATING_ICON,
     );
     let parent_opacity = ui.opacity();
     match icon_src {
@@ -2417,60 +2567,28 @@ fn paint_corner_ticks(
     // gives the GAME chrome more visual weight.
     let stroke = |c: Color32| Stroke::new(2.0, c);
 
-    // Tabbed-container corner suppression. `Normal::show_tabs`
-    // stashes the index of the corner the active tab visually
-    // overlaps — bit 0 = TL, 1 = TR, 2 = BL, 3 = BR — so that
-    // corner's L-bracket can be hidden while the active tab sits
-    // there. Reads stale (`None`) for non-tabbed containers, and
-    // for tabbed containers whose active tab isn't at an extreme.
-    let blocked_corner: Option<u8> = ui.ctx().data(|d| {
-        d.get_temp::<u8>(container_id.with("frost_tabbed_blocked_corner"))
-    });
-    let mut shapes: Vec<egui::Shape> = Vec::with_capacity(8);
-    if blocked_corner != Some(0) {
+    let shapes: [egui::Shape; 8] = [
         // ┌ top-left
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(lx, ty), egui::pos2(lx + len, ty)],
-            stroke(tl),
-        ));
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(lx, ty), egui::pos2(lx, ty + len)],
-            stroke(tl),
-        ));
-    }
-    if blocked_corner != Some(1) {
+        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], stroke(tl)),
+        egui::Shape::line_segment([egui::pos2(lx, ty), egui::pos2(lx, ty + len)], stroke(tl)),
         // ┐ top-right
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(rx - len, ty), egui::pos2(rx, ty)],
-            stroke(tr),
-        ));
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(rx, ty), egui::pos2(rx, ty + len)],
-            stroke(tr),
-        ));
-    }
-    if blocked_corner != Some(2) {
+        egui::Shape::line_segment([egui::pos2(rx - len, ty), egui::pos2(rx, ty)], stroke(tr)),
+        egui::Shape::line_segment([egui::pos2(rx, ty), egui::pos2(rx, ty + len)], stroke(tr)),
         // └ bottom-left
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(lx, by - len), egui::pos2(lx, by)],
-            stroke(bl),
-        ));
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(lx, by), egui::pos2(lx + len, by)],
-            stroke(bl),
-        ));
-    }
-    if blocked_corner != Some(3) {
+        egui::Shape::line_segment([egui::pos2(lx, by - len), egui::pos2(lx, by)], stroke(bl)),
+        egui::Shape::line_segment([egui::pos2(lx, by), egui::pos2(lx + len, by)], stroke(bl)),
         // ┘ bottom-right
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(rx - len, by), egui::pos2(rx, by)],
-            stroke(br),
-        ));
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(rx, by - len), egui::pos2(rx, by)],
-            stroke(br),
-        ));
-    }
-    ui.painter().extend(shapes);
+        egui::Shape::line_segment([egui::pos2(rx - len, by), egui::pos2(rx, by)], stroke(br)),
+        egui::Shape::line_segment([egui::pos2(rx, by - len), egui::pos2(rx, by)], stroke(br)),
+    ];
+    // L-brackets paint at the `CONTAINER_TICKS` tier — above the
+    // pane content / container chrome, below any fullscreen
+    // overlay (`FULLSCREEN` tier) and above tab-cell fills.
+    let p = crate::layer::painter(
+        ui,
+        container_id.with("frost_corner_ticks"),
+        crate::layer::z::CONTAINER_TICKS,
+    );
+    p.extend(shapes);
 }
 
