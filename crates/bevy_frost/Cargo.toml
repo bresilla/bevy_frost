@@ -81,6 +81,12 @@ egui-probe = ["corekit/egui-probe"]
 # local checkout.
 bevy_glacial = { git = "https://github.com/bresilla/bevy_glacial.git", rev = "d7bc6d3" }
 
+# `egui_plot` — used by the demo's Plot / Histogram node bodies
+# for sophisticated time-series + bar-chart visualisations.
+# `0.33.0` ships against egui 0.32; we need 0.34 to align with
+# our workspace egui 0.33.3.
+egui_plot = "0.34"
+
 [[example]]
 name = "demo"
 path = "examples/demo.rs"

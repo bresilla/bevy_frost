@@ -1515,6 +1515,51 @@ impl BoolOp {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+enum NoiseMode { FBM, Turbulence, Ridged }
+impl NoiseMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::FBM        => "FBM",
+            Self::Turbulence => "Turbulence",
+            Self::Ridged     => "Ridged",
+        }
+    }
+    /// Combine octaves of value-noise into the chosen pattern.
+    /// `octaves`, `persistence` (amplitude decay), `lacunarity`
+    /// (frequency growth) follow the standard FBM convention.
+    fn sample(
+        self, seed: u32, x: f64, y: f64,
+        octaves: u32, persistence: f64, lacunarity: f64,
+    ) -> f64 {
+        let mut amp = 1.0;
+        let mut freq = 1.0;
+        let mut acc = 0.0;
+        let mut norm = 0.0;
+        for o in 0..octaves.max(1) {
+            let n = sample_2d_value_noise(seed.wrapping_add(o), x * freq, y * freq);
+            // sample_2d_value_noise is 0..1 — re-centre to -1..1.
+            let s = n * 2.0 - 1.0;
+            let v = match self {
+                Self::FBM        => s,
+                Self::Turbulence => s.abs(),
+                Self::Ridged     => 1.0 - s.abs(),
+            };
+            acc += v * amp;
+            norm += amp;
+            amp *= persistence;
+            freq *= lacunarity;
+        }
+        let v = acc / norm.max(1e-9);
+        // Re-map FBM/Ridged from -1..1 to 0..1 for display.
+        match self {
+            Self::FBM    => v * 0.5 + 0.5,
+            Self::Ridged => v * 0.5 + 0.5,
+            Self::Turbulence => v.clamp(0.0, 1.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 enum WaveShape { Sine, Saw, Triangle, Square }
 impl WaveShape {
     fn label(self) -> &'static str {
@@ -1625,8 +1670,24 @@ enum GraphNode {
     // ── Sinks / display ──
     Display,        // scalar with sparkline
     Plot,           // scalar with auto-scale chart + min/max readout
+    PlotXY,         // sophisticated egui_plot line chart of a value
+                    // over time, with auto-fit axes and grid
     Preview,        // color swatch
     VectorPreview,  // x/y/z bars
+    NoiseImage {    // 2-D noise rendered as a 96×64 image inside
+                    // the body — mirrors `noise_gui` previews
+        seed: u32,
+        scale: f64,
+    },
+    NoiseField,     // Sophisticated multi-octave FBM noise.
+                    // PURE OUTPUT — every parameter (seed,
+                    // offsets, freq, octaves, persistence,
+                    // lacunarity, gain) is a graph-wired input.
+                    // Body is ONLY the 160 × 96 px image. No
+                    // sliders, no dropdowns, no buttons.
+    MultiPlot,      // 4-channel oscilloscope-style egui_plot
+                    // chart — `a / b / c / d` rendered as
+                    // separate coloured lines on shared axes.
     Output,         // terminal sink
 }
 
@@ -1715,8 +1776,12 @@ impl GraphNode {
             // Sinks
             GraphNode::Display       => "chart-multiple",
             GraphNode::Plot          => "chart-multiple",
+            GraphNode::PlotXY        => "chart-multiple",
             GraphNode::Preview       => "image",
             GraphNode::VectorPreview => "image",
+            GraphNode::NoiseImage{..}=> "image",
+            GraphNode::NoiseField    => "image",
+            GraphNode::MultiPlot     => "chart-multiple",
             GraphNode::Output        => "save",
         }
     }
@@ -1773,8 +1838,12 @@ impl GraphNode {
             // Sinks
             GraphNode::Display          => "scalar + sparkline".into(),
             GraphNode::Plot             => "auto-scale chart".into(),
+            GraphNode::PlotXY           => "egui_plot line chart".into(),
             GraphNode::Preview          => "color swatch".into(),
             GraphNode::VectorPreview    => "x/y/z bars".into(),
+            GraphNode::NoiseImage { seed, .. } => format!("2-D noise · seed {seed}"),
+            GraphNode::NoiseField        => "FBM · multi-octave".into(),
+            GraphNode::MultiPlot        => "4-channel scope".into(),
             GraphNode::Output           => "sink".into(),
         }
     }
@@ -1802,8 +1871,10 @@ impl GraphNode {
             GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. }
             | GraphNode::Wave(_)
                 => Category::Noise,
-            GraphNode::Display | GraphNode::Plot | GraphNode::Preview
-            | GraphNode::VectorPreview | GraphNode::Output
+            GraphNode::Display | GraphNode::Plot | GraphNode::PlotXY
+            | GraphNode::Preview | GraphNode::VectorPreview
+            | GraphNode::NoiseImage { .. } | GraphNode::NoiseField
+            | GraphNode::MultiPlot | GraphNode::Output
                 => Category::Sink,
         }
     }
@@ -1856,8 +1927,12 @@ impl GraphNode {
             // Sinks
             GraphNode::Display       => "Display",
             GraphNode::Plot          => "Plot",
+            GraphNode::PlotXY        => "Plot XY",
             GraphNode::Preview       => "Preview",
             GraphNode::VectorPreview => "Vector Preview",
+            GraphNode::NoiseImage{..}=> "Noise Image",
+            GraphNode::NoiseField=> "Noise Field",
+            GraphNode::MultiPlot     => "Multi Plot",
             GraphNode::Output        => "Output",
         }
     }
@@ -1908,10 +1983,32 @@ impl GraphNode {
             // Noise / wave
             GraphNode::Wave(_)       => vec![("t", PinType::Number)],
             // Sinks
-            GraphNode::Display | GraphNode::Plot       => vec![("x", PinType::Number)],
+            GraphNode::Display | GraphNode::Plot
+            | GraphNode::PlotXY                        => vec![("x", PinType::Number)],
             GraphNode::Preview                         => vec![("c", PinType::Color)],
             GraphNode::VectorPreview                   => vec![("v", PinType::Vector)],
-            GraphNode::Output                          => vec![("=", PinType::Number)],
+            GraphNode::NoiseImage { .. }               => vec![("uv offset", PinType::Number)],
+            // NoiseField — every parameter exposed as a wireable
+            // input pin (UE-style), no body sliders. Compose
+            // your noise with Number / math nodes.
+            GraphNode::NoiseField               => vec![
+                ("seed",        PinType::Number),
+                ("offset x",    PinType::Number),
+                ("offset y",    PinType::Number),
+                ("freq",        PinType::Number),
+                ("octaves",     PinType::Number),
+                ("persistence", PinType::Number),
+                ("lacunarity",  PinType::Number),
+                ("gain",        PinType::Number),
+            ],
+            GraphNode::MultiPlot                       => vec![
+                ("a", PinType::Number),
+                ("b", PinType::Number),
+                ("c", PinType::Number),
+                ("d", PinType::Number),
+            ],
+            // Output accepts ANY type — its body auto-detects.
+            GraphNode::Output                          => vec![("any", PinType::Number)],
         }
     }
 
@@ -1949,8 +2046,10 @@ impl GraphNode {
                 ("x", PinType::Number), ("y", PinType::Number), ("z", PinType::Number),
             ],
             // Sinks
-            GraphNode::Display | GraphNode::Plot | GraphNode::Preview
-            | GraphNode::VectorPreview | GraphNode::Output => vec![],
+            GraphNode::Display | GraphNode::Plot | GraphNode::PlotXY
+            | GraphNode::Preview | GraphNode::VectorPreview
+            | GraphNode::NoiseImage { .. } | GraphNode::NoiseField
+            | GraphNode::MultiPlot | GraphNode::Output => vec![],
         }
     }
 }
@@ -2204,11 +2303,47 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             let s = f * f * (3.0 - 2.0 * f);
             Value::Number(h(i) * (1.0 - s) + h(i + 1.0) * s)
         }
-        GraphNode::Display | GraphNode::Plot | GraphNode::Preview
-        | GraphNode::VectorPreview | GraphNode::Output => {
+        GraphNode::Display | GraphNode::Plot | GraphNode::PlotXY
+        | GraphNode::Preview | GraphNode::VectorPreview
+        | GraphNode::NoiseImage { .. } | GraphNode::NoiseField
+        | GraphNode::MultiPlot | GraphNode::Output => {
             Value::Number(0.0) // sinks have no outputs but be safe
         }
     }
+}
+
+/// 2-D value noise sampled at `(x, y)` with `seed`, returns
+/// `0..1`. Smoothed via a cubic `smoothstep` so the image is
+/// C¹-continuous at integer cell boundaries — the same kernel
+/// the existing 1-D `Perlin` node uses, lifted to two axes.
+/// Used by the `NoiseImage` body widget to fill a 96 × 64 px
+/// image preview à la `noise_gui`.
+fn sample_2d_value_noise(seed: u32, x: f64, y: f64) -> f64 {
+    let hash = |i: i64, j: i64| -> f64 {
+        let mut k = (i as u32).wrapping_mul(0x27d4eb2d).wrapping_add(seed);
+        k = (k ^ (k >> 15)).wrapping_mul(0x85ebca6b);
+        k = (k ^ (k >> 13)).wrapping_mul(0xc2b2ae35);
+        k = k.wrapping_add((j as u32).wrapping_mul(0x9E3779B1));
+        k = (k ^ (k >> 16)).wrapping_mul(0x85ebca6b);
+        k = (k ^ (k >> 13)).wrapping_mul(0xc2b2ae35);
+        (k ^ (k >> 16)) as f64 / u32::MAX as f64
+    };
+    let xi = x.floor();
+    let yi = y.floor();
+    let xf = x - xi;
+    let yf = y - yi;
+    let i = xi as i64;
+    let j = yi as i64;
+    let s00 = hash(i,     j    );
+    let s10 = hash(i + 1, j    );
+    let s01 = hash(i,     j + 1);
+    let s11 = hash(i + 1, j + 1);
+    let smoothstep = |t: f64| t * t * (3.0 - 2.0 * t);
+    let u = smoothstep(xf);
+    let v = smoothstep(yf);
+    let a = s00 * (1.0 - u) + s10 * u;
+    let b = s01 * (1.0 - u) + s11 * u;
+    a * (1.0 - v) + b * v
 }
 
 /// Standard HSV → RGB. h, s, v all in 0..1. Returns components in 0..1.
@@ -2328,6 +2463,11 @@ impl SnarlViewer<GraphNode> for GraphViewer {
             0xEE, 0xEE, 0xEE, 0xB0,
         );
 
+        // No header width clamp — title bar sizes to its
+        // natural content width (icon + title + subtitle).
+        // The whole node ends up `max(title_w, every_pin_row_w,
+        // body_w)`, exactly UE Slate's behaviour.
+
         // With snarl's header layout fixed to `top_down(Min)`,
         // a normal horizontal block is left-anchored as expected.
         ui.horizontal(|ui| {
@@ -2384,23 +2524,20 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<GraphNode>,
     ) -> impl SnarlPin + 'static {
-        let time = self.time;
+        // UE Blueprint pin row:
+        //   * Disconnected → `[pin glyph] [label] [default value]`.
+        //   * Connected    → `[pin glyph] [label]` (no live value
+        //     readout — UE never shows in-flight values on a
+        //     connected pin; debugging is via watch / tooltip).
+        let _ = self.time;
         let (label, ty) = snarl
             .get_node(pin.id.node)
             .and_then(|n| n.inputs().get(pin.id.input).copied())
             .unwrap_or(("", PinType::Number));
         ui.label(label);
-        // For unconnected inputs, surface a small inline editor so
-        // the user can type a constant without spawning a Number
-        // node — this is the bit that turns the demo into a
-        // gallery of input widgets.
         let connected = !pin.remotes.is_empty();
         if !connected {
             inline_input_editor(snarl, pin, ty, ui);
-        } else {
-            // Show the live evaluated value for connected inputs.
-            let v = eval_input(snarl, time, pin);
-            inline_value_readout(&v, ty, ui);
         }
         ty.pin(connected)
     }
@@ -2411,49 +2548,20 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<GraphNode>,
     ) -> impl SnarlPin + 'static {
-        let time = self.time;
+        // UE Blueprint output row: just `[label] [pin glyph]`.
+        // **No live value readout**, **no value editor** — UE
+        // never shows in-flight values on output pins. Source
+        // nodes (Number / Vector / Color / Bool) host their
+        // editor in the body instead (see `show_body` below),
+        // matching `Make Vector` / `Make LinearColor`.
         let connected = !pin.remotes.is_empty();
-        let outputs = snarl
+        let (label, ty) = snarl
             .get_node(pin.id.node)
             .map(|n| n.outputs())
-            .unwrap_or_default();
-        let (label, ty) = outputs
-            .get(pin.id.output)
-            .copied()
+            .and_then(|os| os.get(pin.id.output).copied())
             .unwrap_or(("", PinType::Number));
-
-        // Output-row widgets:
-        //   * Sources (Number/Vector/Color/Bool) get their value
-        //     editor inline so the node is one row tall.
-        //   * Computed nodes show the live evaluated value as a
-        //     small readout next to the pin.
-        match snarl.get_node_mut(pin.id.node) {
-            Some(GraphNode::Number(v)) => {
-                ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
-            }
-            Some(GraphNode::Integer(i)) => {
-                ui.add(egui::DragValue::new(i).speed(1.0));
-            }
-            Some(GraphNode::Vector(v)) => {
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(&mut v[0]).speed(0.05).prefix("x:"));
-                    ui.add(egui::DragValue::new(&mut v[1]).speed(0.05).prefix("y:"));
-                    ui.add(egui::DragValue::new(&mut v[2]).speed(0.05).prefix("z:"));
-                });
-            }
-            Some(GraphNode::Color(c)) => {
-                ui.color_edit_button_srgba(c);
-            }
-            Some(GraphNode::Bool(b)) => {
-                ui.checkbox(b, if *b { "true" } else { "false" });
-            }
-            _ => {
-                if !label.is_empty() {
-                    ui.label(label);
-                }
-                let v = eval_output(snarl, time, pin);
-                inline_value_readout(&v, ty, ui);
-            }
+        if !label.is_empty() {
+            ui.label(label);
         }
         ty.pin(connected)
     }
@@ -2461,12 +2569,24 @@ impl SnarlViewer<GraphNode> for GraphViewer {
     fn has_body(&mut self, node: &GraphNode) -> bool {
         matches!(
             node,
-            GraphNode::ScalarMath(_) | GraphNode::Trig(_) | GraphNode::Compare(_)
+            // Source nodes host their value editor in the body
+            // (UE-style `Make Vector` / `Make LinearColor`).
+            GraphNode::Number(_) | GraphNode::Integer(_)
+                | GraphNode::Vector(_) | GraphNode::Color(_)
+                | GraphNode::Bool(_)
+                // Op-dropdown nodes
+                | GraphNode::ScalarMath(_) | GraphNode::Trig(_) | GraphNode::Compare(_)
                 | GraphNode::VectorMath(_) | GraphNode::BooleanMath(_)
                 | GraphNode::Wave(_)
                 | GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. }
+                // Sinks
                 | GraphNode::Display | GraphNode::Plot
+                | GraphNode::PlotXY
                 | GraphNode::Preview | GraphNode::VectorPreview
+                | GraphNode::NoiseImage { .. }
+                | GraphNode::NoiseField
+                | GraphNode::MultiPlot
+                | GraphNode::Output
         )
     }
 
@@ -2478,9 +2598,70 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<GraphNode>,
     ) {
+        // No body width clamp — body sizes to its content like
+        // UE Slate's natural measurement. Inline widgets below
+        // are wrapped in fixed-width slots so the body can't
+        // grow per-frame when a value changes.
+
         let time = self.time;
+        let accent = corekit::style::active_accent();
         let Some(n) = snarl.get_node_mut(node) else { return };
         match n {
+            // ── Source-node value editors (UE: Make-* nodes) ──
+            GraphNode::Number(v) => {
+                let h = corekit::widget::drag_value::DRAG_VALUE_ROW_H;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(125.0, h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::drag_value::drag_value(
+                            ui, "", v, 0.05, f64::MIN..=f64::MAX, 2, "",
+                        );
+                    },
+                );
+            }
+            GraphNode::Integer(i) => {
+                let h = corekit::widget::drag_value::DRAG_VALUE_ROW_H;
+                let mut tmp = *i as f64;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(125.0, h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::drag_value::drag_value(
+                            ui, "", &mut tmp, 1.0, f64::MIN..=f64::MAX, 0, "",
+                        );
+                    },
+                );
+                *i = tmp as i64;
+            }
+            GraphNode::Vector(v) => {
+                let h = corekit::widget::drag_value::DRAG_VALUE_ROW_H;
+                for (axis, comp) in ["x", "y", "z"].iter().zip(v.iter_mut()) {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(125.0, h),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            corekit::widget::drag_value::drag_value(
+                                ui, axis, comp, 0.05,
+                                f64::MIN..=f64::MAX, 2, "",
+                            );
+                        },
+                    );
+                }
+            }
+            GraphNode::Color(c) => {
+                ui.color_edit_button_srgba(c);
+            }
+            GraphNode::Bool(b) => {
+                let h = corekit::widget::toggle::TOGGLE_ROW_H;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(125.0, h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::toggle::toggle(ui, "", b, accent);
+                    },
+                );
+            }
             GraphNode::ScalarMath(op) => {
                 op_dropdown(ui, op, &[
                     ("a + b", ScalarOp::Add), ("a − b", ScalarOp::Sub),
@@ -2534,20 +2715,49 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 ]);
             }
             GraphNode::Perlin { seed, frequency } => {
-                ui.horizontal(|ui| {
-                    ui.label("seed");
-                    ui.add(egui::DragValue::new(seed).speed(1.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("freq");
-                    ui.add(egui::Slider::new(frequency, 0.05..=8.0).logarithmic(true));
-                });
+                // Both widgets in a fixed 140-px slot so the
+                // Perlin body can't grow horizontally with the
+                // node — frost drag_value / slider both consume
+                // `available_width`. Slider is 2 rows tall.
+                const SLOT_W: f32 = 140.0;
+                let drag_h = corekit::widget::drag_value::DRAG_VALUE_ROW_H;
+                let mut seed_f = *seed as f64;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(SLOT_W, drag_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::drag_value::drag_value(
+                            ui, "seed", &mut seed_f, 1.0,
+                            0.0..=u32::MAX as f64, 0, "",
+                        );
+                    },
+                );
+                *seed = seed_f as u32;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(SLOT_W, drag_h * 2.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::slider::slider(
+                            ui, "freq", frequency, 0.05..=8.0, 2, "", accent,
+                        );
+                    },
+                );
             }
             GraphNode::WhiteNoise { seed } => {
-                ui.horizontal(|ui| {
-                    ui.label("seed");
-                    ui.add(egui::DragValue::new(seed).speed(1.0));
-                });
+                const SLOT_W: f32 = 140.0;
+                let drag_h = corekit::widget::drag_value::DRAG_VALUE_ROW_H;
+                let mut seed_f = *seed as f64;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(SLOT_W, drag_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        corekit::widget::drag_value::drag_value(
+                            ui, "seed", &mut seed_f, 1.0,
+                            0.0..=u32::MAX as f64, 0, "",
+                        );
+                    },
+                );
+                *seed = seed_f as u32;
             }
             GraphNode::Display => {
                 let v = eval_input_at(snarl, time, node, 0).as_number();
@@ -2559,6 +2769,43 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 // larger size — separate visual identity vs Display.
                 draw_sparkline(snarl, node, ui, v);
             }
+            // ── Sophisticated egui_plot line chart (HISTORY
+            //    samples on the X axis, value on the Y axis with
+            //    auto-fit, gridlines and axis labels). ──
+            GraphNode::PlotXY => {
+                use egui_plot::{Line, Plot, PlotPoints};
+                const HISTORY: usize = 256;
+                let v = eval_input_at(snarl, time, node, 0).as_number();
+                let key = egui::Id::new(("frost_demo_plotxy", node));
+                let mut buf: Vec<f64> = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<Vec<f64>>(key))
+                    .unwrap_or_default();
+                if buf.len() >= HISTORY {
+                    buf.remove(0);
+                }
+                buf.push(v);
+                ui.ctx().data_mut(|d| d.insert_temp(key, buf.clone()));
+                let points: PlotPoints = buf
+                    .iter()
+                    .enumerate()
+                    .map(|(i, y)| [i as f64, *y])
+                    .collect();
+                let line = Line::new(format!("plot_{:?}", node), points)
+                    .color(egui::Color32::from_rgb(0xA4, 0xFF, 0x34))
+                    .width(1.5);
+                Plot::new(("frost_demo_plot", node))
+                    .height(80.0)
+                    .width(220.0)
+                    .show_axes([false, true])
+                    .show_grid([false, true])
+                    .allow_drag(false)
+                    .allow_zoom(false)
+                    .allow_scroll(false)
+                    .auto_bounds(egui::Vec2b::TRUE)
+                    .show(ui, |plot_ui| { plot_ui.line(line); });
+                ui.ctx().request_repaint();
+            }
             GraphNode::Preview => {
                 let c = eval_input_at(snarl, time, node, 0).as_color();
                 let (rect, _) =
@@ -2569,6 +2816,244 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                     egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
                     egui::StrokeKind::Inside,
                 );
+            }
+            // ── Sophisticated 2-D noise image preview (à la
+            //    `noise_gui`). 96 × 64 pixels of Perlin noise
+            //    sampled with the node's seed + scale fields,
+            //    optionally offset by an upstream `uv offset`
+            //    scalar so the texture animates when fed Time.
+            GraphNode::NoiseImage { seed, scale } => {
+                const W: usize = 96;
+                const H: usize = 64;
+                let seed = *seed;
+                let scale = *scale;
+                let offset = eval_input_at(snarl, time, node, 0).as_number();
+                let key = egui::Id::new(("frost_demo_noise_image", node));
+                // Cache the previous frame's parameters so we
+                // only regenerate the texture when something
+                // actually changed (otherwise this would burn a
+                // 96×64 hash + tessellator update every frame).
+                let prev = ui.ctx().data(|d| {
+                    d.get_temp::<(u32, u64, u64)>(key)
+                });
+                let scale_bits = scale.to_bits();
+                let offset_bits = offset.to_bits();
+                let new_state = (seed, scale_bits, offset_bits);
+                let needs_redraw = prev != Some(new_state);
+
+                if needs_redraw {
+                    let mut pixels = vec![egui::Color32::BLACK; W * H];
+                    for j in 0..H {
+                        for i in 0..W {
+                            let x = (i as f64) * scale + offset;
+                            let y = (j as f64) * scale;
+                            let n = sample_2d_value_noise(seed, x, y);
+                            // 0..1 → grey, then accent-tint it.
+                            let g = (n * 255.0).clamp(0.0, 255.0) as u8;
+                            pixels[j * W + i] = egui::Color32::from_rgb(
+                                ((g as u16 * 0xA4) / 255) as u8,
+                                ((g as u16 * 0xFF) / 255) as u8,
+                                ((g as u16 * 0x34) / 255) as u8,
+                            );
+                        }
+                    }
+                    let img = egui::ColorImage {
+                        size: [W, H],
+                        pixels,
+                        source_size: egui::vec2(W as f32, H as f32),
+                    };
+                    let tex = ui.ctx().load_texture(
+                        format!("frost_demo_noise_{:?}", node),
+                        img,
+                        egui::TextureOptions::NEAREST,
+                    );
+                    let tex_key = key.with("tex");
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp::<egui::TextureHandle>(tex_key, tex);
+                        d.insert_temp::<(u32, u64, u64)>(key, new_state);
+                    });
+                }
+                let tex_key = key.with("tex");
+                if let Some(tex) = ui.ctx().data(|d| {
+                    d.get_temp::<egui::TextureHandle>(tex_key)
+                }) {
+                    let resp = ui.add(
+                        egui::Image::new((tex.id(), egui::vec2(W as f32 * 1.5, H as f32 * 1.5)))
+                            .corner_radius(egui::CornerRadius::same(3))
+                            .sense(egui::Sense::hover()),
+                    );
+                    let _ = resp;
+                }
+            }
+            // ── Output sink — displays the connected input's
+            //    live value. Auto-detects the upstream pin's
+            //    type so a Vector / Color / Bool feeding the
+            //    sink shows the appropriate readout (numeric,
+            //    swatch, etc.) — `Output` is the demo's
+            //    universal "watch this value" node.
+            GraphNode::Output => {
+                let in_pin = snarl.in_pin(InPinId { node, input: 0 });
+                let v = if in_pin.remotes.is_empty() {
+                    Value::Number(0.0)
+                } else {
+                    let r = in_pin.remotes[0];
+                    eval_output(snarl, time, &snarl.out_pin(r))
+                };
+                let inferred_ty = match &v {
+                    Value::Number(_) => PinType::Number,
+                    Value::Vector(_) => PinType::Vector,
+                    Value::Color(_)  => PinType::Color,
+                    Value::Bool(_)   => PinType::Bool,
+                    Value::Text(_)   => PinType::Text,
+                };
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new("=").monospace().size(12.0)
+                                .color(egui::Color32::from_gray(170)),
+                        )
+                        .selectable(false),
+                    );
+                    inline_value_readout(&v, inferred_ty, ui);
+                });
+            }
+            // ── Sophisticated noise field — full FBM rig with
+            //    sliders + larger image preview. Mirrors what
+            //    `noise_gui` exposes: octaves / persistence /
+            //    lacunarity / gain plus a mode selector for
+            //    FBM, Turbulence, or Ridged. ──
+            GraphNode::NoiseField => {
+                const W: usize = 160;
+                const H: usize = 96;
+                // Read inputs FIRST (immutable borrow of snarl).
+                // Sensible defaults when a pin is disconnected:
+                // we treat `Number(0)` (the eval default) as
+                // "use this fallback" so the field renders
+                // something even on a freshly-spawned node with
+                // no wires. Connected non-zero inputs override.
+                let seed_in = eval_input_at(snarl, time, node, 0).as_number();
+                let off_x   = eval_input_at(snarl, time, node, 1).as_number();
+                let off_y   = eval_input_at(snarl, time, node, 2).as_number();
+                let freq_in = eval_input_at(snarl, time, node, 3).as_number();
+                let oct_in  = eval_input_at(snarl, time, node, 4).as_number();
+                let pers_in = eval_input_at(snarl, time, node, 5).as_number();
+                let lac_in  = eval_input_at(snarl, time, node, 6).as_number();
+                let gain_in = eval_input_at(snarl, time, node, 7).as_number();
+                let seed    = if seed_in.abs() < 1e-9 { 0xCAFE } else { seed_in as u32 };
+                let freq    = if freq_in.abs() < 1e-9 { 1.0 } else { freq_in };
+                let octaves = if oct_in  < 0.5 { 4u32 }
+                              else { oct_in.clamp(1.0, 8.0) as u32 };
+                let pers    = if pers_in.abs() < 1e-9 { 0.5 } else { pers_in.clamp(0.0, 1.0) };
+                let lac     = if lac_in  < 1.0 { 2.0 } else { lac_in.clamp(1.0, 4.0) };
+                let gain    = if gain_in.abs() < 1e-9 { 1.0 } else { gain_in.max(0.01) };
+
+                // No body widgets — pure output. FBM is the
+                // only mode; if you want Turbulence/Ridged in
+                // future, add separate node types.
+                let mode = NoiseMode::FBM;
+
+                // Cache + render the image. Re-roll only when any
+                // param changed — otherwise blit the texture.
+                let key = egui::Id::new(("frost_demo_noise_field", node));
+                let new_state = (
+                    seed, octaves,
+                    pers.to_bits(), lac.to_bits(), gain.to_bits(),
+                    mode as u8,
+                    off_x.to_bits(), off_y.to_bits(), freq.to_bits(),
+                );
+                let prev = ui.ctx().data(|d| d.get_temp::<(u32, u32, u64, u64, u64, u8, u64, u64, u64)>(key));
+                if prev != Some(new_state) {
+                    let mut pixels = vec![egui::Color32::BLACK; W * H];
+                    let scale = 0.04 * freq;
+                    let g_pow = gain;
+                    for j in 0..H {
+                        for i in 0..W {
+                            let x = (i as f64) * scale + off_x;
+                            let y = (j as f64) * scale + off_y;
+                            let n = mode.sample(seed, x, y, octaves, pers, lac);
+                            let n = n.clamp(0.0, 1.0).powf(g_pow);
+                            let g = (n * 255.0).clamp(0.0, 255.0) as u8;
+                            pixels[j * W + i] = egui::Color32::from_rgb(
+                                ((g as u16 * 0xA4) / 255) as u8,
+                                ((g as u16 * 0xFF) / 255) as u8,
+                                ((g as u16 * 0x34) / 255) as u8,
+                            );
+                        }
+                    }
+                    let img = egui::ColorImage {
+                        size: [W, H],
+                        pixels,
+                        source_size: egui::vec2(W as f32, H as f32),
+                    };
+                    let tex = ui.ctx().load_texture(
+                        format!("frost_demo_noise_field_{:?}", node),
+                        img,
+                        egui::TextureOptions::NEAREST,
+                    );
+                    let tex_key = key.with("tex");
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp::<egui::TextureHandle>(tex_key, tex);
+                        d.insert_temp::<(u32, u32, u64, u64, u64, u8, u64, u64, u64)>(key, new_state);
+                    });
+                }
+                let tex_key = key.with("tex");
+                if let Some(tex) = ui.ctx().data(|d| {
+                    d.get_temp::<egui::TextureHandle>(tex_key)
+                }) {
+                    ui.add(
+                        egui::Image::new((tex.id(), egui::vec2(W as f32 * 1.4, H as f32 * 1.4)))
+                            .corner_radius(egui::CornerRadius::same(3))
+                            .sense(egui::Sense::hover()),
+                    );
+                }
+            }
+            // ── 4-channel oscilloscope plot — each input
+            //    rendered as its own coloured line. ──
+            GraphNode::MultiPlot => {
+                use egui_plot::{Line, Plot, PlotPoints};
+                const HISTORY: usize = 256;
+                const COLORS: [egui::Color32; 4] = [
+                    egui::Color32::from_rgb(0xA4, 0xFF, 0x34), // lime (Float)
+                    egui::Color32::from_rgb(0xFF, 0xC2, 0x47), // gold (Vector)
+                    egui::Color32::from_rgb(0xFF, 0xA0, 0xFF), // pink
+                    egui::Color32::from_rgb(0x6E, 0xC0, 0xFF), // cyan
+                ];
+                let key = egui::Id::new(("frost_demo_multiplot", node));
+                let mut buf: Vec<[f64; 4]> = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<Vec<[f64; 4]>>(key))
+                    .unwrap_or_default();
+                let sample = [
+                    eval_input_at(snarl, time, node, 0).as_number(),
+                    eval_input_at(snarl, time, node, 1).as_number(),
+                    eval_input_at(snarl, time, node, 2).as_number(),
+                    eval_input_at(snarl, time, node, 3).as_number(),
+                ];
+                if buf.len() >= HISTORY { buf.remove(0); }
+                buf.push(sample);
+                ui.ctx().data_mut(|d| d.insert_temp(key, buf.clone()));
+
+                Plot::new(("frost_demo_multiplot", node))
+                    .height(110.0)
+                    .width(260.0)
+                    .show_axes([false, true])
+                    .show_grid([true, true])
+                    .allow_drag(false)
+                    .allow_zoom(false)
+                    .allow_scroll(false)
+                    .auto_bounds(egui::Vec2b::TRUE)
+                    .show(ui, |plot_ui| {
+                        for ch in 0..4 {
+                            let pts: PlotPoints = buf.iter().enumerate()
+                                .map(|(i, s)| [i as f64, s[ch]]).collect();
+                            plot_ui.line(
+                                Line::new(format!("ch{ch}_{:?}", node), pts)
+                                    .color(COLORS[ch])
+                                    .width(1.5),
+                            );
+                        }
+                    });
+                ui.ctx().request_repaint();
             }
             GraphNode::VectorPreview => {
                 let v = eval_input_at(snarl, time, node, 0).as_vector();
@@ -2674,8 +3159,12 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         ui.menu_button("Sinks", |ui| {
             spawn(ui, "Display",        GraphNode::Display);
             spawn(ui, "Plot",           GraphNode::Plot);
+            spawn(ui, "Plot XY",        GraphNode::PlotXY);
             spawn(ui, "Preview",        GraphNode::Preview);
             spawn(ui, "Vector Preview", GraphNode::VectorPreview);
+            spawn(ui, "Noise Image",    GraphNode::NoiseImage { seed: 0xCAFE, scale: 0.05 });
+            spawn(ui, "Noise Field",    GraphNode::NoiseField);
+            spawn(ui, "Multi Plot",     GraphNode::MultiPlot);
             spawn(ui, "Output",         GraphNode::Output);
         });
     }
@@ -2695,57 +3184,112 @@ fn inline_input_editor(
     ty: PinType,
     ui: &mut egui::Ui,
 ) {
-    // Default placeholder when no upstream wire — read-only readout.
+    // Stable-width placeholders matching `inline_value_readout`'s
+    // column counts, so swapping between connected (live readout)
+    // and unconnected (placeholder) doesn't change the row width.
     let placeholder = match ty {
-        PinType::Number => "0".to_string(),
-        PinType::Vector => "[0, 0, 0]".to_string(),
-        PinType::Color  => "—".to_string(),
-        PinType::Bool   => "false".to_string(),
-        PinType::Text   => "".to_string(),
+        PinType::Number => format!("{:>9}", "—"),
+        PinType::Vector => format!("[{:>7}, {:>7}, {:>7}]", "—", "—", "—"),
+        PinType::Color  => format!("{:>9}", "—"),
+        PinType::Bool   => format!("{:>4}", "—"),
+        PinType::Text   => format!("{:<9}", "—"),
     };
-    ui.add(egui::Label::new(
-        egui::RichText::new(placeholder).color(egui::Color32::from_gray(140)),
-    ));
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(placeholder)
+                .monospace()
+                .size(11.0)
+                .color(egui::Color32::from_gray(140)),
+        )
+        .wrap_mode(egui::TextWrapMode::Extend)
+        .selectable(false),
+    );
 }
 
 fn inline_value_readout(v: &Value, ty: PinType, ui: &mut egui::Ui) {
+    // Monospace + right-aligned fixed-width formatting so the
+    // node body width doesn't reflow when a value's digit count
+    // changes (e.g. `0.123` → `12.345`). Each readout reserves
+    // the same number of glyph columns regardless of magnitude.
+    let mut mono = |text: String| {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .monospace()
+                    .size(11.0)
+                    .color(egui::Color32::from_gray(200)),
+            )
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .selectable(false),
+        )
+    };
     match (ty, v) {
         (_, Value::Number(n)) => {
-            ui.label(format!("{n:.3}"));
+            // 9 char-wide column — fits `-NNNN.NNN` (sign +
+            // 4-digit integer + decimal + 3 fractional). One
+            // char wider than the previous 8-wide so a negative
+            // 4-digit value doesn't overflow.
+            mono(format!("{n:>9.3}"));
         }
         (_, Value::Vector(v)) => {
-            ui.label(format!("[{:.2}, {:.2}, {:.2}]", v[0], v[1], v[2]));
+            // Each component in 7 chars: `-NN.NN`.
+            mono(format!("[{:>7.2}, {:>7.2}, {:>7.2}]", v[0], v[1], v[2]));
         }
         (_, Value::Color(c)) => {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 14.0), egui::Sense::hover());
+            // Fixed-width swatch — never reflows.
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(28.0, 14.0),
+                egui::Sense::hover(),
+            );
             ui.painter().rect_filled(rect, 2.0, *c);
         }
         (_, Value::Bool(b)) => {
-            ui.label(if *b { "✓" } else { "✗" });
+            mono(format!("{:>4}", if *b { "true" } else { "false" }));
         }
         (_, Value::Text(s)) => {
-            ui.label(s);
+            mono(format!("{s:<8}"));
         }
     }
 }
 
-/// `Combo`-style enum dropdown for body operator pickers.
+/// Frost-styled operator dropdown for body op pickers — wrapped
+/// in a fixed 140-px slot mirroring UE Slate's
+/// `SBox.MinDesiredWidth(125)` default-value column. Frost's
+/// `dropdown` consumes `ui.available_width()`, so without the
+/// slot it'd grow the node arbitrarily wide; the slot caps it
+/// at a stable column.
 fn op_dropdown<T>(ui: &mut egui::Ui, current: &mut T, options: &[(&str, T)])
 where
     T: Copy + PartialEq,
 {
-    let cur_label = options
+    let mut idx = options
         .iter()
-        .find(|(_, v)| *v == *current)
-        .map(|(l, _)| *l)
-        .unwrap_or("?");
-    egui::ComboBox::from_id_salt(("frost_demo_op_dropdown", current as *const T as usize))
-        .selected_text(cur_label)
-        .show_ui(ui, |ui| {
-            for (label, val) in options {
-                ui.selectable_value(current, *val, *label);
-            }
-        });
+        .position(|(_, v)| *v == *current)
+        .unwrap_or(0);
+    let labels: Vec<&str> = options.iter().map(|(l, _)| *l).collect();
+    let accent = corekit::style::active_accent();
+    const SLOT_W: f32 = 140.0;
+    let h = corekit::widget::dropdown::DROPDOWN_ROW_H;
+    let mut changed = false;
+    ui.allocate_ui_with_layout(
+        egui::vec2(SLOT_W, h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let resp = corekit::widget::dropdown::dropdown(
+                ui,
+                ("frost_demo_op_dropdown", current as *const T as usize),
+                &mut idx,
+                &labels,
+                accent,
+            );
+            changed = resp.changed();
+        },
+    );
+    if changed {
+        if let Some((_, v)) = options.get(idx) {
+            *current = *v;
+        }
+    }
 }
 
 /// Per-Display-node ring buffer of recent values painted as a
@@ -2826,45 +3370,45 @@ fn draw_sparkline(
 fn default_graph() -> Snarl<GraphNode> {
     let mut g = Snarl::new();
 
-    const COL_W: f32 = 260.0; // horizontal spacing between columns
+    const COL_W: f32 = 340.0; // horizontal spacing between columns
     let col = |i: i32| (i as f32) * COL_W;
     let row = |y: f32| y;
 
-    // ── Pipeline 1: time-driven sine wave (top, y around 0) ──
+    // ── Pipeline 1: time-driven sine wave (top) ──
     //
-    //  col 0     col 1     col 2     col 3      col 4     col 5
-    //  Time      Mul       Sin       Mul        Add       Display
-    //  Num(1.5)            (Num0.5)  (Num0.5)
+    //  col 0      col 1     col 2     col 3      col 4     col 5
+    //  Time       Mul       Sin       Mul        Add       Display
+    //  Num(1.5)             Num(0.5)  Num(0.5)
     //
     let t       = g.insert_node(egui::pos2(col(0), row(   0.0)), GraphNode::Time);
-    let freq    = g.insert_node(egui::pos2(col(0), row( 130.0)), GraphNode::Number(1.5));
-    let mul     = g.insert_node(egui::pos2(col(1), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Mul));
-    let sin     = g.insert_node(egui::pos2(col(2), row(  50.0)), GraphNode::Trig(TrigFn::Sin));
-    let half    = g.insert_node(egui::pos2(col(2), row( 180.0)), GraphNode::Number(0.5));
-    let bias    = g.insert_node(egui::pos2(col(3), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Mul));
-    let half2   = g.insert_node(egui::pos2(col(3), row( 180.0)), GraphNode::Number(0.5));
-    let lift    = g.insert_node(egui::pos2(col(4), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Add));
-    let display = g.insert_node(egui::pos2(col(5), row(  50.0)), GraphNode::Display);
+    let freq    = g.insert_node(egui::pos2(col(0), row( 170.0)), GraphNode::Number(1.5));
+    let mul     = g.insert_node(egui::pos2(col(1), row(  60.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let sin     = g.insert_node(egui::pos2(col(2), row(  60.0)), GraphNode::Trig(TrigFn::Sin));
+    let half    = g.insert_node(egui::pos2(col(2), row( 230.0)), GraphNode::Number(0.5));
+    let bias    = g.insert_node(egui::pos2(col(3), row(  60.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let half2   = g.insert_node(egui::pos2(col(3), row( 230.0)), GraphNode::Number(0.5));
+    let lift    = g.insert_node(egui::pos2(col(4), row(  60.0)), GraphNode::ScalarMath(ScalarOp::Add));
+    let display = g.insert_node(egui::pos2(col(5), row(  60.0)), GraphNode::Display);
 
     // ── Colour mix branch (below pipeline 1, fed by `lift`) ──
     //
     //  col 3                       col 4         col 5
     //  Color(red)
-    //  Color(blue)                ColorMix      Preview
+    //  Color(blue)                 ColorMix      Preview
     //
-    let red     = g.insert_node(egui::pos2(col(3), row( 360.0)), GraphNode::Color(egui::Color32::from_rgb(0xE0, 0x6C, 0x4F)));
-    let blue    = g.insert_node(egui::pos2(col(3), row( 470.0)), GraphNode::Color(egui::Color32::from_rgb(0x4D, 0xA8, 0xDA)));
-    let cmix    = g.insert_node(egui::pos2(col(4), row( 400.0)), GraphNode::ColorMix);
-    let preview = g.insert_node(egui::pos2(col(5), row( 400.0)), GraphNode::Preview);
+    let red     = g.insert_node(egui::pos2(col(3), row( 480.0)), GraphNode::Color(egui::Color32::from_rgb(0xE0, 0x6C, 0x4F)));
+    let blue    = g.insert_node(egui::pos2(col(3), row( 620.0)), GraphNode::Color(egui::Color32::from_rgb(0x4D, 0xA8, 0xDA)));
+    let cmix    = g.insert_node(egui::pos2(col(4), row( 540.0)), GraphNode::ColorMix);
+    let preview = g.insert_node(egui::pos2(col(5), row( 540.0)), GraphNode::Preview);
 
     // ── Pipeline 2: vector → length → output ──
     //
     //  col 0          col 1     col 2
-    //  Vector ───→    Length ─→ Output
+    //  Vector ────→   Length ──→ Output
     //
-    let vec    = g.insert_node(egui::pos2(col(0), row( 700.0)), GraphNode::Vector([1.0, 2.0, 3.0]));
-    let len    = g.insert_node(egui::pos2(col(1), row( 700.0)), GraphNode::Length);
-    let out    = g.insert_node(egui::pos2(col(2), row( 700.0)), GraphNode::Output);
+    let vec    = g.insert_node(egui::pos2(col(0), row( 920.0)), GraphNode::Vector([1.0, 2.0, 3.0]));
+    let len    = g.insert_node(egui::pos2(col(1), row( 920.0)), GraphNode::Length);
+    let out    = g.insert_node(egui::pos2(col(2), row( 920.0)), GraphNode::Output);
 
     // ── Pipeline 3: noise → compare → ifelse → display ──
     //
@@ -2872,13 +3416,67 @@ fn default_graph() -> Snarl<GraphNode> {
     //  Perlin    Compare              IfElse                         Display
     //            Num(0)               Num(+1), Num(-1)
     //
-    let perlin   = g.insert_node(egui::pos2(col(0), row( 900.0)), GraphNode::Perlin { seed: 0xCAFE, frequency: 1.5 });
-    let zero     = g.insert_node(egui::pos2(col(1), row(1010.0)), GraphNode::Number(0.0));
-    let cmp      = g.insert_node(egui::pos2(col(1), row( 900.0)), GraphNode::Compare(CompareOp::Gt));
-    let one      = g.insert_node(egui::pos2(col(2), row(1010.0)), GraphNode::Number(1.0));
-    let neg      = g.insert_node(egui::pos2(col(2), row(1120.0)), GraphNode::Number(-1.0));
-    let gate     = g.insert_node(egui::pos2(col(2), row( 900.0)), GraphNode::IfElse);
-    let display2 = g.insert_node(egui::pos2(col(3), row( 900.0)), GraphNode::Display);
+    let perlin   = g.insert_node(egui::pos2(col(0), row(1180.0)), GraphNode::Perlin { seed: 0xCAFE, frequency: 1.5 });
+    let zero     = g.insert_node(egui::pos2(col(1), row(1320.0)), GraphNode::Number(0.0));
+    let cmp      = g.insert_node(egui::pos2(col(1), row(1180.0)), GraphNode::Compare(CompareOp::Gt));
+    let one      = g.insert_node(egui::pos2(col(2), row(1320.0)), GraphNode::Number(1.0));
+    let neg      = g.insert_node(egui::pos2(col(2), row(1460.0)), GraphNode::Number(-1.0));
+    let gate     = g.insert_node(egui::pos2(col(2), row(1180.0)), GraphNode::IfElse);
+    let display2 = g.insert_node(egui::pos2(col(3), row(1180.0)), GraphNode::Display);
+
+    // ── Pipeline 4: sophisticated 4-channel scope ──
+    //
+    //  col 0     col 1       col 2          col 3
+    //  Time ─→ ×freq[0] ─→  sin → ─┐
+    //                              ├─→ MultiPlot  (4 lines)
+    //  Time ─→ ×freq[1] ─→  cos →  │
+    //  Time ─→ ×freq[2] ─→  sin² ─ │
+    //  Time ─→ ×freq[3] ─→  saw ─  ┘
+    //
+    let t2     = g.insert_node(egui::pos2(col(0), row(1620.0)), GraphNode::Time);
+    let f1     = g.insert_node(egui::pos2(col(0), row(1760.0)), GraphNode::Number(1.0));
+    let f2     = g.insert_node(egui::pos2(col(0), row(1900.0)), GraphNode::Number(2.0));
+    let f3     = g.insert_node(egui::pos2(col(0), row(2040.0)), GraphNode::Number(3.0));
+    let f4     = g.insert_node(egui::pos2(col(0), row(2180.0)), GraphNode::Number(0.5));
+    let m1     = g.insert_node(egui::pos2(col(1), row(1620.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let m2     = g.insert_node(egui::pos2(col(1), row(1760.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let m3     = g.insert_node(egui::pos2(col(1), row(1900.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let m4     = g.insert_node(egui::pos2(col(1), row(2040.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let s1     = g.insert_node(egui::pos2(col(2), row(1620.0)), GraphNode::Trig(TrigFn::Sin));
+    let s2     = g.insert_node(egui::pos2(col(2), row(1760.0)), GraphNode::Trig(TrigFn::Cos));
+    let s3     = g.insert_node(egui::pos2(col(2), row(1900.0)), GraphNode::Wave(WaveShape::Triangle));
+    let s4     = g.insert_node(egui::pos2(col(2), row(2040.0)), GraphNode::Wave(WaveShape::Saw));
+    let mplot  = g.insert_node(egui::pos2(col(3), row(1620.0)), GraphNode::MultiPlot);
+
+    // ── Pipeline 5: sophisticated noise field ──
+    //
+    // Every NoiseField parameter is driven by a Number source —
+    // the user can swap, scale, or replace any one of them with
+    // arbitrary upstream graph logic. The body of NoiseField
+    // shows ONLY the mode dropdown + the 160 × 96 px preview.
+    //
+    //  col 0          col 1          col 2          col 3
+    //  Time ─→──→──→  × ─→──────→  drift_x ─┐
+    //  Num(0.4) ─────╱                       ├──→ NoiseField
+    //  Num(0)  drift_y ──────────→──────────┤   (mode dropdown
+    //  Num(1.5) freq ────────────→──────────┤    + image)
+    //  Num(0xCAFE) seed ────────→───────────┤
+    //  Num(5) octaves ─────────→────────────┤
+    //  Num(0.55) persistence ─→─────────────┤
+    //  Num(2.1) lacunarity ─→───────────────┤
+    //  Num(1.0) gain ──────→────────────────┘
+    //
+    let t3       = g.insert_node(egui::pos2(col(0), row(2400.0)), GraphNode::Time);
+    let speed    = g.insert_node(egui::pos2(col(0), row(2540.0)), GraphNode::Number(0.4));
+    let drift_x  = g.insert_node(egui::pos2(col(1), row(2400.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let drift_y  = g.insert_node(egui::pos2(col(1), row(2540.0)), GraphNode::Number(0.0));
+    let freq_n   = g.insert_node(egui::pos2(col(1), row(2680.0)), GraphNode::Number(1.5));
+    let seed_n   = g.insert_node(egui::pos2(col(1), row(2820.0)), GraphNode::Number(0xCAFE as f64));
+    let oct_n    = g.insert_node(egui::pos2(col(1), row(2960.0)), GraphNode::Number(5.0));
+    let pers_n   = g.insert_node(egui::pos2(col(1), row(3100.0)), GraphNode::Number(0.55));
+    let lac_n    = g.insert_node(egui::pos2(col(1), row(3240.0)), GraphNode::Number(2.1));
+    let gain_n   = g.insert_node(egui::pos2(col(1), row(3380.0)), GraphNode::Number(1.0));
+    let nfield   = g.insert_node(egui::pos2(col(2), row(2400.0)), GraphNode::NoiseField);
 
     // ── Wire it up ──
     let connect = |g: &mut Snarl<GraphNode>, src, sout, dst, dinp| {
@@ -2906,6 +3504,34 @@ fn default_graph() -> Snarl<GraphNode> {
     connect(&mut g, one,    0, gate, 1);
     connect(&mut g, neg,    0, gate, 2);
     connect(&mut g, gate,   0, display2, 0);
+
+    // Pipeline 4 wires (4-channel scope)
+    connect(&mut g, t2, 0, m1, 0); connect(&mut g, f1, 0, m1, 1);
+    connect(&mut g, t2, 0, m2, 0); connect(&mut g, f2, 0, m2, 1);
+    connect(&mut g, t2, 0, m3, 0); connect(&mut g, f3, 0, m3, 1);
+    connect(&mut g, t2, 0, m4, 0); connect(&mut g, f4, 0, m4, 1);
+    connect(&mut g, m1, 0, s1, 0);
+    connect(&mut g, m2, 0, s2, 0);
+    connect(&mut g, m3, 0, s3, 0);
+    connect(&mut g, m4, 0, s4, 0);
+    connect(&mut g, s1, 0, mplot, 0);
+    connect(&mut g, s2, 0, mplot, 1);
+    connect(&mut g, s3, 0, mplot, 2);
+    connect(&mut g, s4, 0, mplot, 3);
+
+    // Pipeline 5 wires (sophisticated noise field)
+    // Pin order: seed, offset_x, offset_y, freq, octaves,
+    //            persistence, lacunarity, gain.
+    connect(&mut g, t3,      0, drift_x, 0);
+    connect(&mut g, speed,   0, drift_x, 1);
+    connect(&mut g, seed_n,  0, nfield, 0);
+    connect(&mut g, drift_x, 0, nfield, 1);
+    connect(&mut g, drift_y, 0, nfield, 2);
+    connect(&mut g, freq_n,  0, nfield, 3);
+    connect(&mut g, oct_n,   0, nfield, 4);
+    connect(&mut g, pers_n,  0, nfield, 5);
+    connect(&mut g, lac_n,   0, nfield, 6);
+    connect(&mut g, gain_n,  0, nfield, 7);
 
     g
 }

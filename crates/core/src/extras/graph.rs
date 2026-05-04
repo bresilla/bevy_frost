@@ -77,7 +77,6 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     //   * NODE_SOCKSIZE (pin radius)          = 0.25 × widget_unit = 5 px
     // We mirror those constants so the node geometry feels
     // proportionally identical, with frost's glass-fill background.
-    const NODE_RADIUS: u8 = 4;
     // Horizontal padding shared by body AND header so the header
     // band lines up with the body edges (snarl sizes each frame as
     // content + 2 × inner_margin, so any divergence here makes the
@@ -85,22 +84,33 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     const NODE_PAD_X: i8 = 8;
     const NODE_PAD_Y: i8 = 4;
 
-    // Body — Blender uses a near-black `#303030` solid fill with no
-    // border, but we layer frost's glass tint on top so the
-    // accent-coloured panel + dark-on-light theme variant both flow
-    // through. Outline: 1 px hairline at black with 25% alpha — the
-    // dark seam between the node and its drop shadow that gives
-    // each node a crisp silhouette in Blender.
+    // Body uses the frost section recipe — same fill, border and
+    // corner radius every foldable section / container in the
+    // kit uses, so a node and a section sit at the same visual
+    // tier instead of looking like a separate widget family.
+    //
+    //   * `section_fill(accent)` resolves through the active
+    //     theme's `section_fill_mode` (dark in PRO, accent-tinted
+    //     in GAME); `glass_fill` then layers the user's chosen
+    //     glass tint on top.
+    //   * `widget_border(accent)` is the same edge stroke a
+    //     button / dropdown / search input renders.
+    //   * `theme().radius_md` matches the container corner radius
+    //     (PRO 6 px, GAME 0 px square).
     let body_fill = glass_fill(
-        crate::style::theme().bg_raised,
+        crate::style::section_fill(accent),
         accent,
         glass_alpha_card(),
     );
-    let body_stroke = egui::Stroke::new(1.0, egui::Color32::from_black_alpha(64));
+    let body_stroke = egui::Stroke::new(
+        crate::style::theme().border_width,
+        widget_border(accent),
+    );
+    let body_radius = crate::style::theme().radius_md;
     let node_frame = egui::Frame::new()
         .fill(body_fill)
         .stroke(body_stroke)
-        .corner_radius(egui::CornerRadius::same(NODE_RADIUS))
+        .corner_radius(egui::CornerRadius::same(body_radius))
         .inner_margin(egui::Margin::symmetric(NODE_PAD_X, NODE_PAD_Y));
 
     // Header — TRANSPARENT here. The category-coloured band is
@@ -114,7 +124,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
         .corner_radius(egui::CornerRadius {
-            nw: NODE_RADIUS, ne: NODE_RADIUS, sw: 0, se: 0,
+            nw: body_radius, ne: body_radius, sw: 0, se: 0,
         })
         .inner_margin(egui::Margin {
             left: NODE_PAD_X, right: NODE_PAD_X,
@@ -199,7 +209,9 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
             color: accent,
             gap: 3.0,
             width: 1.5,
-            radius: 6,
+            // Halo follows the body's rounded corners — body
+            // radius + a bit of slack for the outset.
+            radius: body_radius.saturating_add(3),
         }),
         downscale_wire_frame: Some(true),
         upscale_wire_frame: Some(true),
