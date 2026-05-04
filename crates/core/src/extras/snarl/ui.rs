@@ -27,15 +27,16 @@ mod wire;
 
 use self::{
     pin::AnyPin,
-    state::{NewWires, NodeState, RowHeights, SnarlState},
+    state::{NewWires, NodeState, RowHeights},
     wire::{draw_wire, hit_wire, pick_wire_style},
 };
 
 pub use self::{
-    background_pattern::{BackgroundPattern, Grid},
+    background_pattern::{BackgroundPattern, Dots, Grid},
     pin::{AnyPins, PinInfo, PinShape, SnarlPin},
+    state::SnarlState,
     viewer::SnarlViewer,
-    wire::{WireLayer, WireStyle},
+    wire::{WireColorMode, WireLayer, WireStyle},
 };
 
 /// Controls how header, pins, body and footer are placed in the node.
@@ -306,6 +307,35 @@ pub struct SelectionStyle {
     pub stroke: Stroke,
 }
 
+/// Accent halo painted around each node body. Snarl reserves a
+/// shape slot in the painter buffer BEFORE the body + pins are
+/// submitted, then fills that slot with a rounded-rectangle
+/// stroke at `body_rect.expand(gap)`. Because the slot is
+/// earlier in the buffer than the pin shapes, pins render ON TOP
+/// of the halo where they intersect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+pub struct NodeHalo {
+    /// Stroke colour. Typically the host's accent.
+    pub color: Color32,
+    /// Distance in points from the body edge to the halo line.
+    /// `0` paints the halo on the body edge; positive values push
+    /// it outward.
+    pub gap: f32,
+    /// Stroke width in points.
+    pub width: f32,
+    /// Corner radius of the halo rect. Should be ≥ body radius
+    /// + gap so the halo follows the body's rounded corners.
+    pub radius: u8,
+}
+
+impl Default for NodeHalo {
+    fn default() -> Self {
+        Self { color: Color32::WHITE, gap: 4.0, width: 1.5, radius: 8 }
+    }
+}
+
 /// Controls how pins are placed in the node.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -461,6 +491,62 @@ pub struct SnarlStyle {
         serde(skip_serializing_if = "Option::is_none", default)
     )]
     pub wire_layer: Option<WireLayer>,
+
+    /// How the colour of a wire is derived from its endpoint pins.
+    /// Defaults to [`WireColorMode::Mix`] (Blender-style gradient
+    /// between source and target pin colours). Set to
+    /// [`WireColorMode::FromSource`] for the Unreal Blueprints
+    /// look — every wire takes the *output* pin's colour
+    /// uniformly along its length.
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub wire_color_mode: Option<WireColorMode>,
+
+    /// Faux-bloom intensity for wires (`0.0` = none, `1.0` = strong).
+    /// Implemented as additional draw passes at increasing widths
+    /// and decreasing alpha, painted under the crisp wire — the
+    /// stack reads as a soft glow around each wire similar to
+    /// post-process bloom in a 3D engine. Default `0.0` (off).
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub wire_glow: Option<f32>,
+
+    /// Faux-bloom intensity for pin glyphs (`0.0` = none,
+    /// `1.0` = strong). Same multi-pass approach as
+    /// [`SnarlStyle::wire_glow`] but applied to pin shapes —
+    /// pins shed a soft halo in their type colour. Default `0.0`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub pin_glow: Option<f32>,
+
+    /// Extra inset (px) applied to [`PinPlacement::Inside`] —
+    /// pins are pushed this many additional pixels toward the
+    /// node's centre on the input AND output side. Default `0.0`
+    /// preserves upstream layout. Useful for editors that want
+    /// the pin glyph to sit *inside* the body's content area
+    /// rather than flush with the inner margin.
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub pin_inset: Option<f32>,
+
+    /// Optional accent halo painted around each node body. Drawn
+    /// in the painter buffer BEFORE pin glyphs so pins always
+    /// render on top of the halo line — `final_node_rect`
+    /// painted halos always end up above pins because they
+    /// submit shapes after pins. Default `None` (no halo).
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub node_halo: Option<NodeHalo>,
 
     /// Frame used to draw background
     #[cfg_attr(
@@ -621,6 +707,22 @@ impl SnarlStyle {
         self.wire_layer.unwrap_or(WireLayer::BehindNodes)
     }
 
+    fn get_wire_color_mode(&self) -> WireColorMode {
+        self.wire_color_mode.unwrap_or(WireColorMode::Mix)
+    }
+
+    fn get_wire_glow(&self) -> f32 {
+        self.wire_glow.unwrap_or(0.0).clamp(0.0, 1.5)
+    }
+
+    fn get_pin_glow(&self) -> f32 {
+        self.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5)
+    }
+
+    fn get_pin_inset(&self) -> f32 {
+        self.pin_inset.unwrap_or(0.0).max(0.0)
+    }
+
     fn get_header_drag_space(&self, style: &Style) -> Vec2 {
         self.header_drag_space
             .unwrap_or_else(|| vec2(style.spacing.icon_width, style.spacing.icon_width))
@@ -762,6 +864,11 @@ impl SnarlStyle {
             upscale_wire_frame: None,
             wire_style: None,
             wire_layer: None,
+            wire_color_mode: None,
+            wire_glow: None,
+            pin_glow: None,
+            pin_inset: None,
+            node_halo: None,
             header_drag_space: None,
             collapsible: None,
 
@@ -1158,13 +1265,56 @@ where
             }
         }
 
-        let color = mix_colors(from_r.wire_color, to_r.wire_color);
+        let color = match style.get_wire_color_mode() {
+            WireColorMode::Mix        => mix_colors(from_r.wire_color, to_r.wire_color),
+            WireColorMode::FromSource => from_r.wire_color,
+            WireColorMode::FromTarget => to_r.wire_color,
+        };
 
         let mut draw_width = wire_width;
         if hovered_wire == Some(wire) {
             draw_width *= 1.5;
         }
 
+        // Wire glow — multi-stroke fake bloom with a smooth
+        // gaussian-ish falloff. We paint N alpha-reduced layers
+        // UNDER the crisp wire, each narrower and brighter than
+        // the last. Halved widths vs the earlier two-pass version
+        // so the halo stays close to the line and doesn't wash
+        // into adjacent wires; the extra layers smooth out the
+        // visible "ring" boundaries you got with only 2 passes.
+        let glow = style.get_wire_glow();
+        if glow > 0.0 {
+            // (width_factor, alpha_factor) per layer, outermost first.
+            const GLOW_LAYERS: [(f32, f32); 4] = [
+                (2.0, 0.08),
+                (1.7, 0.12),
+                (1.4, 0.18),
+                (1.2, 0.25),
+            ];
+            for (w_mul, a_mul) in GLOW_LAYERS {
+                let layer_color = with_alpha_factor(color, a_mul * glow);
+                draw_wire(
+                    &ui,
+                    WireId::Connected {
+                        snarl_id,
+                        out_pin: wire.out_pin,
+                        in_pin: wire.in_pin,
+                    },
+                    &mut wire_shapes,
+                    wire_frame_size,
+                    style.get_upscale_wire_frame(),
+                    style.get_downscale_wire_frame(),
+                    from_r.pos,
+                    to_r.pos,
+                    Stroke::new(draw_width * w_mul, layer_color),
+                    wire_threshold,
+                    pick_wire_style(from_r.wire_style, to_r.wire_style),
+                );
+            }
+        }
+
+        // Crisp wire on top.
         draw_wire(
             &ui,
             WireId::Connected {
@@ -1907,16 +2057,30 @@ where
 
     let mut new_pins_size = Vec2::ZERO;
 
+    // Reserve a slot in the painter for the node halo BEFORE the
+    // frame + pins are submitted, so pins render on top of the
+    // halo line where they intersect (with `PinPlacement::Edge`
+    // pins straddle the body outline). We fill the reserved slot
+    // after `node_frame.show` returns and we know the final
+    // body rect.
+    let halo_slot = style
+        .node_halo
+        .map(|_| node_ui.painter().add(egui::Shape::Noop));
+
     let r = node_frame.show(node_ui, |ui| {
         if viewer.has_node_style(node, &inputs, &outputs, snarl) {
             viewer.apply_node_style(ui.style_mut(), node, &inputs, &outputs, snarl);
         }
 
         // Input pins' center side by X axis.
+        // `pin_inset` adds an extra inward push for `Inside`
+        // placement so the pins sit inside the body's content
+        // column rather than flush with the inner margin.
+        let pin_inset = style.get_pin_inset();
         let input_x = match pin_placement {
             PinPlacement::Inside => pin_size.mul_add(
                 0.5,
-                node_frame_rect.left() + node_frame.inner_margin.leftf(),
+                node_frame_rect.left() + node_frame.inner_margin.leftf() + pin_inset,
             ),
             PinPlacement::Edge => node_frame_rect.left(),
             PinPlacement::Outside { margin } => {
@@ -1939,7 +2103,7 @@ where
         let output_x = match pin_placement {
             PinPlacement::Inside => pin_size.mul_add(
                 -0.5,
-                node_frame_rect.right() - node_frame.inner_margin.rightf(),
+                node_frame_rect.right() - node_frame.inner_margin.rightf() - pin_inset,
             ),
             PinPlacement::Edge => node_frame_rect.right(),
             PinPlacement::Outside { margin } => {
@@ -2395,10 +2559,23 @@ where
         let mut header_frame_rect = Rect::NAN; //node_rect + header_frame.total_margin();
 
         // Show node's header
+        //
+        // We use `Layout::top_down(Align::Min)` — left-aligned —
+        // instead of upstream egui-snarl's `Align::Center`. The
+        // centred variant horizontally centres any child whose
+        // width is less than the header's max width, so any
+        // viewer that puts a smaller-than-full-width LTR row in
+        // `show_header` (icon + title stacked horizontally, etc.)
+        // ends up with its content drifting to the centre of the
+        // header rather than being flush left. `Align::Min`
+        // anchors the LTR row to the left edge so the icon /
+        // title pair starts at the body's inner-margin column,
+        // which is what every Blender / Unreal / VSCode-style
+        // node editor does.
         let header_ui: &mut Ui = &mut ui.new_child(
             UiBuilder::new()
                 .max_rect(node_rect.round_ui() + header_frame.total_margin())
-                .layout(Layout::top_down(Align::Center))
+                .layout(Layout::top_down(Align::Min))
                 .id_salt("header"),
         );
 
@@ -2448,6 +2625,23 @@ where
         ));
     });
 
+    // Fill the reserved halo slot now that we know the final
+    // body rect — `r.response.rect` is the rect that was used to
+    // render the node frame.
+    if let (Some(slot), Some(halo)) = (halo_slot, style.node_halo) {
+        let halo_rect = r.response.rect.expand(halo.gap);
+        node_ui.painter().set(
+            slot,
+            egui::epaint::RectShape::new(
+                halo_rect,
+                egui::CornerRadius::same(halo.radius),
+                Color32::TRANSPARENT,
+                Stroke::new(halo.width, halo.color),
+                egui::epaint::StrokeKind::Inside,
+            ),
+        );
+    }
+
     if !snarl.nodes.contains(node.0) {
         ui.ctx().request_repaint();
         node_state.clear(ui.ctx());
@@ -2476,6 +2670,15 @@ const fn mix_colors(a: Color32, b: Color32) -> Color32 {
         u8::midpoint(a.b(), b.b()),
         u8::midpoint(a.a(), b.a()),
     )
+}
+
+/// Multiply `c`'s alpha by `f` (clamped to `[0, 1]`) for layered
+/// glow passes. Returns an UN-premultiplied colour so the egui
+/// renderer's standard alpha blend produces the expected halo.
+#[inline]
+fn with_alpha_factor(c: Color32, f: f32) -> Color32 {
+    let a = (c.a() as f32 * f.clamp(0.0, 1.0)).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
 // fn mix_colors(mut colors: impl Iterator<Item = Color32>) -> Option<Color32> {

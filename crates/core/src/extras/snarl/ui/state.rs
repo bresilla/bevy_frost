@@ -339,6 +339,23 @@ impl SnarlState {
         }
     }
 
+    /// Add `delta` (in sub-context points) to the saved
+    /// `TSTransform.translation` of the snarl with the given `id`,
+    /// directly via context data — no live `SnarlState` instance
+    /// required.
+    ///
+    /// Used by the outside-in zoom path in `node_view::show` to
+    /// keep the scene point under the cursor stationary across a
+    /// `zoom` step. The widget reads the saved `to_global` on the
+    /// next `SnarlState::load`, so writing here BEFORE
+    /// `SnarlWidget::show` runs makes the new translation take
+    /// effect this frame.
+    pub fn nudge_saved_translation(cx: &Context, id: Id, delta: egui::Vec2) {
+        let Some(mut data) = SnarlStateData::load(cx, id) else { return };
+        data.to_global.translation += delta;
+        data.save(cx, id);
+    }
+
     pub fn look_at(&mut self, view: Rect, ui_rect: Rect, min_scale: f32, max_scale: f32) {
         let scaling2 = ui_rect.size() / view.size();
         let scaling = scaling2.min_elem().clamp(min_scale, max_scale);

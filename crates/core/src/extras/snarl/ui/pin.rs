@@ -210,6 +210,32 @@ impl PinInfo {
         let shape = self.get_shape(snarl_style);
         let fill = self.get_fill(snarl_style, style);
         let stroke = self.get_stroke(snarl_style, style);
+
+        // Pin glow — 4-layer fake bloom under the crisp pin.
+        // Each layer is a wider, alpha-reduced copy of the same
+        // shape; the alpha of the four layers accumulates to a
+        // smooth halo with no visible ring boundaries. Sizes
+        // halved vs the earlier two-pass version so the halo
+        // hugs the pin instead of bleeding into the row label.
+        let glow = snarl_style.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5);
+        if glow > 0.0 {
+            // (expand_factor_of_width, alpha_factor) per layer,
+            // outermost first.
+            const GLOW_LAYERS: [(f32, f32); 4] = [
+                (0.60, 0.08),
+                (0.45, 0.13),
+                (0.30, 0.20),
+                (0.15, 0.28),
+            ];
+            let no_stroke = egui::Stroke::NONE;
+            for (e_mul, a_mul) in GLOW_LAYERS {
+                let a = (fill.a() as f32 * a_mul * glow).round().clamp(0.0, 220.0) as u8;
+                let c = Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), a);
+                let r = rect.expand(rect.width() * e_mul);
+                draw_pin(painter, shape, c, no_stroke, r);
+            }
+        }
+
         draw_pin(painter, shape, fill, stroke, rect);
 
         PinWireInfo {

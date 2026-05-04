@@ -35,7 +35,12 @@ use egui;
 
 pub use crate::extras::code_editor::{CodeEditor, ColorTheme, Syntax};
 
-use crate::extras::maximize::maximizable;
+// `maximizable` is no longer called directly from this file — both
+// `frost_code_editor` and `frost_code_editor_with_opts` route
+// through `maximizable_with_opts` (fully qualified) so the opts
+// path is always live. `pub use` re-exports the symbol callers
+// expect when migrating from the older signature.
+pub use crate::extras::maximize::OverlayOpts;
 
 /// Render a syntax-highlighted code editor bound to `text`,
 /// wrapped in the shared maximise / restore toggle. The caller
@@ -53,20 +58,39 @@ pub fn frost_code_editor(
     accent: egui::Color32,
     min_size: egui::Vec2,
 ) {
-    maximizable(ui, id_salt, accent, min_size, |ui| {
-        let id = format!("frost_code_editor_{:?}", ui.id());
-        let font_size = 13.0;
-        let line_h = font_size * 1.2;
-        let rows = ((ui.available_height() / line_h).floor() as usize).max(6);
-        CodeEditor::default()
-            .id_source(id)
-            .with_syntax(syntax)
-            .with_theme(frost_code_theme(accent))
-            .with_fontsize(font_size)
-            .with_rows(rows)
-            .with_numlines(true)
-            .show(ui, text);
-    });
+    frost_code_editor_with_opts(
+        ui, id_salt, text, syntax, accent, min_size,
+        crate::extras::maximize::OverlayOpts::default(),
+    )
+}
+
+/// Same as [`frost_code_editor`] but accepts an [`OverlayOpts`] so
+/// the caller can choose where the minimize chip lands on the
+/// fullscreen overlay (which edge + which cluster along that edge).
+pub fn frost_code_editor_with_opts(
+    ui: &mut egui::Ui,
+    id_salt: impl Hash + Copy,
+    text: &mut String,
+    syntax: Syntax,
+    accent: egui::Color32,
+    min_size: egui::Vec2,
+    fs_opts: crate::extras::maximize::OverlayOpts,
+) {
+    crate::extras::maximize::maximizable_with_opts(
+        ui, id_salt, accent, min_size, fs_opts, |ui| {
+            let id = format!("frost_code_editor_{:?}", ui.id());
+            let font_size = 13.0;
+            let line_h = font_size * 1.2;
+            let rows = ((ui.available_height() / line_h).floor() as usize).max(6);
+            CodeEditor::default()
+                .id_source(id)
+                .with_syntax(syntax)
+                .with_theme(frost_code_theme(accent))
+                .with_fontsize(font_size)
+                .with_rows(rows)
+                .with_numlines(true)
+                .show(ui, text);
+        });
 }
 
 /// Build a [`ColorTheme`] whose background / text / selection

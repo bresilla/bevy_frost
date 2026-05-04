@@ -30,6 +30,7 @@
 //! ```
 
 pub mod gizmo_material;
+pub mod node_view_backend;
 pub mod prelude;
 
 // `extras` (vendored snarl + code_editor + maximize) lives in
@@ -294,6 +295,9 @@ impl Plugin for FrostPlugin {
         }
         if !app.is_plugin_added::<EguiInputAbsorbPlugin>() {
             app.add_plugins(EguiInputAbsorbPlugin);
+        }
+        if !app.is_plugin_added::<node_view_backend::NodeViewPlugin>() {
+            app.add_plugins(node_view_backend::NodeViewPlugin);
         }
     }
 }

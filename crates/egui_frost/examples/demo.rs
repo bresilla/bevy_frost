@@ -32,8 +32,11 @@ use corekit::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // so egui_frost can reach them without any Bevy dep.
 use corekit::extras::code::{frost_code_editor, Syntax};
 use corekit::extras::graph::{
-    frost_snarl, InPin, InPinId, OutPin, OutPinId, PinInfo, Snarl, SnarlPin, SnarlViewer,
+    frost_snarl, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Snarl, SnarlPin,
+    SnarlViewer,
 };
+use corekit::container::Normal as FrostNormal;
+use egui_frost::EframeNodeViewBackend;
 
 // ─── Ribbon / pane ids ──────────────────────────────────────────────
 
@@ -137,6 +140,20 @@ struct FrostApp {
     mode: ThemeModeRes,
     pastel: PastelToggle,
     tint: TintRgba,
+    /// Persistent secondary-context state for the node graph
+    /// (sub egui::Context, pan, zoom, wgpu render target).
+    /// Owns wgpu resources, hence App-owned and passed by &mut
+    /// each frame into `frost_snarl`.
+    node_view: NodeViewState,
+    /// The actual node-graph data — held on the App so the snarl
+    /// renderer can mutate it via &mut. Previously stashed in
+    /// egui ctx data, but the v2 path needs a non-`'static`
+    /// closure body to thread `&mut self.node_view`.
+    snarl: Snarl<GraphNode>,
+    /// The viewer (=node-painter trait impl) is a unit struct; it
+    /// could live anywhere but pairing it with the snarl on App
+    /// keeps the callsite tidy.
+    viewer: GraphViewer,
 }
 
 impl Default for FrostApp {
@@ -151,6 +168,9 @@ impl Default for FrostApp {
             mode: ThemeModeRes::default(),
             pastel: PastelToggle::default(),
             tint: TintRgba::default(),
+            node_view: NodeViewState::new(),
+            snarl: default_graph(),
+            viewer: GraphViewer,
         }
     }
 }
@@ -182,9 +202,19 @@ impl eframe::App for FrostApp {
         [0.06, 0.08, 0.12, 1.0]
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Snapshot the wgpu RenderState eframe is using — this is
+        // what `EframeNodeViewBackend` borrows from to drive the
+        // sharp-zoom node graph's secondary-context render. Cheap
+        // clone (Arc-counted handles) so we keep one local for
+        // the whole frame.
+        let render_state = frame
+            .wgpu_render_state()
+            .expect("wgpu backend required for frost_snarl")
+            .clone();
         let FrostApp {
             accent, glass, open, placement, drag, family, mode, pastel, tint,
+            node_view, snarl, viewer,
         } = self;
         let mut active_theme = match (family.0, mode.0) {
         (0, 0) => corekit::style::theme_pro(Mode::Dark),
@@ -256,19 +286,29 @@ impl eframe::App for FrostApp {
     for &(_, button_id, default_anchor, label) in PANE_DEFS {
         if !is_open(button_id) { continue; }
         let anchor = live_anchor(button_id).unwrap_or(default_anchor);
+        // Borrow App-side fields the editor pane needs for its
+        // sharp-zoom node graph. Keep them &mut here so the
+        // PANE_EDITOR branch can pass them down to `editor_pane`.
+        let node_view_ref = &mut *node_view;
+        let snarl_ref = &mut *snarl;
+        let viewer_ref = &mut *viewer;
+        let render_state_ref = &render_state;
         Pane2::new(button_id, label, anchor, accent_col)
             .resize(corekit::pane::PaneResize::SPAN)
             .show(ctx, |body_ui| match button_id {
                 PANE_WIDGETS    => widgets_pane(body_ui, anchor, accent_col),
                 PANE_CONTAINERS => containers_pane(body_ui, anchor, accent_col),
                 PANE_SCENE      => scene_pane(body_ui, anchor, accent_col),
+                PANE_EDITOR     => editor_pane(
+                    body_ui, anchor, accent_col,
+                    node_view_ref, snarl_ref, viewer_ref, render_state_ref,
+                ),
                 PANE_THEME      => theme_pane(
                     body_ui, anchor, accent_col,
                     accent, glass, family, mode, pastel, tint,
                 ),
                 PANE_KEYS       => keys_pane(body_ui, anchor, accent_col),
                 PANE_ABOUT      => about_pane(body_ui, anchor, accent_col),
-                PANE_EDITOR     => editor_pane(body_ui, anchor, accent_col),
                 _ => {}
             });
     }
@@ -899,33 +939,46 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
 /// each in its own container with a fill pod so they soak up the
 /// pane's available space. Mirrors the legacy demo's Editor pane,
 /// now driven by the vendored `bevy_frost::extras` wrappers.
-fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
+fn editor_pane(
+    body: &mut egui::Ui,
+    anchor: PaneAnchor,
+    accent: egui::Color32,
+    node_view: &mut NodeViewState,
+    snarl: &mut Snarl<GraphNode>,
+    viewer: &mut GraphViewer,
+    render_state: &egui_wgpu::RenderState,
+) {
     let pane_id = egui::Id::new(PANE_EDITOR);
-    let graph_id = cid(PANE_EDITOR, "graph_state");
+    let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");
+
+    // ── Node graph container ──
+    //
+    // Bypass `render_containers` for the graph specifically: it
+    // needs `frost_snarl`, which drives a SECONDARY egui
+    // context + wgpu texture for sharp-zoom rendering. That
+    // requires `&mut NodeViewState`, `&mut Snarl`, `&mut Viewer`,
+    // and a `&RenderState` borrow — none of which fit through
+    // `with_custom_units`'s `'static` closure. Render directly
+    // via `Normal::show_raw`, whose body callback is plain
+    // `FnOnce(&mut Ui)` (no `'static`).
+    let mut backend = EframeNodeViewBackend::new(render_state);
+    FrostNormal::new("Node graph", anchor, accent, cid_graph)
+        .icon("flowchart")
+        .show_raw(body, |graph_ui| {
+            let avail = graph_ui.available_size_before_wrap();
+            frost_snarl(
+                graph_ui, node_view, &mut backend, snarl, viewer, accent, avail,
+            );
+        });
+
+    // ── Source code container ──
+    //
+    // Stays on the regular pod-list path; the code editor doesn't
+    // need any `&mut self` plumbing — the text buffer fits in
+    // egui ctx data and round-trips through `with_custom_units`
+    // unchanged.
     render_containers(body, pane_id, anchor, accent, vec![
-        ContainerSpec {
-            id: cid(PANE_EDITOR, "graph"),
-            title: "Node graph".into(),
-            icon: "flowchart",
-            body: SpecBody::Pods(vec![
-                Pod::new(pid(PANE_EDITOR, "graph", 0))
-                    .with_separator(SeparatorStyle::None)
-                    .fill()
-                    .with_custom_units(10, move |ui| {
-                        let mut graph: Snarl<GraphNode> = ui
-                            .ctx()
-                            .data(|d| d.get_temp::<Snarl<GraphNode>>(graph_id))
-                            .unwrap_or_else(default_graph);
-                        let mut viewer = GraphViewer;
-                        let avail = ui.available_size_before_wrap();
-                        frost_snarl(
-                            ui, graph_id, &mut graph, &mut viewer, accent, avail,
-                        );
-                        ui.ctx().data_mut(|d| d.insert_temp(graph_id, graph));
-                    }),
-            ]),
-        },
         ContainerSpec {
             id: cid(PANE_EDITOR, "code"),
             title: "Source".into(),

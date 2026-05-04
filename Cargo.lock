@@ -711,6 +711,7 @@ dependencies = [
  "corekit",
  "egui",
  "mimalloc",
+ "wgpu",
 ]
 
 [[package]]
@@ -1819,10 +1820,12 @@ dependencies = [
  "bevy",
  "egui",
  "egui-scale",
+ "egui-wgpu",
  "iconflow",
  "pastel",
  "slab",
  "smallvec",
+ "wgpu",
 ]
 
 [[package]]
@@ -2183,6 +2186,7 @@ dependencies = [
  "corekit",
  "eframe",
  "egui",
+ "egui-wgpu",
  "wgpu",
 ]
 

@@ -89,6 +89,15 @@ pub fn set_glass_opacity(value: u8) {
     GLASS_OPACITY.store(value.clamp(1, 100), Ordering::Relaxed);
 }
 
+/// Read the currently-active glass opacity (1..=100). Mirrors
+/// [`active_accent`] for the second per-frame theme parameter —
+/// callers that need to pass the live theme state to a secondary
+/// `egui::Context` (e.g. `node_view::show`) read both via these
+/// getters instead of threading them through every signature.
+pub fn glass_opacity() -> GlassOpacity {
+    GlassOpacity(GLASS_OPACITY.load(Ordering::Relaxed))
+}
+
 /// Map the slider's `1..=100` onto a window opacity fraction.
 /// Mode-aware floor:
 ///
@@ -462,7 +471,7 @@ pub fn title_font_family() -> egui::FontFamily {
 /// Called from `apply_theme` whenever either weight changes; the
 /// dedup atomic in `apply_theme` keeps the cost to a single
 /// `ctx.set_fonts` per change.
-fn install_fonts(ctx: &egui::Context, body: FontWeight, title: FontWeight) {
+pub fn install_fonts(ctx: &egui::Context, body: FontWeight, title: FontWeight) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         body.name().into(),
@@ -597,11 +606,46 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     LAST_OPACITY.store(opacity.0, Ordering::Relaxed);
     LAST_THEME_NAME_PTR.store(theme_ptr, Ordering::Relaxed);
     LAST_PASTEL.store(pastel_u8, Ordering::Relaxed);
-    // Push into the shared atomics so glass-alpha + contrast-text
-    // helpers can read these without callers having to thread them
-    // through every widget signature.
+    // Publish the accent / opacity globals BEFORE applying the
+    // visuals — every paint site downstream (titles, borders,
+    // glass-alpha helpers) reads from these atomics rather than
+    // re-deriving from `theme()`.
+    set_raw_accent(accent_raw);
     set_glass_opacity(opacity.0);
     set_active_accent(accent_col);
+    apply_theme_to(ctx, accent, opacity);
+}
+
+/// Apply the frost theme's *visuals* to `ctx` unconditionally,
+/// bypassing `apply_theme`'s global de-dup cache. Useful for
+/// *secondary* `egui::Context`s — `apply_theme`'s cache is keyed
+/// on the theme state, not on the context, so once the parent
+/// ctx has been styled the cache early-returns and any sibling
+/// sub-context (e.g. the one `node_view::show` runs snarl in)
+/// never receives the visuals. Calling this directly skips that
+/// gate.
+///
+/// **Does NOT publish globals** (`set_raw_accent` /
+/// `set_glass_opacity` / `set_active_accent`). The caller is
+/// expected to have already written those — `apply_theme` does
+/// it for the primary ctx, and a sub-ctx caller should be
+/// passing values *already published* (typically via
+/// `active_accent()` / `glass_opacity()`), so re-writing here
+/// would just double-apply pastel adaptation and corrupt the
+/// downstream paint sites that read the same globals.
+pub fn apply_theme_to(
+    ctx: &egui::Context,
+    accent: AccentColor,
+    opacity: GlassOpacity,
+) {
+    let th = theme();
+    let accent_raw = accent.0;
+    let accent_col = if th.pastel_accent {
+        adapt_accent_to_mode(accent_raw, th.is_light)
+    } else {
+        accent_raw
+    };
+    let _ = accent_raw;
 
     // Glass variants of every neutral bg, so EVERY egui widget that
     // pulls from `Visuals` (buttons, inputs, sliders, text fields,

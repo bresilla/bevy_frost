@@ -86,6 +86,59 @@ impl Grid {
     }
 }
 
+/// Dot grid background pattern — small filled circles at each
+/// grid intersection. Matches Blender's node-editor dot grid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+pub struct Dots {
+    /// Spacing between dots.
+    pub spacing: Vec2,
+    /// Dot radius in points.
+    pub radius: f32,
+}
+
+impl Default for Dots {
+    fn default() -> Self {
+        Self { spacing: DEFAULT_GRID_SPACING, radius: 1.0 }
+    }
+}
+
+impl Dots {
+    /// Create new dot pattern with given spacing and radius.
+    #[must_use]
+    pub const fn new(spacing: Vec2, radius: f32) -> Self {
+        Self { spacing, radius }
+    }
+
+    fn draw(&self, viewport: &Rect, snarl_style: &SnarlStyle, style: &Style, painter: &Painter) {
+        let stroke = snarl_style.get_bg_pattern_stroke(style);
+        let fill = stroke.color;
+
+        let spacing = vec2(self.spacing.x.max(1.0), self.spacing.y.max(1.0));
+
+        let min_x = (viewport.min.x / spacing.x).ceil();
+        let max_x = (viewport.max.x / spacing.x).floor();
+        let min_y = (viewport.min.y / spacing.y).ceil();
+        let max_y = (viewport.max.y / spacing.y).floor();
+
+        #[allow(clippy::cast_possible_truncation)]
+        let nx = f32::ceil(max_x - min_x) as i64;
+        #[allow(clippy::cast_possible_truncation)]
+        let ny = f32::ceil(max_y - min_y) as i64;
+
+        for ix in 0..=nx {
+            #[allow(clippy::cast_precision_loss)]
+            let x = (ix as f32 + min_x) * spacing.x;
+            for iy in 0..=ny {
+                #[allow(clippy::cast_precision_loss)]
+                let y = (iy as f32 + min_y) * spacing.y;
+                painter.circle_filled(egui::pos2(x, y), self.radius, fill);
+            }
+        }
+    }
+}
+
 /// Background pattern show beneath nodes and wires.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -97,6 +150,11 @@ pub enum BackgroundPattern {
     /// Linear grid.
     #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
     Grid(Grid),
+
+    /// Dot grid (Blender-style) — a filled circle at each
+    /// intersection of an invisible grid.
+    #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
+    Dots(Dots),
 }
 
 impl Default for BackgroundPattern {
@@ -134,6 +192,7 @@ impl BackgroundPattern {
     ) {
         match self {
             BackgroundPattern::Grid(g) => g.draw(viewport, snarl_style, style, painter),
+            BackgroundPattern::Dots(d) => d.draw(viewport, snarl_style, style, painter),
             BackgroundPattern::NoPattern => {}
         }
     }

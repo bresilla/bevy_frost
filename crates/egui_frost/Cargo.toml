@@ -19,6 +19,12 @@ readme = "README.md"
 # environment where egui works, and stays free of Bevy types.
 corekit = { workspace = true }
 egui = { workspace = true }
+# Used by `EframeNodeViewBackend` to register the secondary-context
+# wgpu texture into eframe's egui_wgpu::Renderer via
+# `register_native_texture`, so the texture can be drawn as
+# `egui::Image` in the parent UI.
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
 
 [dev-dependencies]
 # `eframe` pairs the same egui version that corekit builds against

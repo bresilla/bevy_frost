@@ -12,7 +12,8 @@
 //! and corekit stays focused on the panel / pod / widget primitives.
 
 pub(crate) mod code_editor;
-pub(crate) mod maximize;
+pub mod maximize;
 pub(crate) mod snarl;
 pub mod code;
 pub mod graph;
+pub mod node_view;

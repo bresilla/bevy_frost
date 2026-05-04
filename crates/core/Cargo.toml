@@ -14,6 +14,13 @@ repository.workspace = true
 
 [dependencies]
 egui = { workspace = true, default-features = false, features = ["default_fonts"] }
+# egui-wgpu — renderer used by `extras::node_view` to render a
+# secondary egui::Context into a wgpu texture so the snarl node
+# graph stays sharp at any zoom (sub-context's `pixels_per_point`
+# compensates for zoom). Both bevy_egui + eframe's wgpu backend
+# also use egui-wgpu, so corekit shares the same crate version.
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
 # Filled Fluent UI System Icons — used by `icons.rs` + `ribbon::paint`.
 iconflow = { version = "1.0", default-features = false, features = ["pack-fluentui"] }
 # Lab-space colour manipulation — `style.rs` uses it to adapt

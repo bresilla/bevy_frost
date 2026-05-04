@@ -51,4 +51,80 @@ pub fn apply_theme_now(
 pub mod prelude {
     pub use corekit::*;
     pub use super::apply_theme_now;
+    pub use super::EframeNodeViewBackend;
+}
+
+/// `NodeViewBackend` impl backed by eframe's `egui_wgpu::RenderState`.
+///
+/// Borrow it from your `eframe::App::update` via
+/// `frame.wgpu_render_state()` — it provides the wgpu device + queue
+/// and lets us register native textures with the SAME egui-wgpu
+/// renderer eframe uses to paint the rest of the UI, so the
+/// secondary context's offscreen render target can be drawn as
+/// `egui::Image` without copy-back.
+///
+/// ```ignore
+/// fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+///     let render_state = frame.wgpu_render_state().expect("wgpu");
+///     let mut backend = egui_frost::EframeNodeViewBackend::new(render_state);
+///     egui::CentralPanel::default().show(ctx, |ui| {
+///         corekit::extras::graph::frost_snarl(
+///             ui, &mut self.node_view_state, &mut backend,
+///             &mut self.snarl, &mut self.viewer,
+///             accent, ui.available_size(),
+///         );
+///     });
+/// }
+/// ```
+pub struct EframeNodeViewBackend<'a> {
+    render_state: &'a egui_wgpu::RenderState,
+}
+
+impl<'a> EframeNodeViewBackend<'a> {
+    pub fn new(render_state: &'a egui_wgpu::RenderState) -> Self {
+        Self { render_state }
+    }
+}
+
+impl<'a> corekit::extras::node_view::NodeViewBackend for EframeNodeViewBackend<'a> {
+    fn wgpu(&self) -> (wgpu::Device, wgpu::Queue) {
+        // `wgpu::Device` / `Queue` are cheap to clone in wgpu 27 —
+        // internally Arc-counted handles to the same backend
+        // resources.
+        (self.render_state.device.clone(), self.render_state.queue.clone())
+    }
+
+    fn target_format(&self) -> wgpu::TextureFormat {
+        self.render_state.target_format
+    }
+
+    fn register_native(
+        &mut self,
+        _texture: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        _size_pixels: [u32; 2],
+        filter: wgpu::FilterMode,
+    ) -> egui::TextureId {
+        // eframe wraps the renderer in `Arc<RwLock<...>>`; take a
+        // write-guard for the mutating call. The lock is short-
+        // lived (just the registration call), so no contention
+        // with the parent UI's render pass which runs in the
+        // `eframe::Frame::end_pass` flow much later. The eframe
+        // path doesn't need `texture` or `size_pixels` because
+        // egui-wgpu's `register_native_texture` uses the view
+        // directly — those args exist for backends like Bevy that
+        // can't sample arbitrary `wgpu::TextureView`s and need to
+        // mirror into their own asset system.
+        let mut renderer = self.render_state.renderer.write();
+        renderer.register_native_texture(
+            &self.render_state.device,
+            view,
+            filter,
+        )
+    }
+
+    fn unregister_native(&mut self, id: egui::TextureId) {
+        let mut renderer = self.render_state.renderer.write();
+        renderer.free_texture(&id);
+    }
 }

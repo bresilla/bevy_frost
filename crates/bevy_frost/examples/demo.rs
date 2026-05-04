@@ -17,7 +17,7 @@ use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{egui, EguiContext, EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext};
 use bevy_glacial::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,10 +35,18 @@ use corekit::style::{srgb_to_egui, AccentColor, GlassOpacity, Mode};
 use corekit::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // Vendored extras — node graph (`egui-snarl`) and code editor
 // (`egui_code_editor`). Both live under `bevy_frost::extras`.
-use bevy_frost::extras::code::{frost_code_editor, Syntax};
+use bevy_frost::extras::code::{frost_code_editor_with_opts, Syntax};
 use bevy_frost::extras::graph::{
-    frost_snarl, InPin, InPinId, OutPin, OutPinId, PinInfo, Snarl, SnarlPin, SnarlViewer,
+    frost_snarl, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Snarl, SnarlPin,
+    SnarlViewer,
 };
+use bevy_frost::node_view_backend::{
+    BevyNodeViewBackend, NodeViewSlots, PendingNodeViewCopies,
+};
+use bevy::ecs::system::SystemParam;
+use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy_egui::EguiUserTextures;
+use corekit::extras::maximize::OverlayOpts;
 
 // ─── Ribbon / pane ids ──────────────────────────────────────────────
 
@@ -137,6 +145,44 @@ struct ColorCube {
 #[derive(Resource, Default)]
 struct SelectedSwatch(Option<Entity>);
 
+/// Per-graph sharp-zoom state (secondary egui::Context, pan, zoom,
+/// wgpu render target). Held as a Bevy resource so the SAME state
+/// instance is passed to `frost_snarl` every frame for the same
+/// editor pane — recreating it would drop the cached wgpu texture
+/// and renderer.
+#[derive(Resource)]
+struct EditorNodeView(NodeViewState);
+
+impl Default for EditorNodeView {
+    fn default() -> Self { Self(NodeViewState::new()) }
+}
+
+/// The actual snarl graph for the editor pane. Same lifetime story
+/// as `EditorNodeView` — needs to persist across frames so node
+/// edits + connections aren't reset.
+#[derive(Resource)]
+struct EditorGraph(Snarl<GraphNode>);
+
+impl Default for EditorGraph {
+    fn default() -> Self { Self(default_graph()) }
+}
+
+/// Bundled `SystemParam` for the sharp-zoom node-graph plumbing.
+/// Bevy systems cap at 16 direct params; grouping the wgpu device /
+/// queue + image / egui / pending-copy resources into one
+/// `SystemParam` keeps `ui_system` under that limit.
+#[derive(SystemParam)]
+struct NodeViewSystemParams<'w> {
+    render_device: Res<'w, RenderDevice>,
+    render_queue: Res<'w, RenderQueue>,
+    images: ResMut<'w, Assets<Image>>,
+    egui_textures: ResMut<'w, EguiUserTextures>,
+    pending: ResMut<'w, PendingNodeViewCopies>,
+    slots: ResMut<'w, NodeViewSlots>,
+    editor_node_view: ResMut<'w, EditorNodeView>,
+    editor_graph: ResMut<'w, EditorGraph>,
+}
+
 const PLANET_RADIUS: f32 = 6_371_000.0;
 const CLOUD_ALTITUDE_M: f32 = 4_000.0;
 
@@ -160,6 +206,7 @@ fn main() {
         )
         .add_plugins(bevy_egui::EguiPlugin::default())
         .add_plugins(bevy_frost::EguiInputAbsorbPlugin)
+        .add_plugins(bevy_frost::node_view_backend::NodeViewPlugin)
         .add_plugins(GlacialPlugins)
         .add_plugins(WindowSettingsPlugin::new("bevy_frost_demo"))
         .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.12)))
@@ -177,10 +224,19 @@ fn main() {
         .init_resource::<PastelToggle>()
         .init_resource::<TintRgba>()
         .init_resource::<SelectedSwatch>()
+        .init_resource::<EditorNodeView>()
+        .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
         .add_systems(Update, (pick_cube, update_swatch_selection))
         .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
+    // NOTE: an earlier revision of this file gated the 3D camera's
+    // `is_active` on `is_any_fullscreen(ctx)` to skip scene rendering
+    // while the maximize overlay covers the screen. That caused the
+    // swapchain to freeze — bevy_egui needs an active camera to
+    // present, so disabling all `Camera3d` also halts egui paint.
+    // Reverted; the fullscreen overlay covers the scene visually,
+    // 3D render work is unfortunately still done in the background.
 }
 
 // ─── Scene setup ───────────────────────────────────────────────────
@@ -399,7 +455,14 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
 
 #[allow(clippy::too_many_arguments)]
 fn ui_system(
-    mut contexts: EguiContexts,
+    // NOTE: `EguiContexts` itself holds a `ResMut<EguiUserTextures>`
+    // internally — combining it with our own `ResMut<EguiUserTextures>`
+    // (in `NodeViewSystemParams`, needed by `BevyNodeViewBackend`)
+    // would double-borrow that resource and trip Bevy's B0002 panic.
+    // Query the primary context's `EguiContext` component directly
+    // instead so the user-textures borrow lives only on the
+    // node-view side.
+    mut egui_ctx_q: Query<&mut EguiContext, With<PrimaryEguiContext>>,
     mut accent: ResMut<AccentColor>,
     mut glass: ResMut<GlassOpacity>,
     mut open: ResMut<RibbonOpen>,
@@ -409,8 +472,12 @@ fn ui_system(
     mut mode: ResMut<ThemeModeRes>,
     mut pastel: ResMut<PastelToggle>,
     mut tint: ResMut<TintRgba>,
+    // ── Sharp-zoom node-graph plumbing (bundled to stay under
+    //    Bevy's 16-system-param cap) ──
+    mut node_view_params: NodeViewSystemParams,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else { return };
+    let Ok(mut egui_ctx) = egui_ctx_q.single_mut() else { return };
+    let ctx = egui_ctx.get_mut();
 
     let mut active_theme = match (family.0, mode.0) {
         (0, 0) => corekit::style::theme_pro(Mode::Dark),
@@ -424,11 +491,20 @@ fn ui_system(
     corekit::style::apply_theme(ctx, *accent, *glass);
 
     let accent_col = corekit::style::active_accent();
-    let clicks = draw_assembly(
-        ctx, accent_col, RIBBONS, RIBBON_ITEMS,
-        &mut open, &mut placement, &mut drag,
-        |_| false,
-    );
+    // Fullscreen-view gate: when ANY maximizable widget is in
+    // full-window mode, skip the ribbon assembly + every pane that
+    // doesn't host the fullscreen widget. The fullscreen view truly
+    // owns the screen — no ribbons, no other panes, no Bevy scene
+    // (the camera-disable system handles the latter).
+    let fs_active = corekit::extras::maximize::is_any_fullscreen(ctx);
+    let mut clicks: Vec<corekit::ribbon::RibbonClick> = Vec::new();
+    if !fs_active {
+        clicks = draw_assembly(
+            ctx, accent_col, RIBBONS, RIBBON_ITEMS,
+            &mut open, &mut placement, &mut drag,
+            |_| false,
+        );
+    }
     // PREV / NEXT cube — one-shot icon buttons in the BOTTOM rail's
     // End cluster. Each click rotates the AccentColor through the
     // hardcoded swatch row defined in `setup_scene`. Mirrors the
@@ -481,6 +557,15 @@ fn ui_system(
 
     for &(_, button_id, default_anchor, label) in PANE_DEFS {
         if !is_open(button_id) { continue; }
+        // While a fullscreen view is active, skip every pane that
+        // doesn't host the maximizable widget — those are pure
+        // CPU waste once the overlay covers them. The editor pane
+        // (which hosts the maximizable inside its body) still
+        // renders normally; the maximizable's `Foreground` Area
+        // paints the overlay on top, hiding the inline pane chrome.
+        if fs_active && button_id != PANE_EDITOR {
+            continue;
+        }
         let anchor = live_anchor(button_id).unwrap_or(default_anchor);
         Pane2::new(button_id, label, anchor, accent_col)
             .resize(corekit::pane::PaneResize::SPAN)
@@ -495,7 +580,35 @@ fn ui_system(
                 ),
                 PANE_KEYS       => keys_pane(body_ui, anchor, accent_col),
                 PANE_ABOUT      => about_pane(body_ui, anchor, accent_col),
-                PANE_EDITOR     => editor_pane(body_ui, anchor, accent_col),
+                PANE_EDITOR     => {
+                    // Build a fresh `BevyNodeViewBackend` for this
+                    // pane's `editor_pane` call. The backend borrows
+                    // the wgpu resources + the node-view bookkeeping
+                    // resources mutably for the duration of the call;
+                    // re-borrowed every loop iteration that hits this
+                    // arm.
+                    let mut backend = BevyNodeViewBackend::new(
+                        &node_view_params.render_device,
+                        &node_view_params.render_queue,
+                        &mut node_view_params.images,
+                        &mut node_view_params.egui_textures,
+                        &mut node_view_params.pending,
+                        &mut node_view_params.slots,
+                    );
+                    // Drive the `Time` / `Perlin` nodes from
+                    // egui's input clock so they animate live.
+                    let now = body_ui
+                        .ctx()
+                        .input(|i| i.time);
+                    let mut viewer = GraphViewer { time: now };
+                    editor_pane(
+                        body_ui, anchor, accent_col,
+                        &mut node_view_params.editor_node_view.0,
+                        &mut node_view_params.editor_graph.0,
+                        &mut viewer,
+                        &mut backend,
+                    );
+                }
                 _ => {}
             });
     }
@@ -1128,33 +1241,39 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
 /// each in its own container with a fill pod so they soak up the
 /// pane's available space. Mirrors the legacy demo's Editor pane,
 /// now driven by the vendored `bevy_frost::extras` wrappers.
-fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
+///
+/// The graph container is rendered via `Normal::show_raw` rather
+/// than the standard `with_custom_units` pod path so we can pass
+/// `&mut NodeViewState`, `&mut Snarl`, `&mut Viewer`, and the
+/// Bevy-side `&mut dyn NodeViewBackend` straight through to
+/// `frost_snarl`. The pod-path closure has a `'static` bound
+/// that those refs can't satisfy.
+#[allow(clippy::too_many_arguments)]
+fn editor_pane(
+    body: &mut egui::Ui,
+    anchor: PaneAnchor,
+    accent: egui::Color32,
+    node_view: &mut NodeViewState,
+    snarl: &mut Snarl<GraphNode>,
+    viewer: &mut GraphViewer,
+    backend: &mut BevyNodeViewBackend<'_>,
+) {
     let pane_id = egui::Id::new(PANE_EDITOR);
-    let graph_id = cid(PANE_EDITOR, "graph_state");
+    let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");
+
+    // ── Node graph container ──
+    Normal::new("Node graph", anchor, accent, cid_graph)
+        .icon("flowchart")
+        .show_raw(body, |graph_ui| {
+            let avail = graph_ui.available_size_before_wrap();
+            frost_snarl(
+                graph_ui, node_view, backend, snarl, viewer, accent, avail,
+            );
+        });
+
+    // ── Source code container — unchanged pod-list path ──
     render_containers(body, pane_id, anchor, accent, vec![
-        ContainerSpec {
-            id: cid(PANE_EDITOR, "graph"),
-            title: "Node graph".into(),
-            icon: "flowchart",
-            body: SpecBody::Pods(vec![
-                Pod::new(pid(PANE_EDITOR, "graph", 0))
-                    .with_separator(SeparatorStyle::None)
-                    .fill()
-                    .with_custom_units(10, move |ui| {
-                        let mut graph: Snarl<GraphNode> = ui
-                            .ctx()
-                            .data(|d| d.get_temp::<Snarl<GraphNode>>(graph_id))
-                            .unwrap_or_else(default_graph);
-                        let mut viewer = GraphViewer;
-                        let avail = ui.available_size_before_wrap();
-                        frost_snarl(
-                            ui, graph_id, &mut graph, &mut viewer, accent, avail,
-                        );
-                        ui.ctx().data_mut(|d| d.insert_temp(graph_id, graph));
-                    }),
-            ]),
-        },
         ContainerSpec {
             id: cid(PANE_EDITOR, "code"),
             title: "Source".into(),
@@ -1169,8 +1288,9 @@ fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                             .data(|d| d.get_temp::<String>(code_id))
                             .unwrap_or_else(|| DEFAULT_CODE.to_string());
                         let avail = ui.available_size_before_wrap();
-                        frost_code_editor(
+                        frost_code_editor_with_opts(
                             ui, code_id, &mut text, Syntax::rust(), accent, avail,
+                            OverlayOpts::default(),
                         );
                         ui.ctx().data_mut(|d| d.insert_temp(code_id, text));
                     }),
@@ -1180,128 +1300,1613 @@ fn editor_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
 }
 
 // ─── Node-graph types (used by Editor pane) ────────────────────────
+//
+// A multi-typed node graph styled after Blackjack + noise_gui. Pins
+// carry typed values (`Value::Number / Vector / Color / Bool /
+// Text`) — colour-coded and shape-coded so the user can read the
+// graph at a glance, with implicit conversion between compatible
+// types when the evaluator pulls a value from the wrong pin shape.
+//
+// Categories of nodes implemented:
+//   * **Sources** — Number / Vector / Color / Bool / Time
+//   * **Scalar math** — ScalarMath / Trig / Compare / Mix / Clamp
+//   * **Vector** — VectorMath / Compose / Decompose / Length
+//   * **Colour** — RgbToColor / ColorMix
+//   * **Logic** — IfElse
+//   * **Noise** — Perlin (1-D value noise from a `t` input)
+//   * **Sinks** — Display (sparkline) / Preview (swatch) / Output
+//
+// Each variant shows off a different egui widget in its body / pin
+// rows so the demo doubles as a widget gallery: drag values, color
+// pickers, toggles, dropdowns, sliders, mini sparklines, etc.
+
+#[derive(Clone, Copy, PartialEq)]
+enum PinType { Number, Vector, Color, Bool, Text }
+
+impl PinType {
+    /// Canonical fill colour for pins of this type. Picked from
+    /// Unreal Engine's `K2GraphSchema` pin palette
+    /// (`UGraphEditorSettings`), gamma-encoded from the engine's
+    /// linear `FLinearColor` defaults so the colours match what
+    /// you see in the Blueprint editor:
+    ///   * Number  → Float        `#A4FF34` (bright lime).
+    ///   * Vector  → Vector struct`#FFC247` (gold).
+    ///   * Color   → LinearColor  `#FFA0FF` (pink-magenta — UE
+    ///     uses the SoftClassRef tone for "pretty colour" type-
+    ///     coding when the editor doesn't have a dedicated colour
+    ///     pin).
+    ///   * Bool    → Bool         `#960000` (deep maroon).
+    ///   * Text    → String       `#FF38C9` (hot pink).
+    /// Combined with `WireColorMode::FromSource` in
+    /// `frost_snarl_style`, every wire takes the colour of its
+    /// source pin uniformly — the "Unreal Blueprint" look.
+    fn color(self) -> egui::Color32 {
+        match self {
+            PinType::Number => egui::Color32::from_rgb(0xA4, 0xFF, 0x34),
+            PinType::Vector => egui::Color32::from_rgb(0xFF, 0xC2, 0x47),
+            PinType::Color  => egui::Color32::from_rgb(0xFF, 0xA0, 0xFF),
+            PinType::Bool   => egui::Color32::from_rgb(0x96, 0x00, 0x00),
+            PinType::Text   => egui::Color32::from_rgb(0xFF, 0x38, 0xC9),
+        }
+    }
+
+    /// `PinInfo` for this pin's type, sized as a uniform circle
+    /// across all types (matches Unreal Blueprints' single-shape
+    /// pin convention; type info is carried by colour alone).
+    ///
+    /// `connected` toggles the fill: a connected pin is solid in
+    /// the type colour with a thin dark outline, an unconnected
+    /// pin is a hollow ring (transparent fill + a thicker stroke
+    /// in the type colour) — visually telling the user "this slot
+    /// expects a wire".
+    fn pin(self, connected: bool) -> PinInfo {
+        let fill = self.color();
+        if connected {
+            PinInfo::circle()
+                .with_fill(fill)
+                .with_stroke(egui::Stroke::new(1.0, egui::Color32::from_black_alpha(180)))
+        } else {
+            PinInfo::circle()
+                .with_fill(egui::Color32::TRANSPARENT)
+                .with_stroke(egui::Stroke::new(1.5, fill))
+        }
+    }
+}
+
+/// A value flowing along a wire. The graph is dynamically typed —
+/// pins advertise an "expected" `PinType` for clarity, but the
+/// evaluator coerces on read so e.g. plugging a `Vector` into a
+/// scalar slot yields `length(v)` rather than an error.
+#[derive(Clone)]
+enum Value {
+    Number(f64),
+    Vector([f64; 3]),
+    Color(egui::Color32),
+    Bool(bool),
+    Text(String),
+}
+
+impl Value {
+    fn as_number(&self) -> f64 {
+        match self {
+            Value::Number(v) => *v,
+            Value::Vector(v) => (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(),
+            Value::Color(c) => c.r() as f64 / 255.0,
+            Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+            Value::Text(s) => s.parse().unwrap_or(0.0),
+        }
+    }
+    fn as_vector(&self) -> [f64; 3] {
+        match self {
+            Value::Number(v) => [*v, *v, *v],
+            Value::Vector(v) => *v,
+            Value::Color(c) => [
+                c.r() as f64 / 255.0,
+                c.g() as f64 / 255.0,
+                c.b() as f64 / 255.0,
+            ],
+            Value::Bool(b) => { let v = if *b { 1.0 } else { 0.0 }; [v; 3] }
+            Value::Text(_) => [0.0; 3],
+        }
+    }
+    fn as_color(&self) -> egui::Color32 {
+        let to_u8 = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        match self {
+            Value::Number(v) => { let g = to_u8(*v); egui::Color32::from_rgb(g, g, g) }
+            Value::Vector(v) => egui::Color32::from_rgb(to_u8(v[0]), to_u8(v[1]), to_u8(v[2])),
+            Value::Color(c) => *c,
+            Value::Bool(b) => if *b { egui::Color32::WHITE } else { egui::Color32::BLACK },
+            Value::Text(_) => egui::Color32::GRAY,
+        }
+    }
+    fn as_bool(&self) -> bool {
+        match self {
+            Value::Number(v) => *v >= 0.5,
+            Value::Vector(v) => v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 0.0,
+            Value::Color(c) => c.r() as u16 + c.g() as u16 + c.b() as u16 > 384,
+            Value::Bool(b) => *b,
+            Value::Text(s) => !s.is_empty(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ScalarOp {
+    Add, Sub, Mul, Div, Min, Max,
+    Pow, Mod, SmoothMin, SmoothMax,
+}
+impl ScalarOp {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Add=>"a + b", Self::Sub=>"a − b", Self::Mul=>"a × b",
+            Self::Div=>"a ÷ b", Self::Min=>"min(a,b)", Self::Max=>"max(a,b)",
+            Self::Pow=>"a ^ b", Self::Mod=>"a mod b",
+            Self::SmoothMin=>"smin(a,b)", Self::SmoothMax=>"smax(a,b)",
+        }
+    }
+    fn apply(self, a: f64, b: f64) -> f64 {
+        match self {
+            Self::Add=>a+b, Self::Sub=>a-b, Self::Mul=>a*b,
+            Self::Div=>if b.abs()<1e-9 {0.0} else {a/b},
+            Self::Min=>a.min(b), Self::Max=>a.max(b),
+            Self::Pow=>a.powf(b),
+            Self::Mod=>if b.abs()<1e-9 {0.0} else {a.rem_euclid(b)},
+            // Smooth min/max (h=0.5 default) — exact Blender formula.
+            Self::SmoothMin=>{ let k=0.5; let h=(0.5+0.5*(b-a)/k).clamp(0.0,1.0);
+                               b*(1.0-h)+a*h - k*h*(1.0-h) }
+            Self::SmoothMax=>{ let k=0.5; let h=(0.5-0.5*(b-a)/k).clamp(0.0,1.0);
+                               b*(1.0-h)+a*h + k*h*(1.0-h) }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TrigFn {
+    Sin, Cos, Tan, Asin, Acos, Atan,
+    Sinh, Cosh, Tanh,
+    Sqrt, Abs, Floor, Ceil, Round, Trunc, Frac, Sign,
+    Exp, Log,
+}
+impl TrigFn {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Sin=>"sin", Self::Cos=>"cos", Self::Tan=>"tan",
+            Self::Asin=>"asin", Self::Acos=>"acos", Self::Atan=>"atan",
+            Self::Sinh=>"sinh", Self::Cosh=>"cosh", Self::Tanh=>"tanh",
+            Self::Sqrt=>"sqrt", Self::Abs=>"abs",
+            Self::Floor=>"floor", Self::Ceil=>"ceil", Self::Round=>"round",
+            Self::Trunc=>"trunc", Self::Frac=>"frac", Self::Sign=>"sign",
+            Self::Exp=>"exp", Self::Log=>"ln",
+        }
+    }
+    fn apply(self, x: f64) -> f64 {
+        match self {
+            Self::Sin=>x.sin(), Self::Cos=>x.cos(), Self::Tan=>x.tan(),
+            Self::Asin=>x.clamp(-1.0,1.0).asin(),
+            Self::Acos=>x.clamp(-1.0,1.0).acos(),
+            Self::Atan=>x.atan(),
+            Self::Sinh=>x.sinh(), Self::Cosh=>x.cosh(), Self::Tanh=>x.tanh(),
+            Self::Sqrt=>x.max(0.0).sqrt(), Self::Abs=>x.abs(),
+            Self::Floor=>x.floor(), Self::Ceil=>x.ceil(),
+            Self::Round=>x.round(), Self::Trunc=>x.trunc(),
+            Self::Frac=>x - x.floor(), Self::Sign=>x.signum(),
+            Self::Exp=>x.exp(), Self::Log=>if x>0.0 {x.ln()} else {0.0},
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum BoolOp { And, Or, Not, Xor, Nand, Nor, Xnor }
+impl BoolOp {
+    fn label(self) -> &'static str {
+        match self {
+            Self::And=>"a ∧ b", Self::Or=>"a ∨ b", Self::Not=>"¬a",
+            Self::Xor=>"a ⊕ b", Self::Nand=>"a ⊼ b",
+            Self::Nor=>"a ⊽ b", Self::Xnor=>"a = b",
+        }
+    }
+    fn apply(self, a: bool, b: bool) -> bool {
+        match self {
+            Self::And=>a&&b, Self::Or=>a||b, Self::Not=>!a,
+            Self::Xor=>a^b, Self::Nand=>!(a&&b),
+            Self::Nor=>!(a||b), Self::Xnor=>a==b,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum WaveShape { Sine, Saw, Triangle, Square }
+impl WaveShape {
+    fn label(self) -> &'static str {
+        match self { Self::Sine=>"sine", Self::Saw=>"saw",
+                     Self::Triangle=>"triangle", Self::Square=>"square" }
+    }
+    fn apply(self, t: f64) -> f64 {
+        let p = t - t.floor(); // 0..1
+        match self {
+            Self::Sine     => (t * std::f64::consts::TAU).sin(),
+            Self::Saw      => p * 2.0 - 1.0,
+            Self::Triangle => 1.0 - 4.0 * (p - 0.5).abs(),
+            Self::Square   => if p < 0.5 { 1.0 } else { -1.0 },
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CompareOp { Lt, Le, Eq, Ge, Gt, Ne }
+impl CompareOp {
+    fn label(self) -> &'static str {
+        match self { Self::Lt=>"a < b", Self::Le=>"a ≤ b", Self::Eq=>"a = b",
+                     Self::Ge=>"a ≥ b", Self::Gt=>"a > b", Self::Ne=>"a ≠ b" }
+    }
+    fn apply(self, a: f64, b: f64) -> bool {
+        match self { Self::Lt=>a<b, Self::Le=>a<=b, Self::Eq=>(a-b).abs()<1e-9,
+                     Self::Ge=>a>=b, Self::Gt=>a>b, Self::Ne=>(a-b).abs()>=1e-9 }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum VectorOp { Add, Sub, Mul, Cross }
+impl VectorOp {
+    fn label(self) -> &'static str {
+        match self { Self::Add=>"a + b", Self::Sub=>"a − b",
+                     Self::Mul=>"a ⊙ b", Self::Cross=>"a × b" }
+    }
+    fn apply(self, a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+        match self {
+            Self::Add => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+            Self::Sub => [a[0]-b[0], a[1]-b[1], a[2]-b[2]],
+            Self::Mul => [a[0]*b[0], a[1]*b[1], a[2]*b[2]],
+            Self::Cross => [
+                a[1]*b[2] - a[2]*b[1],
+                a[2]*b[0] - a[0]*b[2],
+                a[0]*b[1] - a[1]*b[0],
+            ],
+        }
+    }
+}
 
 #[derive(Clone)]
 enum GraphNode {
+    // ── Sources ──
     Number(f64),
-    Add,
-    Output,
+    Integer(i64),
+    Vector([f64; 3]),
+    Color(egui::Color32),
+    Bool(bool),
+    Time,
+
+    // ── Scalar math ──
+    ScalarMath(ScalarOp),
+    Trig(TrigFn),
+    Compare(CompareOp),
+    Mix,            // lerp(a, b, t)
+    Clamp,          // clamp(x, lo, hi)
+    MapRange,       // remap (x, in_lo, in_hi, out_lo, out_hi)
+    Smoothstep,     // smoothstep(edge0, edge1, x)
+    Step,           // step(edge, x) — 0 if x<edge else 1
+
+    // ── Vector ──
+    VectorMath(VectorOp),
+    Compose,        // x, y, z → vec3
+    Decompose,      // vec3 → x, y, z
+    Length,         // ||v||
+    Dot,            // a · b → scalar
+    Distance,       // |a − b| → scalar
+    Normalize,      // v / |v| → vec3
+    VectorRotate,   // rotate v around axis by angle → vec3
+    Reflect,        // reflect v across plane(normal) → vec3
+
+    // ── Colour ──
+    RgbToColor,     // r, g, b → color
+    HsvToColor,     // h, s, v → color
+    ColorMix,       // lerp(c1, c2, t)
+    HueShift,       // rotate hue → color
+    ColorInvert,    // (1 - r, 1 - g, 1 - b) → color
+    BrightContrast, // brightness × contrast → color
+    Gamma,          // c^gamma → color
+
+    // ── Logic ──
+    IfElse,         // bool ? a : b
+    BooleanMath(BoolOp), // and/or/not/xor/...
+    FloatToBool,    // x > threshold → bool
+    BoolToFloat,    // bool ? 1 : 0 → f64
+
+    // ── Noise / wave ──
+    Perlin {        // 1-D value noise
+        seed: u32,
+        frequency: f64,
+    },
+    WhiteNoise {    // unsmoothed hash-based pseudo-random
+        seed: u32,
+    },
+    Wave(WaveShape),// sine / saw / triangle / square
+
+    // ── Sinks / display ──
+    Display,        // scalar with sparkline
+    Plot,           // scalar with auto-scale chart + min/max readout
+    Preview,        // color swatch
+    VectorPreview,  // x/y/z bars
+    Output,         // terminal sink
+}
+
+/// Node category — drives the per-node header gradient (à la
+/// Unreal Blueprints' "color spill") with the actual hex values
+/// taken from Blender 4.x's `nodeclass_*` palette so the muscle
+/// memory of seasoned users carries over.
+#[derive(Clone, Copy, PartialEq)]
+enum Category {
+    Source,        // Blender "Input"      — dusty rose
+    ScalarMath,    // Blender "Converter"  — steel blue
+    Vector,        // Blender "Vector"     — indigo
+    Color,         // Blender "Color"      — olive
+    Logic,         // Blender "Filter"     — deep purple
+    Noise,         // Blender "Texture"    — brown
+    Sink,          // Blender "Output"     — dark maroon
+}
+
+impl Category {
+    /// Header tint, fully opaque. The header band is painted as a
+    /// horizontal gradient `(tint @ alpha 0.85) → (transparent)`
+    /// so the dark body fill bleeds through past the title (UE's
+    /// "color spill" pattern but with Blender's palette).
+    fn color(self) -> egui::Color32 {
+        match self {
+            Category::Source     => egui::Color32::from_rgb(0x82, 0x35, 0x4C), // syntaxn
+            Category::ScalarMath => egui::Color32::from_rgb(0x24, 0x62, 0x83), // syntaxv
+            Category::Vector     => egui::Color32::from_rgb(0x3C, 0x3C, 0x83), // nodeclass_vector
+            Category::Color      => egui::Color32::from_rgb(0x6E, 0x6E, 0x23), // syntaxb
+            Category::Logic      => egui::Color32::from_rgb(0x41, 0x2B, 0x51), // nodeclass_filter
+            Category::Noise      => egui::Color32::from_rgb(0x79, 0x46, 0x1D), // nodeclass_texture
+            Category::Sink       => egui::Color32::from_rgb(0x3E, 0x23, 0x2A), // nodeclass_output
+        }
+    }
 }
 
 impl GraphNode {
+    /// Small Fluent-UI icon glyph painted to the left of the
+    /// title in the header band. Picked from the set bundled in
+    /// `corekit::icons` so missing-glyph fallback never kicks in.
+    fn icon_name(&self) -> &'static str {
+        match self {
+            // Sources
+            GraphNode::Number(_)     => "calculator",
+            GraphNode::Integer(_)    => "calculator",
+            GraphNode::Vector(_)     => "flowchart",
+            GraphNode::Color(_)      => "color",
+            GraphNode::Bool(_)       => "checkmark",
+            GraphNode::Time          => "clock",
+            // Scalar math
+            GraphNode::ScalarMath(_) => "calculator",
+            GraphNode::Trig(_)       => "wave",
+            GraphNode::Compare(_)    => "scales",
+            GraphNode::Mix           => "merge",
+            GraphNode::Clamp         => "border-all",
+            GraphNode::MapRange      => "ruler",
+            GraphNode::Smoothstep    => "wave",
+            GraphNode::Step          => "wave",
+            // Vector
+            GraphNode::VectorMath(_) => "flowchart",
+            GraphNode::Compose       => "merge",
+            GraphNode::Decompose     => "split",
+            GraphNode::Length        => "ruler",
+            GraphNode::Dot           => "calculator",
+            GraphNode::Distance      => "ruler",
+            GraphNode::Normalize     => "flowchart",
+            GraphNode::VectorRotate  => "flowchart",
+            GraphNode::Reflect       => "branch",
+            // Colour
+            GraphNode::RgbToColor    => "color",
+            GraphNode::HsvToColor    => "color",
+            GraphNode::ColorMix      => "color",
+            GraphNode::HueShift      => "color",
+            GraphNode::ColorInvert   => "color",
+            GraphNode::BrightContrast=> "color",
+            GraphNode::Gamma         => "color",
+            // Logic
+            GraphNode::IfElse        => "branch",
+            GraphNode::BooleanMath(_)=> "code",
+            GraphNode::FloatToBool   => "code",
+            GraphNode::BoolToFloat   => "code",
+            // Noise
+            GraphNode::Perlin { .. } => "wave",
+            GraphNode::WhiteNoise{..}=> "wave",
+            GraphNode::Wave(_)       => "wave",
+            // Sinks
+            GraphNode::Display       => "chart-multiple",
+            GraphNode::Plot          => "chart-multiple",
+            GraphNode::Preview       => "image",
+            GraphNode::VectorPreview => "image",
+            GraphNode::Output        => "save",
+        }
+    }
+
+    /// Smaller subtitle line under the main title — describes the
+    /// node's *current* state (selected operator, value type, etc.)
+    /// the way Unreal Blueprint title bars show e.g. "Float" under
+    /// "Add". Stays in sync with the dropdown in the body.
+    fn subtitle(&self) -> String {
+        match self {
+            // Sources
+            GraphNode::Number(_)        => "Float".into(),
+            GraphNode::Integer(_)       => "Int".into(),
+            GraphNode::Vector(_)        => "Vec3".into(),
+            GraphNode::Color(_)         => "RGBA".into(),
+            GraphNode::Bool(_)          => "Bool".into(),
+            GraphNode::Time             => "seconds".into(),
+            // Scalar math
+            GraphNode::ScalarMath(op)   => op.label().into(),
+            GraphNode::Trig(f)          => f.label().into(),
+            GraphNode::Compare(op)      => op.label().into(),
+            GraphNode::Mix              => "lerp(a, b, t)".into(),
+            GraphNode::Clamp            => "clamp(x, lo, hi)".into(),
+            GraphNode::MapRange         => "remap range".into(),
+            GraphNode::Smoothstep       => "smoothstep(e0, e1, x)".into(),
+            GraphNode::Step             => "step(edge, x)".into(),
+            // Vector
+            GraphNode::VectorMath(op)   => op.label().into(),
+            GraphNode::Compose          => "x, y, z → vec".into(),
+            GraphNode::Decompose        => "vec → x, y, z".into(),
+            GraphNode::Length           => "‖v‖".into(),
+            GraphNode::Dot              => "a · b".into(),
+            GraphNode::Distance         => "‖a − b‖".into(),
+            GraphNode::Normalize        => "v / ‖v‖".into(),
+            GraphNode::VectorRotate     => "rotate axis-angle".into(),
+            GraphNode::Reflect          => "reflect across n".into(),
+            // Colour
+            GraphNode::RgbToColor       => "RGB → Color".into(),
+            GraphNode::HsvToColor       => "HSV → Color".into(),
+            GraphNode::ColorMix         => "lerp(c₁, c₂, t)".into(),
+            GraphNode::HueShift         => "rotate hue".into(),
+            GraphNode::ColorInvert      => "1 − rgb".into(),
+            GraphNode::BrightContrast   => "bright × contrast".into(),
+            GraphNode::Gamma            => "c ^ γ".into(),
+            // Logic
+            GraphNode::IfElse           => "cond ? a : b".into(),
+            GraphNode::BooleanMath(op)  => op.label().into(),
+            GraphNode::FloatToBool      => "x > threshold".into(),
+            GraphNode::BoolToFloat      => "true → 1, false → 0".into(),
+            // Noise
+            GraphNode::Perlin { seed, .. }   => format!("seed {seed}"),
+            GraphNode::WhiteNoise { seed }   => format!("hash, seed {seed}"),
+            GraphNode::Wave(s)               => format!("{} wave", s.label()),
+            // Sinks
+            GraphNode::Display          => "scalar + sparkline".into(),
+            GraphNode::Plot             => "auto-scale chart".into(),
+            GraphNode::Preview          => "color swatch".into(),
+            GraphNode::VectorPreview    => "x/y/z bars".into(),
+            GraphNode::Output           => "sink".into(),
+        }
+    }
+
+    fn category(&self) -> Category {
+        match self {
+            GraphNode::Number(_) | GraphNode::Integer(_) | GraphNode::Vector(_)
+            | GraphNode::Color(_) | GraphNode::Bool(_) | GraphNode::Time
+                => Category::Source,
+            GraphNode::ScalarMath(_) | GraphNode::Trig(_) | GraphNode::Compare(_)
+            | GraphNode::Mix | GraphNode::Clamp | GraphNode::MapRange
+            | GraphNode::Smoothstep | GraphNode::Step
+                => Category::ScalarMath,
+            GraphNode::VectorMath(_) | GraphNode::Compose | GraphNode::Decompose
+            | GraphNode::Length | GraphNode::Dot | GraphNode::Distance
+            | GraphNode::Normalize | GraphNode::VectorRotate | GraphNode::Reflect
+                => Category::Vector,
+            GraphNode::RgbToColor | GraphNode::HsvToColor | GraphNode::ColorMix
+            | GraphNode::HueShift | GraphNode::ColorInvert
+            | GraphNode::BrightContrast | GraphNode::Gamma
+                => Category::Color,
+            GraphNode::IfElse | GraphNode::BooleanMath(_)
+            | GraphNode::FloatToBool | GraphNode::BoolToFloat
+                => Category::Logic,
+            GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. }
+            | GraphNode::Wave(_)
+                => Category::Noise,
+            GraphNode::Display | GraphNode::Plot | GraphNode::Preview
+            | GraphNode::VectorPreview | GraphNode::Output
+                => Category::Sink,
+        }
+    }
+
     fn title(&self) -> &'static str {
         match self {
-            GraphNode::Number(_) => "Number",
-            GraphNode::Add => "Add",
-            GraphNode::Output => "Output",
+            // Sources
+            GraphNode::Number(_)     => "Number",
+            GraphNode::Integer(_)    => "Integer",
+            GraphNode::Vector(_)     => "Vector",
+            GraphNode::Color(_)      => "Color",
+            GraphNode::Bool(_)       => "Bool",
+            GraphNode::Time          => "Time",
+            // Scalar math
+            GraphNode::ScalarMath(_) => "Scalar Math",
+            GraphNode::Trig(_)       => "Math Func",
+            GraphNode::Compare(_)    => "Compare",
+            GraphNode::Mix           => "Mix",
+            GraphNode::Clamp         => "Clamp",
+            GraphNode::MapRange      => "Map Range",
+            GraphNode::Smoothstep    => "Smoothstep",
+            GraphNode::Step          => "Step",
+            // Vector
+            GraphNode::VectorMath(_) => "Vector Math",
+            GraphNode::Compose       => "Compose",
+            GraphNode::Decompose     => "Decompose",
+            GraphNode::Length        => "Length",
+            GraphNode::Dot           => "Dot Product",
+            GraphNode::Distance      => "Distance",
+            GraphNode::Normalize     => "Normalize",
+            GraphNode::VectorRotate  => "Vector Rotate",
+            GraphNode::Reflect       => "Reflect",
+            // Colour
+            GraphNode::RgbToColor    => "RGB → Color",
+            GraphNode::HsvToColor    => "HSV → Color",
+            GraphNode::ColorMix      => "Color Mix",
+            GraphNode::HueShift      => "Hue Shift",
+            GraphNode::ColorInvert   => "Invert",
+            GraphNode::BrightContrast=> "Bright/Contrast",
+            GraphNode::Gamma         => "Gamma",
+            // Logic
+            GraphNode::IfElse        => "If / Else",
+            GraphNode::BooleanMath(_)=> "Boolean Math",
+            GraphNode::FloatToBool   => "Float → Bool",
+            GraphNode::BoolToFloat   => "Bool → Float",
+            // Noise
+            GraphNode::Perlin { .. }    => "Perlin",
+            GraphNode::WhiteNoise { .. }=> "White Noise",
+            GraphNode::Wave(_)          => "Wave",
+            // Sinks
+            GraphNode::Display       => "Display",
+            GraphNode::Plot          => "Plot",
+            GraphNode::Preview       => "Preview",
+            GraphNode::VectorPreview => "Vector Preview",
+            GraphNode::Output        => "Output",
         }
     }
-    fn inputs(&self) -> usize {
+
+    /// Per-input typed-pin labels. `Vec<(label, type)>`.
+    fn inputs(&self) -> Vec<(&'static str, PinType)> {
         match self {
-            GraphNode::Number(_) => 0,
-            GraphNode::Add => 2,
-            GraphNode::Output => 1,
+            // Sources — no inputs
+            GraphNode::Number(_) | GraphNode::Integer(_) | GraphNode::Vector(_)
+            | GraphNode::Color(_) | GraphNode::Bool(_) | GraphNode::Time
+            | GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. } => vec![],
+            // Scalar math
+            GraphNode::ScalarMath(_) => vec![("a", PinType::Number), ("b", PinType::Number)],
+            GraphNode::Trig(_)       => vec![("x", PinType::Number)],
+            GraphNode::Compare(_)    => vec![("a", PinType::Number), ("b", PinType::Number)],
+            GraphNode::Mix           => vec![("a", PinType::Number), ("b", PinType::Number), ("t", PinType::Number)],
+            GraphNode::Clamp         => vec![("x", PinType::Number), ("min", PinType::Number), ("max", PinType::Number)],
+            GraphNode::MapRange      => vec![
+                ("x", PinType::Number),
+                ("from min", PinType::Number), ("from max", PinType::Number),
+                ("to min", PinType::Number),   ("to max", PinType::Number),
+            ],
+            GraphNode::Smoothstep    => vec![("edge0", PinType::Number), ("edge1", PinType::Number), ("x", PinType::Number)],
+            GraphNode::Step          => vec![("edge", PinType::Number), ("x", PinType::Number)],
+            // Vector
+            GraphNode::VectorMath(_) => vec![("a", PinType::Vector), ("b", PinType::Vector)],
+            GraphNode::Compose       => vec![("x", PinType::Number), ("y", PinType::Number), ("z", PinType::Number)],
+            GraphNode::Decompose     => vec![("v", PinType::Vector)],
+            GraphNode::Length        => vec![("v", PinType::Vector)],
+            GraphNode::Dot           => vec![("a", PinType::Vector), ("b", PinType::Vector)],
+            GraphNode::Distance      => vec![("a", PinType::Vector), ("b", PinType::Vector)],
+            GraphNode::Normalize     => vec![("v", PinType::Vector)],
+            GraphNode::VectorRotate  => vec![("v", PinType::Vector), ("axis", PinType::Vector), ("angle", PinType::Number)],
+            GraphNode::Reflect       => vec![("v", PinType::Vector), ("n", PinType::Vector)],
+            // Colour
+            GraphNode::RgbToColor    => vec![("r", PinType::Number), ("g", PinType::Number), ("b", PinType::Number)],
+            GraphNode::HsvToColor    => vec![("h", PinType::Number), ("s", PinType::Number), ("v", PinType::Number)],
+            GraphNode::ColorMix      => vec![("a", PinType::Color), ("b", PinType::Color), ("t", PinType::Number)],
+            GraphNode::HueShift      => vec![("c", PinType::Color), ("shift", PinType::Number)],
+            GraphNode::ColorInvert   => vec![("c", PinType::Color)],
+            GraphNode::BrightContrast=> vec![("c", PinType::Color), ("bright", PinType::Number), ("contrast", PinType::Number)],
+            GraphNode::Gamma         => vec![("c", PinType::Color), ("γ", PinType::Number)],
+            // Logic
+            GraphNode::IfElse        => vec![("cond", PinType::Bool), ("then", PinType::Number), ("else", PinType::Number)],
+            GraphNode::BooleanMath(_)=> vec![("a", PinType::Bool), ("b", PinType::Bool)],
+            GraphNode::FloatToBool   => vec![("x", PinType::Number), ("threshold", PinType::Number)],
+            GraphNode::BoolToFloat   => vec![("b", PinType::Bool)],
+            // Noise / wave
+            GraphNode::Wave(_)       => vec![("t", PinType::Number)],
+            // Sinks
+            GraphNode::Display | GraphNode::Plot       => vec![("x", PinType::Number)],
+            GraphNode::Preview                         => vec![("c", PinType::Color)],
+            GraphNode::VectorPreview                   => vec![("v", PinType::Vector)],
+            GraphNode::Output                          => vec![("=", PinType::Number)],
         }
     }
-    fn outputs(&self) -> usize {
+
+    fn outputs(&self) -> Vec<(&'static str, PinType)> {
         match self {
-            GraphNode::Number(_) => 1,
-            GraphNode::Add => 1,
-            GraphNode::Output => 0,
+            // Sources
+            GraphNode::Number(_) | GraphNode::Integer(_) => vec![("", PinType::Number)],
+            GraphNode::Vector(_) => vec![("", PinType::Vector)],
+            GraphNode::Color(_)  => vec![("", PinType::Color)],
+            GraphNode::Bool(_)   => vec![("", PinType::Bool)],
+            GraphNode::Time      => vec![("t", PinType::Number)],
+            // Scalar-output families
+            GraphNode::ScalarMath(_) | GraphNode::Trig(_) | GraphNode::Mix
+            | GraphNode::Clamp | GraphNode::MapRange | GraphNode::Smoothstep
+            | GraphNode::Step | GraphNode::Length | GraphNode::Dot
+            | GraphNode::Distance | GraphNode::IfElse | GraphNode::BoolToFloat
+            | GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. }
+            | GraphNode::Wave(_)
+                => vec![("", PinType::Number)],
+            // Bool-output families
+            GraphNode::Compare(_) | GraphNode::BooleanMath(_)
+            | GraphNode::FloatToBool
+                => vec![("", PinType::Bool)],
+            // Vec-output families
+            GraphNode::VectorMath(_) | GraphNode::Compose | GraphNode::Normalize
+            | GraphNode::VectorRotate | GraphNode::Reflect
+                => vec![("", PinType::Vector)],
+            // Colour-output families
+            GraphNode::RgbToColor | GraphNode::HsvToColor | GraphNode::ColorMix
+            | GraphNode::HueShift | GraphNode::ColorInvert
+            | GraphNode::BrightContrast | GraphNode::Gamma
+                => vec![("", PinType::Color)],
+            // Decompose
+            GraphNode::Decompose => vec![
+                ("x", PinType::Number), ("y", PinType::Number), ("z", PinType::Number),
+            ],
+            // Sinks
+            GraphNode::Display | GraphNode::Plot | GraphNode::Preview
+            | GraphNode::VectorPreview | GraphNode::Output => vec![],
         }
     }
 }
 
-fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
-    match snarl.get_node(pin.id.node) {
-        Some(GraphNode::Number(v)) => *v,
-        Some(GraphNode::Add) => {
-            let mut sum = 0.0;
-            for i in 0..2 {
-                let in_pin = snarl.in_pin(InPinId { node: pin.id.node, input: i });
-                for remote in &in_pin.remotes {
-                    let out_pin = snarl.out_pin(*remote);
-                    sum += eval_output(snarl, &out_pin);
-                }
+/// Recursively evaluate the value flowing OUT of `pin`. `time` is
+/// the seconds-since-startup value the `Time` node emits. Each
+/// pull walks the upstream subtree once — fine for graphs of
+/// hundreds of nodes; if you chain thousands you'd add a memo.
+fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
+    let Some(node) = snarl.get_node(pin.id.node) else {
+        return Value::Number(0.0);
+    };
+    match node {
+        GraphNode::Number(v) => Value::Number(*v),
+        GraphNode::Integer(i) => Value::Number(*i as f64),
+        GraphNode::Vector(v) => Value::Vector(*v),
+        GraphNode::Color(c) => Value::Color(*c),
+        GraphNode::Bool(b) => Value::Bool(*b),
+        GraphNode::Time => Value::Number(time),
+        GraphNode::ScalarMath(op) => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            Value::Number(op.apply(a, b))
+        }
+        GraphNode::Trig(f) => {
+            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            Value::Number(f.apply(x))
+        }
+        GraphNode::Compare(op) => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            Value::Bool(op.apply(a, b))
+        }
+        GraphNode::Mix => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let t = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
+            Value::Number(a + (b - a) * t)
+        }
+        GraphNode::Clamp => {
+            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let lo = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let hi = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            Value::Number(x.clamp(lo.min(hi), lo.max(hi)))
+        }
+        GraphNode::VectorMath(op) => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            Value::Vector(op.apply(a, b))
+        }
+        GraphNode::Compose => {
+            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let y = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let z = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            Value::Vector([x, y, z])
+        }
+        GraphNode::Decompose => {
+            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            Value::Number(v[pin.id.output.min(2)])
+        }
+        GraphNode::Length => {
+            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            Value::Number((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt())
+        }
+        GraphNode::RgbToColor => {
+            let r = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let g = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let b = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let to_u8 = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            Value::Color(egui::Color32::from_rgb(to_u8(r), to_u8(g), to_u8(b)))
+        }
+        GraphNode::ColorMix => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_color();
+            let t = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0) as f32;
+            let lerp = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round() as u8;
+            Value::Color(egui::Color32::from_rgba_unmultiplied(
+                lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()), lerp(a.a(), b.a()),
+            ))
+        }
+        GraphNode::IfElse => {
+            let cond = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
+            let then = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let elze = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            Value::Number(if cond { then } else { elze })
+        }
+        // ── New scalar nodes ──
+        GraphNode::MapRange => {
+            let x   = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let lo  = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let hi  = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let olo = eval_input_at(snarl, time, pin.id.node, 3).as_number();
+            let ohi = eval_input_at(snarl, time, pin.id.node, 4).as_number();
+            let span = hi - lo;
+            if span.abs() < 1e-9 { Value::Number(olo) } else {
+                let t = ((x - lo) / span).clamp(0.0, 1.0);
+                Value::Number(olo + (ohi - olo) * t)
             }
-            sum
         }
-        _ => 0.0,
+        GraphNode::Smoothstep => {
+            let e0 = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let e1 = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let x  = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let span = e1 - e0;
+            let t = if span.abs() < 1e-9 { 0.0 }
+                    else { ((x - e0) / span).clamp(0.0, 1.0) };
+            Value::Number(t * t * (3.0 - 2.0 * t))
+        }
+        GraphNode::Step => {
+            let edge = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let x    = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            Value::Number(if x < edge { 0.0 } else { 1.0 })
+        }
+        // ── New vector nodes ──
+        GraphNode::Dot => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            Value::Number(a[0]*b[0] + a[1]*b[1] + a[2]*b[2])
+        }
+        GraphNode::Distance => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let d = [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+            Value::Number((d[0]*d[0] + d[1]*d[1] + d[2]*d[2]).sqrt())
+        }
+        GraphNode::Normalize => {
+            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let len = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();
+            if len < 1e-9 { Value::Vector([0.0; 3]) }
+            else { Value::Vector([v[0]/len, v[1]/len, v[2]/len]) }
+        }
+        GraphNode::VectorRotate => {
+            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let mut axis = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let angle = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let alen = (axis[0]*axis[0]+axis[1]*axis[1]+axis[2]*axis[2]).sqrt();
+            if alen < 1e-9 { return Value::Vector(v); }
+            axis = [axis[0]/alen, axis[1]/alen, axis[2]/alen];
+            let (s, c) = (angle.sin(), angle.cos());
+            let dot = axis[0]*v[0] + axis[1]*v[1] + axis[2]*v[2];
+            let cross = [
+                axis[1]*v[2] - axis[2]*v[1],
+                axis[2]*v[0] - axis[0]*v[2],
+                axis[0]*v[1] - axis[1]*v[0],
+            ];
+            Value::Vector([
+                v[0]*c + cross[0]*s + axis[0]*dot*(1.0-c),
+                v[1]*c + cross[1]*s + axis[1]*dot*(1.0-c),
+                v[2]*c + cross[2]*s + axis[2]*dot*(1.0-c),
+            ])
+        }
+        GraphNode::Reflect => {
+            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let mut n = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let nlen = (n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();
+            if nlen > 1e-9 { n = [n[0]/nlen, n[1]/nlen, n[2]/nlen]; }
+            let d = 2.0 * (v[0]*n[0] + v[1]*n[1] + v[2]*n[2]);
+            Value::Vector([v[0]-d*n[0], v[1]-d*n[1], v[2]-d*n[2]])
+        }
+        // ── New colour nodes ──
+        GraphNode::HsvToColor => {
+            let h = eval_input_at(snarl, time, pin.id.node, 0).as_number().rem_euclid(1.0);
+            let s = eval_input_at(snarl, time, pin.id.node, 1).as_number().clamp(0.0, 1.0);
+            let v = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
+            let (r, g, b) = hsv_to_rgb(h, s, v);
+            let to_u8 = |x: f64| (x.clamp(0.0,1.0)*255.0).round() as u8;
+            Value::Color(egui::Color32::from_rgb(to_u8(r), to_u8(g), to_u8(b)))
+        }
+        GraphNode::HueShift => {
+            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            let shift = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let (mut h, s, v) = rgb_to_hsv(
+                c.r() as f64 / 255.0, c.g() as f64 / 255.0, c.b() as f64 / 255.0,
+            );
+            h = (h + shift).rem_euclid(1.0);
+            let (r, g, b) = hsv_to_rgb(h, s, v);
+            let to_u8 = |x: f64| (x.clamp(0.0,1.0)*255.0).round() as u8;
+            Value::Color(egui::Color32::from_rgba_unmultiplied(
+                to_u8(r), to_u8(g), to_u8(b), c.a(),
+            ))
+        }
+        GraphNode::ColorInvert => {
+            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            Value::Color(egui::Color32::from_rgba_unmultiplied(
+                255 - c.r(), 255 - c.g(), 255 - c.b(), c.a(),
+            ))
+        }
+        GraphNode::BrightContrast => {
+            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            let bright   = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let contrast = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let adjust = |x: f64| ((x - 0.5) * (1.0 + contrast) + 0.5 + bright).clamp(0.0, 1.0);
+            let to_u8 = |x: f64| (x*255.0).round() as u8;
+            Value::Color(egui::Color32::from_rgba_unmultiplied(
+                to_u8(adjust(c.r() as f64 / 255.0)),
+                to_u8(adjust(c.g() as f64 / 255.0)),
+                to_u8(adjust(c.b() as f64 / 255.0)),
+                c.a(),
+            ))
+        }
+        GraphNode::Gamma => {
+            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            let g = eval_input_at(snarl, time, pin.id.node, 1).as_number().max(0.01);
+            let to_u8 = |x: u8| ((x as f64 / 255.0).powf(g).clamp(0.0, 1.0) * 255.0).round() as u8;
+            Value::Color(egui::Color32::from_rgba_unmultiplied(
+                to_u8(c.r()), to_u8(c.g()), to_u8(c.b()), c.a(),
+            ))
+        }
+        // ── New logic nodes ──
+        GraphNode::BooleanMath(op) => {
+            let a = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
+            let b = eval_input_at(snarl, time, pin.id.node, 1).as_bool();
+            Value::Bool(op.apply(a, b))
+        }
+        GraphNode::FloatToBool => {
+            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let t = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            Value::Bool(x > t)
+        }
+        GraphNode::BoolToFloat => {
+            let b = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
+            Value::Number(if b { 1.0 } else { 0.0 })
+        }
+        // ── New noise / wave ──
+        GraphNode::WhiteNoise { seed } => {
+            let i = (time * 1000.0).floor() as i64 as u32;
+            let mut x = i.wrapping_mul(0x9E3779B1).wrapping_add(*seed);
+            x = (x ^ (x >> 16)).wrapping_mul(0x85EBCA6B);
+            x = (x ^ (x >> 13)).wrapping_mul(0xC2B2AE35);
+            Value::Number(((x ^ (x >> 16)) as f64 / u32::MAX as f64) * 2.0 - 1.0)
+        }
+        GraphNode::Wave(shape) => {
+            let t = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            Value::Number(shape.apply(t))
+        }
+        GraphNode::Perlin { seed, frequency } => {
+            // Very compact 1-D value noise — enough to look organic
+            // when fed `Time`. Smoothed via a cubic
+            // (`smoothstep` of the fractional offset) so output is
+            // C¹-continuous at integer boundaries.
+            let t = time * *frequency;
+            let i = t.floor();
+            let f = t - i;
+            let h = |k: f64| {
+                let k = (k as i64) as u32;
+                let mut x = k.wrapping_mul(0x27d4eb2d).wrapping_add(*seed);
+                x = (x ^ (x >> 15)).wrapping_mul(0x85ebca6b);
+                x = (x ^ (x >> 13)).wrapping_mul(0xc2b2ae35);
+                ((x ^ (x >> 16)) as f64 / u32::MAX as f64) * 2.0 - 1.0
+            };
+            let s = f * f * (3.0 - 2.0 * f);
+            Value::Number(h(i) * (1.0 - s) + h(i + 1.0) * s)
+        }
+        GraphNode::Display | GraphNode::Plot | GraphNode::Preview
+        | GraphNode::VectorPreview | GraphNode::Output => {
+            Value::Number(0.0) // sinks have no outputs but be safe
+        }
     }
 }
 
-fn eval_input(snarl: &Snarl<GraphNode>, pin: &InPin) -> f64 {
+/// Standard HSV → RGB. h, s, v all in 0..1. Returns components in 0..1.
+fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (f64, f64, f64) {
+    let i = (h * 6.0).floor() as i32;
+    let f = h * 6.0 - i as f64;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match i.rem_euclid(6) {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}
+
+/// Standard RGB → HSV. Components in 0..1.
+fn rgb_to_hsv(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let v = max;
+    let s = if max < 1e-9 { 0.0 } else { d / max };
+    let h = if d < 1e-9 { 0.0 }
+            else if (max - r).abs() < 1e-9 { ((g - b) / d).rem_euclid(6.0) }
+            else if (max - g).abs() < 1e-9 { (b - r) / d + 2.0 }
+            else                            { (r - g) / d + 4.0 };
+    ((h / 6.0).rem_euclid(1.0), s, v)
+}
+
+/// First connected upstream value at `(node, input)`, defaulted to
+/// `Number(0.0)` when nothing is wired.
+fn eval_input_at(
+    snarl: &Snarl<GraphNode>,
+    time: f64,
+    node: corekit::extras::graph::NodeId,
+    input: usize,
+) -> Value {
+    let in_pin = snarl.in_pin(InPinId { node, input });
+    in_pin
+        .remotes
+        .first()
+        .map(|r| eval_output(snarl, time, &snarl.out_pin(*r)))
+        .unwrap_or(Value::Number(0.0))
+}
+
+fn eval_input(snarl: &Snarl<GraphNode>, time: f64, pin: &InPin) -> Value {
     pin.remotes
-        .iter()
-        .map(|r| eval_output(snarl, &snarl.out_pin(*r)))
-        .sum()
+        .first()
+        .map(|r| eval_output(snarl, time, &snarl.out_pin(*r)))
+        .unwrap_or(Value::Number(0.0))
 }
 
 #[derive(Default)]
-struct GraphViewer;
+struct GraphViewer {
+    /// Wall-clock seconds since startup, refreshed each frame by
+    /// the editor pane. Threaded into `eval_output` so `Time` /
+    /// `Perlin` nodes animate live.
+    time: f64,
+}
 
 impl SnarlViewer<GraphNode> for GraphViewer {
     fn title(&mut self, n: &GraphNode) -> String { n.title().into() }
-    fn inputs(&mut self, n: &GraphNode) -> usize { n.inputs() }
-    fn outputs(&mut self, n: &GraphNode) -> usize { n.outputs() }
-    fn show_input(&mut self, pin: &InPin, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>)
-        -> impl SnarlPin + 'static
-    {
-        match snarl.get_node(pin.id.node) {
-            Some(GraphNode::Add) => {
-                let name = if pin.id.input == 0 { "a" } else { "b" };
-                if pin.remotes.is_empty() {
-                    ui.label(format!("{name} = 0"));
-                } else {
-                    ui.label(format!("{name} = {:.2}", eval_input(snarl, pin)));
-                }
+    fn inputs(&mut self, n: &GraphNode) -> usize { n.inputs().len() }
+    fn outputs(&mut self, n: &GraphNode) -> usize { n.outputs().len() }
+
+    /// Per-node `header_frame` override — paints the Blender
+    /// category tint as a SOLID full-width fill on the title bar,
+    /// with the top-only rounded corners that match the node's
+    /// outline. This is how Blender draws node headers (a flat
+    /// colour strip the full width of the node, NOT a UE-style
+    /// "spill" gradient). The frame's `fill` is the category
+    /// colour at full alpha; the body underneath stays neutral
+    /// dark.
+    fn header_frame(
+        &mut self,
+        default: egui::Frame,
+        node: corekit::extras::graph::NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        snarl: &Snarl<GraphNode>,
+    ) -> egui::Frame {
+        let Some(n) = snarl.get_node(node) else { return default };
+        let tint = n.category().color();
+        // Translucent tint — the dark body fill below shows
+        // through, knocking the saturation down so the seven
+        // category colours all sit at a consistent luminance the
+        // way Blender's `node_class` palette does. Alpha 0xB0
+        // (~69 %) lands roughly where Blender's headers sit
+        // visually against the `#303030` body.
+        default
+            .fill(egui::Color32::from_rgba_unmultiplied(
+                tint.r(), tint.g(), tint.b(), 0xB0,
+            ))
+            .stroke(egui::Stroke::NONE)
+    }
+
+    /// Two-line header content: [icon] [title / subtitle], laid
+    /// out like an Unreal Blueprint title bar — main title in
+    /// near-white, smaller dim subtitle underneath, and a
+    /// category-coloured Fluent-UI icon glyph on the left so the
+    /// node is identifiable at a glance even when zoomed out.
+    fn show_header(
+        &mut self,
+        node: corekit::extras::graph::NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
+        let Some(n) = snarl.get_node(node).cloned() else { return };
+        let title_color = egui::Color32::from_rgb(0xEE, 0xEE, 0xEE);
+        let subtitle_color = egui::Color32::from_rgba_unmultiplied(
+            0xEE, 0xEE, 0xEE, 0xB0,
+        );
+
+        // With snarl's header layout fixed to `top_down(Min)`,
+        // a normal horizontal block is left-anchored as expected.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let no_wrap = egui::TextWrapMode::Extend;
+
+            // Icon — large enough to span both text rows so it
+            // visually centres against the title+subtitle stack.
+            if let Some(rt) = corekit::icons::icon_text(
+                n.icon_name(), 22.0, title_color,
+            ) {
+                ui.add(
+                    egui::Label::new(rt)
+                        .wrap_mode(no_wrap)
+                        .selectable(false),
+                );
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new("•").size(22.0).color(title_color),
+                    )
+                    .wrap_mode(no_wrap)
+                    .selectable(false),
+                );
             }
-            Some(GraphNode::Output) => {
-                let v = eval_input(snarl, pin);
-                ui.label(format!("= {v:.3}"));
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(n.title())
+                            .strong()
+                            .size(13.0)
+                            .color(title_color),
+                    )
+                    .wrap_mode(no_wrap)
+                    .selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(n.subtitle())
+                            .size(10.0)
+                            .color(subtitle_color),
+                    )
+                    .wrap_mode(no_wrap)
+                    .selectable(false),
+                );
+            });
+        });
+    }
+
+    fn show_input(
+        &mut self,
+        pin: &InPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        let time = self.time;
+        let (label, ty) = snarl
+            .get_node(pin.id.node)
+            .and_then(|n| n.inputs().get(pin.id.input).copied())
+            .unwrap_or(("", PinType::Number));
+        ui.label(label);
+        // For unconnected inputs, surface a small inline editor so
+        // the user can type a constant without spawning a Number
+        // node — this is the bit that turns the demo into a
+        // gallery of input widgets.
+        let connected = !pin.remotes.is_empty();
+        if !connected {
+            inline_input_editor(snarl, pin, ty, ui);
+        } else {
+            // Show the live evaluated value for connected inputs.
+            let v = eval_input(snarl, time, pin);
+            inline_value_readout(&v, ty, ui);
+        }
+        ty.pin(connected)
+    }
+
+    fn show_output(
+        &mut self,
+        pin: &OutPin,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) -> impl SnarlPin + 'static {
+        let time = self.time;
+        let connected = !pin.remotes.is_empty();
+        let outputs = snarl
+            .get_node(pin.id.node)
+            .map(|n| n.outputs())
+            .unwrap_or_default();
+        let (label, ty) = outputs
+            .get(pin.id.output)
+            .copied()
+            .unwrap_or(("", PinType::Number));
+
+        // Output-row widgets:
+        //   * Sources (Number/Vector/Color/Bool) get their value
+        //     editor inline so the node is one row tall.
+        //   * Computed nodes show the live evaluated value as a
+        //     small readout next to the pin.
+        match snarl.get_node_mut(pin.id.node) {
+            Some(GraphNode::Number(v)) => {
+                ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
+            }
+            Some(GraphNode::Integer(i)) => {
+                ui.add(egui::DragValue::new(i).speed(1.0));
+            }
+            Some(GraphNode::Vector(v)) => {
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut v[0]).speed(0.05).prefix("x:"));
+                    ui.add(egui::DragValue::new(&mut v[1]).speed(0.05).prefix("y:"));
+                    ui.add(egui::DragValue::new(&mut v[2]).speed(0.05).prefix("z:"));
+                });
+            }
+            Some(GraphNode::Color(c)) => {
+                ui.color_edit_button_srgba(c);
+            }
+            Some(GraphNode::Bool(b)) => {
+                ui.checkbox(b, if *b { "true" } else { "false" });
+            }
+            _ => {
+                if !label.is_empty() {
+                    ui.label(label);
+                }
+                let v = eval_output(snarl, time, pin);
+                inline_value_readout(&v, ty, ui);
+            }
+        }
+        ty.pin(connected)
+    }
+
+    fn has_body(&mut self, node: &GraphNode) -> bool {
+        matches!(
+            node,
+            GraphNode::ScalarMath(_) | GraphNode::Trig(_) | GraphNode::Compare(_)
+                | GraphNode::VectorMath(_) | GraphNode::BooleanMath(_)
+                | GraphNode::Wave(_)
+                | GraphNode::Perlin { .. } | GraphNode::WhiteNoise { .. }
+                | GraphNode::Display | GraphNode::Plot
+                | GraphNode::Preview | GraphNode::VectorPreview
+        )
+    }
+
+    fn show_body(
+        &mut self,
+        node: corekit::extras::graph::NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
+        let time = self.time;
+        let Some(n) = snarl.get_node_mut(node) else { return };
+        match n {
+            GraphNode::ScalarMath(op) => {
+                op_dropdown(ui, op, &[
+                    ("a + b", ScalarOp::Add), ("a − b", ScalarOp::Sub),
+                    ("a × b", ScalarOp::Mul), ("a ÷ b", ScalarOp::Div),
+                    ("min(a,b)", ScalarOp::Min), ("max(a,b)", ScalarOp::Max),
+                    ("a ^ b", ScalarOp::Pow), ("a mod b", ScalarOp::Mod),
+                    ("smin(a,b)", ScalarOp::SmoothMin),
+                    ("smax(a,b)", ScalarOp::SmoothMax),
+                ]);
+            }
+            GraphNode::Trig(f) => {
+                op_dropdown(ui, f, &[
+                    ("sin", TrigFn::Sin), ("cos", TrigFn::Cos), ("tan", TrigFn::Tan),
+                    ("asin", TrigFn::Asin), ("acos", TrigFn::Acos), ("atan", TrigFn::Atan),
+                    ("sinh", TrigFn::Sinh), ("cosh", TrigFn::Cosh), ("tanh", TrigFn::Tanh),
+                    ("sqrt", TrigFn::Sqrt), ("abs", TrigFn::Abs),
+                    ("floor", TrigFn::Floor), ("ceil", TrigFn::Ceil),
+                    ("round", TrigFn::Round), ("trunc", TrigFn::Trunc),
+                    ("frac", TrigFn::Frac), ("sign", TrigFn::Sign),
+                    ("exp", TrigFn::Exp), ("ln", TrigFn::Log),
+                ]);
+            }
+            GraphNode::Compare(op) => {
+                op_dropdown(ui, op, &[
+                    ("a < b", CompareOp::Lt), ("a ≤ b", CompareOp::Le),
+                    ("a = b", CompareOp::Eq), ("a ≠ b", CompareOp::Ne),
+                    ("a ≥ b", CompareOp::Ge), ("a > b", CompareOp::Gt),
+                ]);
+            }
+            GraphNode::VectorMath(op) => {
+                op_dropdown(ui, op, &[
+                    ("a + b", VectorOp::Add), ("a − b", VectorOp::Sub),
+                    ("a ⊙ b (component)", VectorOp::Mul),
+                    ("a × b (cross)", VectorOp::Cross),
+                ]);
+            }
+            GraphNode::BooleanMath(op) => {
+                op_dropdown(ui, op, &[
+                    ("a ∧ b (and)", BoolOp::And), ("a ∨ b (or)", BoolOp::Or),
+                    ("¬a (not)", BoolOp::Not), ("a ⊕ b (xor)", BoolOp::Xor),
+                    ("a ⊼ b (nand)", BoolOp::Nand), ("a ⊽ b (nor)", BoolOp::Nor),
+                    ("a = b (xnor)", BoolOp::Xnor),
+                ]);
+            }
+            GraphNode::Wave(shape) => {
+                op_dropdown(ui, shape, &[
+                    ("sine",     WaveShape::Sine),
+                    ("saw",      WaveShape::Saw),
+                    ("triangle", WaveShape::Triangle),
+                    ("square",   WaveShape::Square),
+                ]);
+            }
+            GraphNode::Perlin { seed, frequency } => {
+                ui.horizontal(|ui| {
+                    ui.label("seed");
+                    ui.add(egui::DragValue::new(seed).speed(1.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("freq");
+                    ui.add(egui::Slider::new(frequency, 0.05..=8.0).logarithmic(true));
+                });
+            }
+            GraphNode::WhiteNoise { seed } => {
+                ui.horizontal(|ui| {
+                    ui.label("seed");
+                    ui.add(egui::DragValue::new(seed).speed(1.0));
+                });
+            }
+            GraphNode::Display => {
+                let v = eval_input_at(snarl, time, node, 0).as_number();
+                draw_sparkline(snarl, node, ui, v);
+            }
+            GraphNode::Plot => {
+                let v = eval_input_at(snarl, time, node, 0).as_number();
+                // Plot uses the same sparkline drawer but at a
+                // larger size — separate visual identity vs Display.
+                draw_sparkline(snarl, node, ui, v);
+            }
+            GraphNode::Preview => {
+                let c = eval_input_at(snarl, time, node, 0).as_color();
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(96.0, 40.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 4.0, c);
+                ui.painter().rect_stroke(
+                    rect, 4.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            GraphNode::VectorPreview => {
+                let v = eval_input_at(snarl, time, node, 0).as_vector();
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(140.0, 40.0), egui::Sense::hover());
+                let painter = ui.painter();
+                painter.rect_filled(rect, 3.0, egui::Color32::from_black_alpha(40));
+                let bar_h = (rect.height() - 8.0) / 3.0;
+                let max = v[0].abs().max(v[1].abs()).max(v[2].abs()).max(1.0) as f32;
+                let colors = [
+                    egui::Color32::from_rgb(0xFF, 0x33, 0x52), // x = red
+                    egui::Color32::from_rgb(0x8B, 0xDC, 0x00), // y = green
+                    egui::Color32::from_rgb(0x28, 0x90, 0xFF), // z = blue
+                ];
+                for (i, comp) in v.iter().enumerate() {
+                    let y0 = rect.top() + 4.0 + (i as f32) * bar_h;
+                    let centre_x = rect.center().x;
+                    let len = (*comp as f32 / max) * (rect.width() * 0.5 - 8.0);
+                    let bar_rect = egui::Rect::from_min_max(
+                        egui::pos2(centre_x.min(centre_x + len), y0 + 2.0),
+                        egui::pos2(centre_x.max(centre_x + len), y0 + bar_h - 2.0),
+                    );
+                    painter.rect_filled(bar_rect, 1.0, colors[i]);
+                }
+                // Centre rule
+                painter.line_segment(
+                    [egui::pos2(rect.center().x, rect.top() + 2.0),
+                     egui::pos2(rect.center().x, rect.bottom() - 2.0)],
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+                );
             }
             _ => {}
         }
-        PinInfo::circle()
     }
-    fn show_output(&mut self, pin: &OutPin, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>)
-        -> impl SnarlPin + 'static
-    {
-        if let Some(GraphNode::Number(v)) = snarl.get_node_mut(pin.id.node) {
-            ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
-        } else if let Some(GraphNode::Add) = snarl.get_node(pin.id.node) {
-            let v = eval_output(snarl, pin);
-            ui.label(format!("= {v:.3}"));
-        }
-        PinInfo::circle()
-    }
+
     fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Snarl<GraphNode>) -> bool { true }
-    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>) {
-        ui.label("Add node");
-        if ui.button("Number").clicked() {
-            snarl.insert_node(pos, GraphNode::Number(0.0));
-            ui.close();
+    fn show_graph_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
+        ui.set_min_width(180.0);
+        ui.label(egui::RichText::new("Add node").strong());
+        ui.separator();
+
+        let mut spawn = |ui: &mut egui::Ui, label: &str, n: GraphNode| {
+            if ui.button(label).clicked() {
+                snarl.insert_node(pos, n);
+                ui.close();
+            }
+        };
+
+        ui.menu_button("Sources", |ui| {
+            spawn(ui, "Number",  GraphNode::Number(0.0));
+            spawn(ui, "Integer", GraphNode::Integer(0));
+            spawn(ui, "Vector",  GraphNode::Vector([0.0; 3]));
+            spawn(ui, "Color",   GraphNode::Color(egui::Color32::from_rgb(180, 200, 220)));
+            spawn(ui, "Bool",    GraphNode::Bool(false));
+            spawn(ui, "Time",    GraphNode::Time);
+        });
+        ui.menu_button("Scalar math", |ui| {
+            spawn(ui, "Scalar Math", GraphNode::ScalarMath(ScalarOp::Add));
+            spawn(ui, "Math Func",   GraphNode::Trig(TrigFn::Sin));
+            spawn(ui, "Compare",     GraphNode::Compare(CompareOp::Lt));
+            spawn(ui, "Mix",         GraphNode::Mix);
+            spawn(ui, "Clamp",       GraphNode::Clamp);
+            spawn(ui, "Map Range",   GraphNode::MapRange);
+            spawn(ui, "Smoothstep",  GraphNode::Smoothstep);
+            spawn(ui, "Step",        GraphNode::Step);
+        });
+        ui.menu_button("Vector", |ui| {
+            spawn(ui, "Vector Math",   GraphNode::VectorMath(VectorOp::Add));
+            spawn(ui, "Compose",       GraphNode::Compose);
+            spawn(ui, "Decompose",     GraphNode::Decompose);
+            spawn(ui, "Length",        GraphNode::Length);
+            spawn(ui, "Dot Product",   GraphNode::Dot);
+            spawn(ui, "Distance",      GraphNode::Distance);
+            spawn(ui, "Normalize",     GraphNode::Normalize);
+            spawn(ui, "Vector Rotate", GraphNode::VectorRotate);
+            spawn(ui, "Reflect",       GraphNode::Reflect);
+        });
+        ui.menu_button("Color", |ui| {
+            spawn(ui, "RGB → Color",     GraphNode::RgbToColor);
+            spawn(ui, "HSV → Color",     GraphNode::HsvToColor);
+            spawn(ui, "Color Mix",       GraphNode::ColorMix);
+            spawn(ui, "Hue Shift",       GraphNode::HueShift);
+            spawn(ui, "Invert",          GraphNode::ColorInvert);
+            spawn(ui, "Bright/Contrast", GraphNode::BrightContrast);
+            spawn(ui, "Gamma",           GraphNode::Gamma);
+        });
+        ui.menu_button("Logic", |ui| {
+            spawn(ui, "If / Else",     GraphNode::IfElse);
+            spawn(ui, "Boolean Math",  GraphNode::BooleanMath(BoolOp::And));
+            spawn(ui, "Float → Bool",  GraphNode::FloatToBool);
+            spawn(ui, "Bool → Float",  GraphNode::BoolToFloat);
+        });
+        ui.menu_button("Noise / Wave", |ui| {
+            spawn(ui, "Perlin",        GraphNode::Perlin { seed: 12345, frequency: 1.0 });
+            spawn(ui, "White Noise",   GraphNode::WhiteNoise { seed: 12345 });
+            spawn(ui, "Wave",          GraphNode::Wave(WaveShape::Sine));
+        });
+        ui.menu_button("Sinks", |ui| {
+            spawn(ui, "Display",        GraphNode::Display);
+            spawn(ui, "Plot",           GraphNode::Plot);
+            spawn(ui, "Preview",        GraphNode::Preview);
+            spawn(ui, "Vector Preview", GraphNode::VectorPreview);
+            spawn(ui, "Output",         GraphNode::Output);
+        });
+    }
+}
+
+/// Inline editor used for unconnected pin rows — surfaces the
+/// expected pin type as a tiny widget so the user can type a
+/// constant without having to wire a Number/Color/Bool source
+/// node. Currently only edits the most useful slots: numeric and
+/// boolean. Extending this to vector/color/text per-input is
+/// straightforward but the constants live in the graph as fields,
+/// not inputs, so the bigger value editors still go on the source
+/// node's body / output row.
+fn inline_input_editor(
+    _snarl: &mut Snarl<GraphNode>,
+    _pin: &InPin,
+    ty: PinType,
+    ui: &mut egui::Ui,
+) {
+    // Default placeholder when no upstream wire — read-only readout.
+    let placeholder = match ty {
+        PinType::Number => "0".to_string(),
+        PinType::Vector => "[0, 0, 0]".to_string(),
+        PinType::Color  => "—".to_string(),
+        PinType::Bool   => "false".to_string(),
+        PinType::Text   => "".to_string(),
+    };
+    ui.add(egui::Label::new(
+        egui::RichText::new(placeholder).color(egui::Color32::from_gray(140)),
+    ));
+}
+
+fn inline_value_readout(v: &Value, ty: PinType, ui: &mut egui::Ui) {
+    match (ty, v) {
+        (_, Value::Number(n)) => {
+            ui.label(format!("{n:.3}"));
         }
-        if ui.button("Add").clicked() {
-            snarl.insert_node(pos, GraphNode::Add);
-            ui.close();
+        (_, Value::Vector(v)) => {
+            ui.label(format!("[{:.2}, {:.2}, {:.2}]", v[0], v[1], v[2]));
         }
-        if ui.button("Output").clicked() {
-            snarl.insert_node(pos, GraphNode::Output);
-            ui.close();
+        (_, Value::Color(c)) => {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 14.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, *c);
+        }
+        (_, Value::Bool(b)) => {
+            ui.label(if *b { "✓" } else { "✗" });
+        }
+        (_, Value::Text(s)) => {
+            ui.label(s);
         }
     }
 }
 
+/// `Combo`-style enum dropdown for body operator pickers.
+fn op_dropdown<T>(ui: &mut egui::Ui, current: &mut T, options: &[(&str, T)])
+where
+    T: Copy + PartialEq,
+{
+    let cur_label = options
+        .iter()
+        .find(|(_, v)| *v == *current)
+        .map(|(l, _)| *l)
+        .unwrap_or("?");
+    egui::ComboBox::from_id_salt(("frost_demo_op_dropdown", current as *const T as usize))
+        .selected_text(cur_label)
+        .show_ui(ui, |ui| {
+            for (label, val) in options {
+                ui.selectable_value(current, *val, *label);
+            }
+        });
+}
+
+/// Per-Display-node ring buffer of recent values painted as a
+/// sparkline in the node body. Stored in egui ctx data keyed by
+/// the snarl node id so it survives across frames without leaking.
+fn draw_sparkline(
+    snarl: &Snarl<GraphNode>,
+    node: corekit::extras::graph::NodeId,
+    ui: &mut egui::Ui,
+    current: f64,
+) {
+    let _ = snarl; // signature parity for future inline-editor use
+    const HISTORY: usize = 96;
+    let key = egui::Id::new(("frost_demo_sparkline", node));
+    let mut buf: Vec<f32> = ui
+        .ctx()
+        .data(|d| d.get_temp::<Vec<f32>>(key))
+        .unwrap_or_default();
+    if buf.len() >= HISTORY {
+        buf.remove(0);
+    }
+    buf.push(current as f32);
+    ui.ctx().data_mut(|d| d.insert_temp(key, buf.clone()));
+
+    let label = format!("{current:.3}");
+    ui.label(egui::RichText::new(label).monospace());
+
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(140.0, 36.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3.0, egui::Color32::from_black_alpha(40));
+
+    if buf.len() >= 2 {
+        let (lo, hi) = buf.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), v| {
+            (a.min(*v), b.max(*v))
+        });
+        let span = (hi - lo).max(1e-3);
+        let pad = 4.0;
+        let n = buf.len();
+        let mut points = Vec::with_capacity(n);
+        for (i, v) in buf.iter().enumerate() {
+            let x = rect.left() + pad
+                + (i as f32 / (n.saturating_sub(1).max(1) as f32))
+                  * (rect.width() - 2.0 * pad);
+            let t = 1.0 - (v - lo) / span;
+            let y = rect.top() + pad + t * (rect.height() - 2.0 * pad);
+            points.push(egui::pos2(x, y));
+        }
+        painter.add(egui::epaint::PathShape::line(
+            points,
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(0xFF, 0xB9, 0x38)),
+        ));
+    }
+    ui.ctx().request_repaint();
+}
+
+/// A demo graph that wires several capabilities together so the
+/// user can SEE the full feature set on first open. Laid out on
+/// a strict grid (`COL_W = 260`, `ROW_H = 110`) so wires flow
+/// straight left-to-right and node columns line up cleanly across
+/// the three sub-pipelines.
+///
+/// ```text
+/// Pipeline 1 — sine wave + colour mix:
+///   Time ─┐
+///         ├→ × ─→ sin ─→ × ─→ + ─→ Display
+///   Num1.5┘     Num0.5┘    Num0.5┘    │
+///                                     └→ ColorMix ─→ Preview
+///   Color(red)  ─┐
+///   Color(blue) ─┘
+///
+/// Pipeline 2 — vector → scalar:
+///   Vec(1,2,3) ─→ Length ─→ Output
+///
+/// Pipeline 3 — noise gate:
+///   Perlin ─→ Compare ─→ IfElse ─→ Display
+///   Num0  ─┘   Num1, Num-1 ─┘
+/// ```
 fn default_graph() -> Snarl<GraphNode> {
     let mut g = Snarl::new();
-    let a = g.insert_node(egui::pos2(30.0, 40.0), GraphNode::Number(2.0));
-    let b = g.insert_node(egui::pos2(30.0, 130.0), GraphNode::Number(3.0));
-    let add = g.insert_node(egui::pos2(220.0, 80.0), GraphNode::Add);
-    let out = g.insert_node(egui::pos2(420.0, 80.0), GraphNode::Output);
-    g.connect(OutPinId { node: a, output: 0 }, InPinId { node: add, input: 0 });
-    g.connect(OutPinId { node: b, output: 0 }, InPinId { node: add, input: 1 });
-    g.connect(OutPinId { node: add, output: 0 }, InPinId { node: out, input: 0 });
+
+    const COL_W: f32 = 260.0; // horizontal spacing between columns
+    let col = |i: i32| (i as f32) * COL_W;
+    let row = |y: f32| y;
+
+    // ── Pipeline 1: time-driven sine wave (top, y around 0) ──
+    //
+    //  col 0     col 1     col 2     col 3      col 4     col 5
+    //  Time      Mul       Sin       Mul        Add       Display
+    //  Num(1.5)            (Num0.5)  (Num0.5)
+    //
+    let t       = g.insert_node(egui::pos2(col(0), row(   0.0)), GraphNode::Time);
+    let freq    = g.insert_node(egui::pos2(col(0), row( 130.0)), GraphNode::Number(1.5));
+    let mul     = g.insert_node(egui::pos2(col(1), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let sin     = g.insert_node(egui::pos2(col(2), row(  50.0)), GraphNode::Trig(TrigFn::Sin));
+    let half    = g.insert_node(egui::pos2(col(2), row( 180.0)), GraphNode::Number(0.5));
+    let bias    = g.insert_node(egui::pos2(col(3), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Mul));
+    let half2   = g.insert_node(egui::pos2(col(3), row( 180.0)), GraphNode::Number(0.5));
+    let lift    = g.insert_node(egui::pos2(col(4), row(  50.0)), GraphNode::ScalarMath(ScalarOp::Add));
+    let display = g.insert_node(egui::pos2(col(5), row(  50.0)), GraphNode::Display);
+
+    // ── Colour mix branch (below pipeline 1, fed by `lift`) ──
+    //
+    //  col 3                       col 4         col 5
+    //  Color(red)
+    //  Color(blue)                ColorMix      Preview
+    //
+    let red     = g.insert_node(egui::pos2(col(3), row( 360.0)), GraphNode::Color(egui::Color32::from_rgb(0xE0, 0x6C, 0x4F)));
+    let blue    = g.insert_node(egui::pos2(col(3), row( 470.0)), GraphNode::Color(egui::Color32::from_rgb(0x4D, 0xA8, 0xDA)));
+    let cmix    = g.insert_node(egui::pos2(col(4), row( 400.0)), GraphNode::ColorMix);
+    let preview = g.insert_node(egui::pos2(col(5), row( 400.0)), GraphNode::Preview);
+
+    // ── Pipeline 2: vector → length → output ──
+    //
+    //  col 0          col 1     col 2
+    //  Vector ───→    Length ─→ Output
+    //
+    let vec    = g.insert_node(egui::pos2(col(0), row( 700.0)), GraphNode::Vector([1.0, 2.0, 3.0]));
+    let len    = g.insert_node(egui::pos2(col(1), row( 700.0)), GraphNode::Length);
+    let out    = g.insert_node(egui::pos2(col(2), row( 700.0)), GraphNode::Output);
+
+    // ── Pipeline 3: noise → compare → ifelse → display ──
+    //
+    //  col 0     col 1                col 2                          col 3
+    //  Perlin    Compare              IfElse                         Display
+    //            Num(0)               Num(+1), Num(-1)
+    //
+    let perlin   = g.insert_node(egui::pos2(col(0), row( 900.0)), GraphNode::Perlin { seed: 0xCAFE, frequency: 1.5 });
+    let zero     = g.insert_node(egui::pos2(col(1), row(1010.0)), GraphNode::Number(0.0));
+    let cmp      = g.insert_node(egui::pos2(col(1), row( 900.0)), GraphNode::Compare(CompareOp::Gt));
+    let one      = g.insert_node(egui::pos2(col(2), row(1010.0)), GraphNode::Number(1.0));
+    let neg      = g.insert_node(egui::pos2(col(2), row(1120.0)), GraphNode::Number(-1.0));
+    let gate     = g.insert_node(egui::pos2(col(2), row( 900.0)), GraphNode::IfElse);
+    let display2 = g.insert_node(egui::pos2(col(3), row( 900.0)), GraphNode::Display);
+
+    // ── Wire it up ──
+    let connect = |g: &mut Snarl<GraphNode>, src, sout, dst, dinp| {
+        g.connect(OutPinId { node: src, output: sout }, InPinId { node: dst, input: dinp });
+    };
+    connect(&mut g, t,    0, mul, 0);
+    connect(&mut g, freq, 0, mul, 1);
+    connect(&mut g, mul,  0, sin, 0);
+    connect(&mut g, sin,  0, bias, 0);
+    connect(&mut g, half2, 0, bias, 1);
+    connect(&mut g, bias, 0, lift, 0);
+    connect(&mut g, half, 0, lift, 1);
+    connect(&mut g, lift, 0, display, 0);
+    connect(&mut g, lift, 0, cmix, 2);
+    connect(&mut g, red,  0, cmix, 0);
+    connect(&mut g, blue, 0, cmix, 1);
+    connect(&mut g, cmix, 0, preview, 0);
+
+    connect(&mut g, vec,  0, len, 0);
+    connect(&mut g, len,  0, out, 0);
+
+    connect(&mut g, perlin, 0, cmp, 0);
+    connect(&mut g, zero,   0, cmp, 1);
+    connect(&mut g, cmp,    0, gate, 0);
+    connect(&mut g, one,    0, gate, 1);
+    connect(&mut g, neg,    0, gate, 2);
+    connect(&mut g, gate,   0, display2, 0);
+
     g
 }
 

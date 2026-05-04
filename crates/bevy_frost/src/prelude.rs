@@ -14,6 +14,9 @@
 pub use corekit::*;
 
 pub use crate::{
-    gizmo_material::GizmoMaterial, EguiInputAbsorbPlugin, FrostPlugin, RibbonGhostSet,
-    RibbonPlugin, ThemePlugin,
+    gizmo_material::GizmoMaterial,
+    node_view_backend::{
+        BevyNodeViewBackend, NodeViewCopy, NodeViewPlugin, NodeViewSlots, PendingNodeViewCopies,
+    },
+    EguiInputAbsorbPlugin, FrostPlugin, RibbonGhostSet, RibbonPlugin, ThemePlugin,
 };

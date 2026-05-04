@@ -21,6 +21,28 @@ pub enum WireLayer {
     AboveNodes,
 }
 
+/// How a wire's colour is derived from its source / target pin
+/// colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[derive(Default)]
+pub enum WireColorMode {
+    /// Linear blend of source and target pin colours, drawn as
+    /// a uniform fill (i.e. averaged once, not gradient-painted).
+    /// Default — preserves the upstream egui-snarl behaviour.
+    #[default]
+    Mix,
+    /// Wire takes the **output (source) pin's colour** uniformly
+    /// along its length. Matches Unreal Engine Blueprints — the
+    /// "wire shows the type that's flowing out" idiom.
+    FromSource,
+    /// Wire takes the **input (target) pin's colour** uniformly.
+    /// Useful when the consumer's expected type is the more
+    /// visually distinguishing one.
+    FromTarget,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WireId {
     Connected {

@@ -37,13 +37,74 @@ use std::hash::Hash;
 
 use egui;
 
+use crate::ribbon::{RibbonCluster, RibbonEdge};
 use crate::style::{glass_alpha_window, glass_fill};
+
+/// Configuration for the fullscreen overlay's chrome — currently
+/// just where the minimize button sits, but expandable as more
+/// overlay tools land. Each `(edge, cluster)` corresponds to one
+/// of the 12 anchor points around the screen, matching the rail
+/// system used by [`crate::ribbon`]:
+///
+/// * `edge`: which screen edge the button hugs.
+/// * `cluster`: where along that edge — `Start` = near the
+///   "title-side" corner, `Middle` = centred, `End` = far corner.
+///
+/// Default: `(RibbonEdge::Right, RibbonCluster::Start)` —
+/// upper-right corner, mirroring the legacy maximise chip placement.
+#[derive(Copy, Clone, Debug)]
+pub struct OverlayOpts {
+    pub minimize_edge: RibbonEdge,
+    pub minimize_cluster: RibbonCluster,
+}
+
+impl Default for OverlayOpts {
+    fn default() -> Self {
+        Self {
+            minimize_edge: RibbonEdge::Right,
+            minimize_cluster: RibbonCluster::Start,
+        }
+    }
+}
+
+impl OverlayOpts {
+    /// Build with the minimize button anchored to the given edge +
+    /// cluster on the fullscreen overlay.
+    pub fn minimize_at(edge: RibbonEdge, cluster: RibbonCluster) -> Self {
+        Self { minimize_edge: edge, minimize_cluster: cluster }
+    }
+}
 
 /// The egui data key that [`maximizable`] uses to store the
 /// maximise-flag for a given `id_salt`. Exposed so callers can do
 /// context-sensitive routing without poking inside the widget.
 pub fn maximize_state_key(id_salt: impl std::hash::Hash) -> egui::Id {
     egui::Id::new(("frost_maximize", id_salt))
+}
+
+/// Globally unique id used by the maximizer to track "is some
+/// widget currently full-window, and which one?". Reads
+/// `Some(owner_state_key)` if a maximizable widget rendered itself
+/// in the maximized branch this pass (or last pass — matches the
+/// 1-frame freshness window the chip-suppression code uses), else
+/// `None`. Hosts use this to gate background rendering: while a
+/// fullscreen owner is active they can skip drawing the rest of
+/// the egui UI (other panes, ribbons) AND skip the Bevy 3D scene
+/// behind, so the fullscreen view truly owns the screen.
+pub fn fullscreen_owner(ctx: &egui::Context) -> Option<egui::Id> {
+    let global_key = egui::Id::new("frost_maximize_global");
+    let pass_nr = ctx.cumulative_pass_nr();
+    let stored: Option<(u64, egui::Id)> = ctx.data(|d| d.get_temp(global_key));
+    match stored {
+        Some((f, id)) if f == pass_nr || f + 1 == pass_nr => Some(id),
+        _ => None,
+    }
+}
+
+/// Convenience predicate over [`fullscreen_owner`] — true when
+/// SOME maximizable widget is currently in the full-window state.
+pub fn is_any_fullscreen(ctx: &egui::Context) -> bool {
+    fullscreen_owner(ctx).is_some()
 }
 
 /// Wrap a widget so it gains a maximise / restore toggle.
@@ -56,6 +117,21 @@ pub fn maximizable(
     id_salt: impl Hash + Copy,
     accent: egui::Color32,
     min_size: egui::Vec2,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    maximizable_with_opts(ui, id_salt, accent, min_size, OverlayOpts::default(), body)
+}
+
+/// Same as [`maximizable`] but accepts [`OverlayOpts`] to control
+/// where the minimize button lands on the fullscreen overlay. Use
+/// this when you want a non-default position — e.g. minimize on
+/// the bottom-left corner instead of the top-right.
+pub fn maximizable_with_opts(
+    ui: &mut egui::Ui,
+    id_salt: impl Hash + Copy,
+    accent: egui::Color32,
+    min_size: egui::Vec2,
+    opts: OverlayOpts,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     // Maximise state keyed purely on the caller's `id_salt` — no
@@ -91,12 +167,19 @@ pub fn maximizable(
             .data_mut(|d| d.insert_temp(global_key, (pass_nr, max_id)));
     }
 
-    // Chip dimensions for the maximised-overlay restore button.
+    // Chip dimensions for the inline (non-maximized) maximize button.
     // Inline mode no longer paints a floating chip — callers wire a
     // header-action chip (`header_action_maximize`) into the
     // hosting section's actions strip instead.
     const CHIP: f32 = 24.0;
     const CHIP_PAD: f32 = 4.0;
+    // Fullscreen overlay button: matches the regular ribbon button
+    // size (SIDE_BTN_SIZE = 34) and EDGE_GAP (8) so the floating
+    // chip lands EXACTLY where a real right-rail ribbon button
+    // would, with the same chip body. The visual reads as "this
+    // is just another ribbon button, on the right edge."
+    const FS_BTN_SIZE: f32 = 34.0;
+    const FS_EDGE_GAP: f32 = 8.0;
 
     if maximized {
         // Placeholder in the caller's layout so the surrounding
@@ -117,7 +200,10 @@ pub fn maximizable(
         // NO corner radius / stroke / inner margin — the whole
         // point is to cover the screen edge-to-edge, so any
         // rounding or inset reads as "not actually full" at the
-        // corners.
+        // corners. The body fills the full screen; the minimize
+        // ribbon button floats on top in the upper-right corner,
+        // exactly where a regular right-rail ribbon button would
+        // land (`EDGE_GAP` from each edge, `SIDE_BTN_SIZE` chip).
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
         egui::Area::new(ui.id().with(("frost_maximize_overlay", id_salt)))
@@ -133,17 +219,24 @@ pub fn maximizable(
                 frame.show(ui, |ui| {
                     body(ui);
                 });
-                // Restore chip — top-RIGHT of the screen (was
-                // top-left before). User asked for it always on
-                // the right when maximised.
-                let chip_pos = egui::pos2(
-                    screen.max.x - CHIP - CHIP_PAD,
-                    screen.min.y + CHIP_PAD,
-                );
-                if max_button_overlay(&ctx, chip_pos, true, accent, id_salt).clicked() {
-                    toggle = true;
-                }
             });
+        // Minimize button — a draggable ribbon-styled chip. The
+        // initial position comes from `opts`; the user can grab the
+        // chip and drag it to ANY of the 12 edge/cluster anchor
+        // points, and that choice persists in ctx data across
+        // frames. Painted in its OWN `Order::Tooltip` Area so it
+        // sits on top of the `Foreground` overlay above.
+        if fullscreen_minimize_button(
+            &ctx,
+            screen,
+            opts,
+            FS_BTN_SIZE,
+            FS_EDGE_GAP,
+            accent,
+            id_salt,
+        ) {
+            toggle = true;
+        }
     } else {
         // Inline — allocate a rect of `min_size` and render the body
         // into a child `Ui` pinned to it. The maximise chip floats
@@ -220,6 +313,247 @@ fn max_button_overlay(
             resp
         });
     inner.inner
+}
+
+/// Compute the upper-left position of the minimize chip given the
+/// (edge, cluster) anchor + button size + edge inset. Mirrors the
+/// 12-position rail system used by [`crate::ribbon`]:
+///
+/// * Cluster `Start` ⇒ corner closest to `(left, top)` along the edge.
+/// * Cluster `End`   ⇒ opposite corner.
+/// * Cluster `Middle`⇒ centred along the edge.
+fn compute_chip_pos(
+    screen: egui::Rect,
+    edge: RibbonEdge,
+    cluster: RibbonCluster,
+    btn: f32,
+    edge_gap: f32,
+) -> egui::Pos2 {
+    let along_axis_pos = |min: f32, max: f32| -> f32 {
+        match cluster {
+            RibbonCluster::Start => min + edge_gap,
+            RibbonCluster::End => max - edge_gap - btn,
+            RibbonCluster::Middle => (min + max) * 0.5 - btn * 0.5,
+        }
+    };
+    match edge {
+        RibbonEdge::Top => egui::pos2(
+            along_axis_pos(screen.left(), screen.right()),
+            screen.top() + edge_gap,
+        ),
+        RibbonEdge::Bottom => egui::pos2(
+            along_axis_pos(screen.left(), screen.right()),
+            screen.bottom() - edge_gap - btn,
+        ),
+        RibbonEdge::Left => egui::pos2(
+            screen.left() + edge_gap,
+            along_axis_pos(screen.top(), screen.bottom()),
+        ),
+        RibbonEdge::Right => egui::pos2(
+            screen.right() - edge_gap - btn,
+            along_axis_pos(screen.top(), screen.bottom()),
+        ),
+    }
+}
+
+/// Paint the fullscreen overlay's minimize button.
+///
+/// The chip starts at the `(edge, cluster)` baked into `opts`. The
+/// user can grab and drag it to ANY of the 12 anchor points; on
+/// release the chip snaps to whichever anchor was nearest. The
+/// chosen anchor persists in ctx data, so the next time this
+/// widget enters fullscreen the chip reappears where the user left
+/// it. Returns `true` on a regular click (= restore).
+fn fullscreen_minimize_button(
+    ctx: &egui::Context,
+    screen: egui::Rect,
+    opts: OverlayOpts,
+    btn_size: f32,
+    edge_gap: f32,
+    accent: egui::Color32,
+    id_salt: impl Hash + Copy,
+) -> bool {
+    // Persisted user-chosen anchor (set on drag-release). When
+    // empty, fall back to the caller-supplied `opts`.
+    let anchor_key = egui::Id::new("frost_maximize_chip_anchor").with(id_salt);
+    let stored: Option<(RibbonEdge, RibbonCluster)> =
+        ctx.data(|d| d.get_temp(anchor_key));
+    let active_anchor =
+        stored.unwrap_or((opts.minimize_edge, opts.minimize_cluster));
+    // While the user is mid-drag, override the chip position with
+    // the cursor (so the chip follows the pointer) — keyed by the
+    // SAME id so the value clears on release.
+    let drag_pos_key =
+        egui::Id::new("frost_maximize_chip_drag_pos").with(id_salt);
+    let drag_cursor: Option<egui::Pos2> =
+        ctx.data(|d| d.get_temp(drag_pos_key));
+    let chip_pos = if let Some(c) = drag_cursor {
+        egui::pos2(c.x - btn_size * 0.5, c.y - btn_size * 0.5)
+    } else {
+        compute_chip_pos(
+            screen,
+            active_anchor.0,
+            active_anchor.1,
+            btn_size,
+            edge_gap,
+        )
+    };
+
+    let area_id = egui::Id::new("frost_maximize_minimize").with(id_salt);
+    let inner = egui::Area::new(area_id)
+        .order(egui::Order::Tooltip)
+        .fixed_pos(chip_pos)
+        .interactable(true)
+        .show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(
+                egui::vec2(btn_size, btn_size),
+                egui::Sense::click_and_drag(),
+            );
+            // Cursor stays the default pointing-hand egui picks for
+            // clickable widgets — same as the main-page ribbon
+            // buttons. The button is click-first, drag-second; the
+            // user shouldn't see a "grab" cursor on hover that
+            // suggests "drag-only".
+            let resp = resp.on_hover_text("Restore");
+            // Drag tracking — write the cursor position to ctx data
+            // each frame the chip is being dragged. On release,
+            // snap to the nearest anchor and persist it.
+            let mut ghost_target: Option<egui::Rect> = None;
+            if resp.dragged() {
+                if let Some(p) = ui.ctx().pointer_interact_pos() {
+                    ui.ctx().data_mut(|d| d.insert_temp(drag_pos_key, p));
+                    // Compute the live snap target so we can paint
+                    // a ghost outline showing where the chip WILL
+                    // land on release.
+                    let snap =
+                        nearest_anchor(screen, p, btn_size, edge_gap);
+                    let snap_pos = compute_chip_pos(
+                        screen, snap.0, snap.1, btn_size, edge_gap,
+                    );
+                    ghost_target = Some(egui::Rect::from_min_size(
+                        snap_pos,
+                        egui::vec2(btn_size, btn_size),
+                    ));
+                }
+            }
+            if resp.drag_stopped() {
+                let cursor = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .unwrap_or_else(|| rect.center());
+                let snapped =
+                    nearest_anchor(screen, cursor, btn_size, edge_gap);
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(anchor_key, snapped);
+                    d.remove::<egui::Pos2>(drag_pos_key);
+                });
+            }
+            if ui.is_rect_visible(rect) {
+                paint_ribbon_style_chip(
+                    &ui.painter(),
+                    rect,
+                    accent,
+                    /* active */ true,
+                    /* hovered */ resp.hovered(),
+                );
+                let glyph_col = if resp.hovered() {
+                    crate::style::contrast_text_for(accent)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(
+                        accent.r(),
+                        accent.g(),
+                        accent.b(),
+                        220,
+                    )
+                };
+                crate::icons::paint_icon(
+                    &ui.painter(),
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "arrow-minimize",
+                    btn_size * 0.55,
+                    glyph_col,
+                );
+            }
+            // Ghost preview at the snap target — a low-alpha
+            // accent rect with a dashed-style accent border, painted
+            // on its OWN tooltip-layer painter (clip = full screen)
+            // so it doesn't get clipped by the chip's tiny area.
+            if let Some(g) = ghost_target {
+                let ghost_layer = egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new(("frost_maximize_chip_ghost", id_salt)),
+                );
+                let ghost_painter = egui::Painter::new(
+                    ui.ctx().clone(),
+                    ghost_layer,
+                    screen,
+                );
+                let ghost_fill = egui::Color32::from_rgba_unmultiplied(
+                    accent.r(),
+                    accent.g(),
+                    accent.b(),
+                    48,
+                );
+                let ghost_stroke = egui::Color32::from_rgba_unmultiplied(
+                    accent.r(),
+                    accent.g(),
+                    accent.b(),
+                    180,
+                );
+                ghost_painter.rect(
+                    g,
+                    egui::CornerRadius::same(
+                        crate::style::theme().radius_md,
+                    ),
+                    ghost_fill,
+                    egui::Stroke::new(1.5, ghost_stroke),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            resp
+        });
+    // Only treat as a "restore" click when the gesture wasn't a drag.
+    let resp = inner.inner;
+    resp.clicked() && drag_cursor.is_none()
+}
+
+/// Find the (edge, cluster) anchor whose chip-centre is closest to
+/// `cursor`. Used by the drag-release snap so the chip lands on
+/// one of the 12 fixed anchors.
+fn nearest_anchor(
+    screen: egui::Rect,
+    cursor: egui::Pos2,
+    btn_size: f32,
+    edge_gap: f32,
+) -> (RibbonEdge, RibbonCluster) {
+    const CANDIDATES: &[(RibbonEdge, RibbonCluster)] = &[
+        (RibbonEdge::Top,    RibbonCluster::Start),
+        (RibbonEdge::Top,    RibbonCluster::Middle),
+        (RibbonEdge::Top,    RibbonCluster::End),
+        (RibbonEdge::Bottom, RibbonCluster::Start),
+        (RibbonEdge::Bottom, RibbonCluster::Middle),
+        (RibbonEdge::Bottom, RibbonCluster::End),
+        (RibbonEdge::Left,   RibbonCluster::Start),
+        (RibbonEdge::Left,   RibbonCluster::Middle),
+        (RibbonEdge::Left,   RibbonCluster::End),
+        (RibbonEdge::Right,  RibbonCluster::Start),
+        (RibbonEdge::Right,  RibbonCluster::Middle),
+        (RibbonEdge::Right,  RibbonCluster::End),
+    ];
+    let mut best = CANDIDATES[0];
+    let mut best_d = f32::INFINITY;
+    for &(e, c) in CANDIDATES {
+        let p = compute_chip_pos(screen, e, c, btn_size, edge_gap);
+        let centre =
+            egui::pos2(p.x + btn_size * 0.5, p.y + btn_size * 0.5);
+        let d = (centre - cursor).length();
+        if d < best_d {
+            best_d = d;
+            best = (e, c);
+        }
+    }
+    best
 }
 
 /// Mirror of `ribbon::paint::paint_ribbon_button` (which is

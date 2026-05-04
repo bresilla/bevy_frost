@@ -19,6 +19,12 @@ corekit = { workspace = true, features = ["bevy"] }
 # editor) now live in corekit so their transitive deps move with
 # them — no `egui-scale`/`slab`/`smallvec` here anymore.
 egui = { workspace = true }
+# Used by `BevyNodeViewBackend` to expose the wgpu device / queue
+# Bevy's render world owns. Texture registration is more involved
+# than eframe's path and currently lands as a `todo!()` placeholder
+# — Bevy needs a custom RenderApp node + Image asset extract
+# pipeline before sharp-zoom snarl works on the Bevy side.
+wgpu = { workspace = true }
 bevy = { workspace = true, features = [
     "std",
     "async_executor",
