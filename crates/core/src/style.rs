@@ -1690,10 +1690,6 @@ pub struct Theme {
     /// background instead of the Blender-style dot grid. PRO
     /// false (dots), GAME true (hex — sci-fi HUD motif).
     pub snarl_canvas_hex: bool,
-    /// Paint a faint horizontal-line scanline overlay on top
-    /// of pane / section / floating-window bodies — fakes the
-    /// CRT-glow feel of sci-fi UIs. PRO false, GAME true.
-    pub scanlines:        bool,
     /// Render progress bars as discrete cells with 1-px gaps
     /// (Mass Effect / Apex shield style) instead of a smooth
     /// fill. PRO false (smooth), GAME true (segmented).
@@ -1885,7 +1881,6 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         snarl_wire_glow:  0.6,
         snarl_pin_glow:   0.5,
         snarl_canvas_hex: false,
-        scanlines:        false,
         progressbar_segmented: false,
         pane_title_brackets: false,
         section_separator_strip_h: 2.0,
@@ -2092,7 +2087,6 @@ pub const fn theme_game(mode: Mode) -> Theme {
         snarl_wire_glow:  1.0,
         snarl_pin_glow:   0.85,
         snarl_canvas_hex: true,
-        scanlines:        true,
         progressbar_segmented: true,
         pane_title_brackets: true,
         section_separator_strip_h: 14.0,
@@ -2793,36 +2787,5 @@ pub fn caption(label: &str) -> egui::RichText {
 /// real contrast.
 pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
     theme().text_primary
-}
-
-/// Paint a CRT-style scanline overlay on top of `rect`. No-op
-/// when the active theme has `scanlines: false` (PRO). Lines
-/// are 1 px tall, every other row, alpha ≈ 5% — quiet enough
-/// that text remains readable, present enough that the panel
-/// reads as a "screen". Colour: contrast text colour for the
-/// active theme so light scanlines show on dark and vice
-/// versa.
-pub fn paint_scanlines(painter: &egui::Painter, rect: egui::Rect) {
-    if !theme().scanlines { return; }
-    let ink = contrast_text_for(theme().bg_panel);
-    let line = egui::Color32::from_rgba_unmultiplied(
-        ink.r(), ink.g(), ink.b(), 12,
-    );
-    // Every-other-row 1-px scanline. Snap to integer rows so
-    // the lines are crisp at any zoom.
-    let y0 = rect.top().ceil() as i32;
-    let y1 = rect.bottom().floor() as i32;
-    let mut y = y0;
-    while y < y1 {
-        let yf = y as f32 + 0.5;
-        painter.line_segment(
-            [
-                egui::pos2(rect.left(),  yf),
-                egui::pos2(rect.right(), yf),
-            ],
-            egui::Stroke::new(1.0, line),
-        );
-        y += 2;
-    }
 }
 
