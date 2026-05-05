@@ -29,7 +29,7 @@ use crate::container::SeparatorOrient;
 use crate::style;
 
 /// Cross-axis hit-rect thickness for the dot handle. Bigger than
-/// the inter-pod [`crate::container::SEPARATOR_STRIP_H`] so the
+/// the inter-pod [`crate::container::separator::separator_strip_h`] so the
 /// pane-level affordance is easy to grab and reads as more
 /// pronounced visually.
 const DOTS_STRIP_H: f32 = 6.0;

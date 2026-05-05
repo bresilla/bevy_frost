@@ -53,7 +53,11 @@ pub(crate) fn paint_pane_title(
         style::section_title_color(accent)
     };
     let font = egui::FontId::new(title_size, style::title_font_family());
-    let title_uc = title.to_uppercase();
+    let title_uc = if theme.pane_title_brackets {
+        format!("[ {} ]", title.to_uppercase())
+    } else {
+        title.to_uppercase()
+    };
     // Compute the scramble id up-front (always — even when
     // `scramble_titles` is off) so the chromatic-aberration helper
     // below can ask whether the cipher is currently running.

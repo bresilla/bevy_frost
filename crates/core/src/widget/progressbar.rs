@@ -92,11 +92,39 @@ fn paint_bar(
         egui::Stroke::new(th.border_width, widget_border(accent)),
         egui::epaint::StrokeKind::Inside,
     );
-    // Filled portion — accent-coloured rect from left edge.
+    // Filled portion. Two modes:
+    //   * Smooth (PRO) — single accent rect from the left edge
+    //     to `fraction × width`.
+    //   * Segmented (GAME) — N discrete cells with 1-px gaps,
+    //     each cell either lit (accent) or dim (track + low
+    //     alpha) based on whether it falls below the fraction
+    //     threshold. Mass Effect / Apex shield style.
     if f > 0.0 {
-        let fill_w = rect.width() * f;
-        let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
-        painter.rect_filled(fill_rect, corner, accent);
+        if th.progressbar_segmented {
+            const SEGMENTS: usize = 12;
+            const GAP: f32 = 1.5;
+            let inset = 1.5;
+            let inner = rect.shrink(inset);
+            let total_gap = GAP * (SEGMENTS as f32 - 1.0);
+            let cell_w = ((inner.width() - total_gap) / SEGMENTS as f32).max(1.0);
+            let lit_count = (f * SEGMENTS as f32).round().clamp(0.0, SEGMENTS as f32) as usize;
+            let dim = egui::Color32::from_rgba_unmultiplied(
+                accent.r(), accent.g(), accent.b(), 38,
+            );
+            for i in 0..SEGMENTS {
+                let x0 = inner.left() + (cell_w + GAP) * i as f32;
+                let cell = egui::Rect::from_min_size(
+                    egui::pos2(x0, inner.top()),
+                    egui::vec2(cell_w, inner.height()),
+                );
+                let col = if i < lit_count { accent } else { dim };
+                painter.rect_filled(cell, egui::CornerRadius::same(0), col);
+            }
+        } else {
+            let fill_w = rect.width() * f;
+            let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
+            painter.rect_filled(fill_rect, corner, accent);
+        }
     }
     // Inline readout — paint twice with different colours so the
     // text reads against both halves of the bar (filled and

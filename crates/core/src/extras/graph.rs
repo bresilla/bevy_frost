@@ -32,7 +32,7 @@ use egui;
 
 pub use crate::extras::snarl::{
     ui::{
-        AnyPins, BackgroundPattern, Dots, Grid, NodeHalo, NodeLayout, PinInfo, PinPlacement,
+        AnyPins, BackgroundPattern, Dots, Grid, Hex, NodeHalo, NodeLayout, PinInfo, PinPlacement,
         PinShape, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireColorMode,
     },
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
@@ -160,13 +160,17 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
                 .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
                 .inner_margin(egui::Margin::same(2)),
         ),
-        // Blender-style dot grid on the canvas. 30-px spacing, 1-px
-        // dot radius — large enough to read as a grid when zoomed
-        // out, quiet enough to disappear behind nodes.
-        bg_pattern: Some(BackgroundPattern::Dots(Dots::new(
-            egui::vec2(30.0, 30.0),
-            1.0,
-        ))),
+        // Canvas pattern is theme-driven:
+        //   PRO  → Blender-style dot grid (30-px pitch, 1-px radius)
+        //          — large enough to read as a grid when zoomed out,
+        //          quiet enough to disappear behind nodes.
+        //   GAME → pointy-top hex tessellation (24-px circumradius)
+        //          — sci-fi HUD motif (Halo waypoint, Stellaris).
+        bg_pattern: Some(if crate::style::theme().snarl_canvas_hex {
+            BackgroundPattern::Hex(Hex::new(24.0))
+        } else {
+            BackgroundPattern::Dots(Dots::new(egui::vec2(30.0, 30.0), 1.0))
+        }),
         bg_pattern_stroke: Some(grid_stroke),
         // Pin defaults — overridden per-node-type by the demo's
         // `PinType::pin()` builder. Blender uses a 1-px black
@@ -189,11 +193,14 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // following a wire from its origin.
         wire_color_mode: Some(WireColorMode::FromSource),
         // Faux-bloom — wires and pins shed a soft halo in their
-        // type colour. Layered alpha-reduced strokes under the
-        // crisp wire give a "post-process bloom" feel without an
-        // actual GPU pass. 0.6 reads as "vibrant but not hazy".
-        wire_glow: Some(0.6),
-        pin_glow: Some(0.5),
+        // type colour. Driven by `theme().snarl_wire_glow` /
+        // `snarl_pin_glow` so PRO stays "vibrant but tasteful"
+        // (~0.6 / 0.5) while GAME ramps to a full neon halo
+        // (~1.0 / 0.85). Layered alpha-reduced strokes under
+        // the crisp wire give a "post-process bloom" feel
+        // without an actual GPU pass.
+        wire_glow: Some(crate::style::theme().snarl_wire_glow),
+        pin_glow:  Some(crate::style::theme().snarl_pin_glow),
         // Pin glyph centre sits ON the body's border line — the
         // pin bisects the outline, half inside / half outside.
         // Reads as "above" / sitting on the border the way

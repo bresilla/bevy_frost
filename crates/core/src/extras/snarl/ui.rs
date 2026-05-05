@@ -32,7 +32,7 @@ use self::{
 };
 
 pub use self::{
-    background_pattern::{BackgroundPattern, Dots, Grid},
+    background_pattern::{BackgroundPattern, Dots, Grid, Hex},
     pin::{AnyPins, PinInfo, PinShape, SnarlPin},
     state::SnarlState,
     viewer::SnarlViewer,

@@ -139,6 +139,74 @@ impl Dots {
     }
 }
 
+/// Pointy-top hex grid — flat hex tiles tessellated across the
+/// canvas. Each hex is drawn as a 6-segment polygonal outline
+/// using the active background-pattern stroke. `size` is the
+/// circumradius (centre→vertex distance). The sci-fi HUD motif
+/// — Halo CE waypoint, Stellaris galaxy map, NMS scanner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+pub struct Hex {
+    /// Hex circumradius in points (centre → vertex).
+    pub size: f32,
+}
+
+impl Default for Hex {
+    fn default() -> Self {
+        Self { size: 24.0 }
+    }
+}
+
+impl Hex {
+    /// Create a hex pattern with the given circumradius.
+    #[must_use]
+    pub const fn new(size: f32) -> Self {
+        Self { size }
+    }
+
+    fn draw(&self, viewport: &Rect, snarl_style: &SnarlStyle, style: &Style, painter: &Painter) {
+        let stroke = snarl_style.get_bg_pattern_stroke(style);
+        let s = self.size.max(2.0);
+        // Pointy-top hex: row pitch = 1.5 * s, col pitch =
+        // sqrt(3) * s, odd rows offset by half-col.
+        let row_pitch = 1.5 * s;
+        // sqrt(3) — not available as a stable f32 constant.
+        const SQRT_3: f32 = 1.732_050_8;
+        let col_pitch = SQRT_3 * s;
+        // Pad by one cell so partial hexes at the viewport edge
+        // still draw without popping.
+        let min_row = ((viewport.min.y / row_pitch).floor() as i64) - 1;
+        let max_row = ((viewport.max.y / row_pitch).ceil() as i64) + 1;
+        let min_col = ((viewport.min.x / col_pitch).floor() as i64) - 1;
+        let max_col = ((viewport.max.x / col_pitch).ceil() as i64) + 1;
+        // Pre-compute 6 unit vertex offsets for a pointy-top hex
+        // (vertex 0 at the top, going clockwise).
+        let verts: [Vec2; 6] = [
+            vec2(0.0, -s),
+            vec2(col_pitch * 0.5, -s * 0.5),
+            vec2(col_pitch * 0.5,  s * 0.5),
+            vec2(0.0,  s),
+            vec2(-col_pitch * 0.5,  s * 0.5),
+            vec2(-col_pitch * 0.5, -s * 0.5),
+        ];
+        for row in min_row..=max_row {
+            let cy = row as f32 * row_pitch;
+            let row_offset = if row.rem_euclid(2) == 0 { 0.0 } else { col_pitch * 0.5 };
+            for col in min_col..=max_col {
+                let cx = col as f32 * col_pitch + row_offset;
+                let centre = egui::pos2(cx, cy);
+                // Draw 6 segments forming the hex outline.
+                for i in 0..6 {
+                    let a = centre + verts[i];
+                    let b = centre + verts[(i + 1) % 6];
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+        }
+    }
+}
+
 /// Background pattern show beneath nodes and wires.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -155,6 +223,10 @@ pub enum BackgroundPattern {
     /// intersection of an invisible grid.
     #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
     Dots(Dots),
+
+    /// Pointy-top hex tiles — sci-fi HUD motif.
+    #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
+    Hex(Hex),
 }
 
 impl Default for BackgroundPattern {
@@ -193,6 +265,7 @@ impl BackgroundPattern {
         match self {
             BackgroundPattern::Grid(g) => g.draw(viewport, snarl_style, style, painter),
             BackgroundPattern::Dots(d) => d.draw(viewport, snarl_style, style, painter),
+            BackgroundPattern::Hex(h)  => h.draw(viewport, snarl_style, style, painter),
             BackgroundPattern::NoPattern => {}
         }
     }

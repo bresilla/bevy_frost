@@ -567,7 +567,7 @@ impl Normal {
         let pod_chrome_each = (POD_PAD_Y as f32) * 2.0;
         let separator_total_h = if pods_total > 1 {
             (pods_total - 1) as f32
-                * crate::container::separator::SEPARATOR_STRIP_H
+                * crate::container::separator::separator_strip_h()
         } else {
             0.0
         };

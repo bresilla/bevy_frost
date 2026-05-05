@@ -1677,6 +1677,55 @@ pub struct Theme {
     pub tree_guide_width: f32,
     /// Snarl graph pin stroke width. PRO `1.0`, GAME `0.0`.
     pub snarl_pin_width:  f32,
+    /// Bloom intensity for snarl wires (`0.0` = no glow, `1.0+`
+    /// = strong neon halo). Read by `frost_snarl_style` and
+    /// passed straight through to `SnarlStyle::wire_glow`. PRO
+    /// 0.6 (vibrant but tasteful), GAME 1.0 (full neon).
+    pub snarl_wire_glow:  f32,
+    /// Bloom intensity for snarl pin glyphs — same scale and
+    /// semantics as `snarl_wire_glow`, applied to the pin
+    /// shape's halo passes. PRO 0.5, GAME 0.85.
+    pub snarl_pin_glow:   f32,
+    /// Use a pointy-top hex tessellation as the snarl canvas
+    /// background instead of the Blender-style dot grid. PRO
+    /// false (dots), GAME true (hex — sci-fi HUD motif).
+    pub snarl_canvas_hex: bool,
+    /// Paint a faint horizontal-line scanline overlay on top
+    /// of pane / section / floating-window bodies — fakes the
+    /// CRT-glow feel of sci-fi UIs. PRO false, GAME true.
+    pub scanlines:        bool,
+    /// Render progress bars as discrete cells with 1-px gaps
+    /// (Mass Effect / Apex shield style) instead of a smooth
+    /// fill. PRO false (smooth), GAME true (segmented).
+    pub progressbar_segmented: bool,
+    /// Wrap pane titles in literal `[ … ]` brackets — the
+    /// terminal / Helldivers / Pip-Boy HUD cue. Section titles
+    /// already have their own [`Self::section_title_brackets`]
+    /// flag with collapse-aware layout. PRO false, GAME true.
+    pub pane_title_brackets: bool,
+    /// Cross-axis thickness (px) of the inter-pod separator
+    /// strip. The rule itself paints at the strip's centre, so
+    /// extra strip height converts directly into vertical pad
+    /// above and below the rule. PRO 2 (hairline strip, no pad);
+    /// GAME 14 — ≈6 px of pad on each side of the rule so pods
+    /// breathe.
+    pub section_separator_strip_h: f32,
+    /// Alpha applied to the inter-pod separator rule. PRO 128
+    /// (the kit's original half-strength rule — quiet but
+    /// readable on a dark panel); GAME 64 — halved again so the
+    /// rule barely whispers against the bright accent panel.
+    pub section_separator_alpha: u8,
+    /// Extra space (px) inserted INSIDE the container body at
+    /// the body-end edge — the gap between the LAST pod's bottom
+    /// edge and the section frame's body-facing inner edge.
+    /// Mirror of [`Self::section_body_inner_top_pad`] on the
+    /// opposite edge. Allocated AFTER the user body callback as
+    /// a `ui.add_space()` so it grows the body's intrinsic
+    /// content size and the container auto-fits to include it.
+    /// PRO 0 (no extra pad — the symmetric `section_padding`
+    /// already handles it), GAME ≈ 12 so the bracketed banner
+    /// + last-pod combo doesn't slam into the section frame.
+    pub section_body_inner_end_pad: f32,
 
     // ── Drag-reorder ghost ──
     /// Alpha applied to the accent fill of the section/ribbon-button
@@ -1833,6 +1882,15 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         scramble_titles: false,
         tree_guide_width: 1.0,
         snarl_pin_width:  1.0,
+        snarl_wire_glow:  0.6,
+        snarl_pin_glow:   0.5,
+        snarl_canvas_hex: false,
+        scanlines:        false,
+        progressbar_segmented: false,
+        pane_title_brackets: false,
+        section_separator_strip_h: 2.0,
+        section_separator_alpha: 128,
+        section_body_inner_end_pad: 0.0,
         ghost_fill_alpha:   28,
         ghost_stroke_width: 1.5,
         pastel_accent: true,
@@ -1901,7 +1959,7 @@ pub const fn theme_game(mode: Mode) -> Theme {
         section_outer_margin_flow_title: 6,
         section_outer_margin_flow_body: 0,
         section_outer_margin_span: 1,
-        section_body_inner_top_pad: 0.0,
+        section_body_inner_top_pad: 12.0,
         pane_title_chromatic_aberration: true,
         // GAME — slower fold / unfold so the banner expansion reads
         // as a deliberate "scene change" cue.
@@ -1996,14 +2054,16 @@ pub const fn theme_game(mode: Mode) -> Theme {
         // GAME Dark borders — alpha + stroke width both reduced
         // ~37 % from the previous (α 110, w 1.0): the user wanted a
         // 30 % thickness drop on GAME, plus another 10 % on Dark
-        // (`0.7 × 0.9 ≈ 0.63`). Light still has no border at all.
-        border_alpha:       if dark { 70 } else { 0 },
+        // (`0.7 × 0.9 ≈ 0.63`). Then halved again for the
+        // "separators 50 % more transparent" request: 70 → 35.
+        // Light still has no border at all.
+        border_alpha:       if dark { 35 } else { 0 },
         border_accent_tint: 0.0,
         border_width:       if dark { 0.63 } else { 0.0 },
-        // GAME row separators — same 30 % cut on Light, additional
-        // 10 % on Dark. Pushed further down on Dark so the dashed
-        // hairlines just whisper between rows.
-        row_separator_alpha: if dark { 50 } else { 56 },
+        // GAME row separators — same 50 % transparency bump as
+        // border_alpha (Dark 50 → 25, Light 56 → 28) so the dashed
+        // inter-row hairlines just whisper.
+        row_separator_alpha: if dark { 25 } else { 28 },
         glass_card_factor:  1.0,
         glass_group_factor: 1.0,
         glass_accent_tint:  0.0,
@@ -2029,6 +2089,15 @@ pub const fn theme_game(mode: Mode) -> Theme {
         scramble_titles: true,
         tree_guide_width: 0.0,
         snarl_pin_width:  0.0,
+        snarl_wire_glow:  1.0,
+        snarl_pin_glow:   0.85,
+        snarl_canvas_hex: true,
+        scanlines:        true,
+        progressbar_segmented: true,
+        pane_title_brackets: true,
+        section_separator_strip_h: 14.0,
+        section_separator_alpha: 64,
+        section_body_inner_end_pad: 12.0,
         ghost_fill_alpha:   90,
         ghost_stroke_width: 0.0,
         pastel_accent: true,
@@ -2725,3 +2794,35 @@ pub fn caption(label: &str) -> egui::RichText {
 pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
     theme().text_primary
 }
+
+/// Paint a CRT-style scanline overlay on top of `rect`. No-op
+/// when the active theme has `scanlines: false` (PRO). Lines
+/// are 1 px tall, every other row, alpha ≈ 5% — quiet enough
+/// that text remains readable, present enough that the panel
+/// reads as a "screen". Colour: contrast text colour for the
+/// active theme so light scanlines show on dark and vice
+/// versa.
+pub fn paint_scanlines(painter: &egui::Painter, rect: egui::Rect) {
+    if !theme().scanlines { return; }
+    let ink = contrast_text_for(theme().bg_panel);
+    let line = egui::Color32::from_rgba_unmultiplied(
+        ink.r(), ink.g(), ink.b(), 12,
+    );
+    // Every-other-row 1-px scanline. Snap to integer rows so
+    // the lines are crisp at any zoom.
+    let y0 = rect.top().ceil() as i32;
+    let y1 = rect.bottom().floor() as i32;
+    let mut y = y0;
+    while y < y1 {
+        let yf = y as f32 + 0.5;
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(),  yf),
+                egui::pos2(rect.right(), yf),
+            ],
+            egui::Stroke::new(1.0, line),
+        );
+        y += 2;
+    }
+}
+

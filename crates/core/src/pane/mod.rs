@@ -971,6 +971,12 @@ impl Pane2 {
                 }
                 .show(ui, |ui| {
                     self.lay_out_flex(ui, body);
+                    // CRT scanline overlay — paints over the
+                    // entire pane body when the active theme
+                    // has `scanlines = true` (GAME). PRO
+                    // theme's flag is `false` so this becomes
+                    // a no-op there.
+                    style::paint_scanlines(ui.painter(), ui.max_rect());
                 });
                 // The Frame's response.rect IS the painted outer
                 // rect (= content_min_rect + frame margins). Use it

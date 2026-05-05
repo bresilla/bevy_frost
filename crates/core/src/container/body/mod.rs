@@ -110,6 +110,14 @@ impl Body {
                 // scrolled — that's the intended escape hatch (the
                 // user can drag the container's resize handle for
                 // more space, or the caller can split the section).
+                // Wrap the user body so we can append the
+                // theme's body-end inner pad (see
+                // `Theme::section_body_inner_end_pad`) AFTER the
+                // last pod renders. Inside the ScrollArea so the
+                // trailing space contributes to the scroll's
+                // measured `content_size` and the container
+                // auto-fits to include it.
+                let end_pad = crate::style::theme().section_body_inner_end_pad;
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("frost_body_scroll_v")
                     .auto_shrink([false, false])
@@ -117,7 +125,13 @@ impl Body {
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                     )
-                    .show(ui, body);
+                    .show(ui, |ui| {
+                        let r = body(ui);
+                        if end_pad > 0.0 {
+                            ui.add_space(end_pad);
+                        }
+                        r
+                    });
                 // ScrollArea reports its inner content's natural
                 // size. The caller persists this so the container
                 // can auto-fit on the next frame (see

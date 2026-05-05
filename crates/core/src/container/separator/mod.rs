@@ -12,7 +12,7 @@
 //!   between horizontally-stacked things (containers inside a
 //!   vertical-strip pane).
 //!
-//! The strip allocated in the parent ui is always [`SEPARATOR_STRIP_H`]
+//! The strip allocated in the parent ui is always [`separator_strip_h`]
 //! pixels thick on the cross axis, regardless of style or
 //! orientation, so swapping any combination doesn't shift
 //! neighbouring positions. Ink colour comes from
@@ -27,15 +27,26 @@ use egui::{vec2, Color32, Rect, Response, Sense, Stroke, Ui};
 use crate::style;
 
 /// Alpha applied to the title-divider colour when painting the
-/// separator. Halved across all themes — the full-strength rule
-/// claimed too much of the user's eye on every row.
-const SEPARATOR_ALPHA: u8 = 128;
+/// separator. Theme-driven via
+/// [`crate::style::Theme::section_separator_alpha`]: PRO holds
+/// the original half-strength 128 (a quiet but readable rule),
+/// GAME halves again to 64 so the inter-pod whisper barely
+/// registers against the bright accent panel.
+fn separator_alpha() -> u8 {
+    crate::style::theme().section_separator_alpha
+}
 
 /// Cross-axis strip thickness — the rect EVERY separator reserves
-/// in the parent ui, every style and orientation. Same value for
-/// interactive and non-interactive variants so swapping doesn't
-/// shift neighbours.
-pub const SEPARATOR_STRIP_H: f32 = 2.0;
+/// in the parent ui, every style and orientation. Theme-driven via
+/// [`crate::style::Theme::section_separator_strip_h`] so PRO keeps
+/// a 2 px hairline strip while GAME pads the rule with breathing
+/// room above and below (rule is centred in the strip, so a 14 px
+/// strip leaves ~6 px of vertical pad on each side of the line).
+/// Same value for interactive and non-interactive variants so
+/// swapping doesn't shift neighbours.
+pub fn separator_strip_h() -> f32 {
+    crate::style::theme().section_separator_strip_h
+}
 /// Centre-to-centre spacing between the three dots in
 /// [`SeparatorStyle::LineDots`].
 const DOT_SPACING: f32 = 5.0;
@@ -81,7 +92,7 @@ pub enum SeparatorOrient {
 
 /// Paint a non-interactive separator into the parent `ui`.
 ///
-/// Strip thickness on the cross axis is [`SEPARATOR_STRIP_H`];
+/// Strip thickness on the cross axis is [`separator_strip_h`];
 /// length on the main axis is the parent ui's `available_*`. Colour
 /// comes from [`style::outline_base`], which auto-flips per theme
 /// luma — white-tinted on Dark, black-tinted on Light.
@@ -131,7 +142,7 @@ pub fn paint_separator_resize(
     resp
 }
 
-/// Allocate the strip rect — the cross axis is `SEPARATOR_STRIP_H`,
+/// Allocate the strip rect — the cross axis is `separator_strip_h`,
 /// the main axis is `available_width()` / `available_height()`.
 /// Reserved with `Sense::hover` so `allocate_exact_size`'s auto-id
 /// doesn't claim the interaction id; the explicit `interact` call
@@ -139,8 +150,8 @@ pub fn paint_separator_resize(
 /// caller-supplied salt.
 fn allocate_strip(ui: &mut Ui, orient: SeparatorOrient) -> Rect {
     let size = match orient {
-        SeparatorOrient::Horizontal => vec2(ui.available_width(), SEPARATOR_STRIP_H),
-        SeparatorOrient::Vertical => vec2(SEPARATOR_STRIP_H, ui.available_height()),
+        SeparatorOrient::Horizontal => vec2(ui.available_width(), separator_strip_h()),
+        SeparatorOrient::Vertical => vec2(separator_strip_h(), ui.available_height()),
     };
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     rect
@@ -149,13 +160,14 @@ fn allocate_strip(ui: &mut Ui, orient: SeparatorOrient) -> Rect {
 /// Theme-flipped ink shared by [`paint_separator`] and the rest
 /// state of [`paint_separator_resize`]. Pulls from the active
 /// theme's `border_subtle` so inter-pod separators match the
-/// hairline divider painted under each container's title — the two
-/// horizontal rules in a section read as the same family. Alpha
-/// is the half-strength `SEPARATOR_ALPHA` across all themes so the
-/// rule reads as a quiet whisper rather than a hard divider.
+/// hairline divider painted under each container's title — the
+/// two horizontal rules in a section read as the same family.
+/// Alpha is theme-driven (`separator_alpha`): PRO 128 keeps the
+/// rule visible against the dark panel; GAME 64 lets it whisper
+/// across the bright accent surface.
 fn default_ink() -> Color32 {
     let base = style::theme().border_subtle;
-    Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), SEPARATOR_ALPHA)
+    Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), separator_alpha())
 }
 
 fn paint_into(ui: &Ui, rect: Rect, style: SeparatorStyle, orient: SeparatorOrient, ink: Color32) {
