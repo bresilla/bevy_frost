@@ -2,13 +2,13 @@ use std::cell::RefCell;
 
 use egui::Pos2;
 
-use crate::snarl::{wire_pins, InPinId, Node, OutPinId, Snarl};
+use crate::vendored::{wire_pins, InPinId, Node, OutPinId, Graph};
 
 pub enum Effect<T> {
-    /// Adds a new node to the Snarl.
+    /// Adds a new node to the Graph.
     InsertNode { pos: Pos2, node: T },
 
-    /// Removes a node from snarl.
+    /// Removes a node from graph.
     RemoveNode { node: NodeId },
 
     /// Opens/closes a node.
@@ -26,12 +26,12 @@ pub enum Effect<T> {
     /// Removes all connections to the input pin.
     DropInputs { pin: InPinId },
 
-    /// Executes a closure with mutable reference to the Snarl.
-    Closure(Box<dyn FnOnce(&mut Snarl<T>)>),
+    /// Executes a closure with mutable reference to the Graph.
+    Closure(Box<dyn FnOnce(&mut Graph<T>)>),
 }
 
 /// Contained for deferred execution of effects.
-/// It is populated by [`SnarlViewer`] methods and then applied to the Snarl.
+/// It is populated by [`NodeViewer`] methods and then applied to the Graph.
 pub struct Effects<T> {
     effects: Vec<Effect<T>>,
 }
@@ -61,13 +61,13 @@ impl<T> Effects<T> {
         self.effects.is_empty()
     }
 
-    /// Inserts a new node to the Snarl.
+    /// Inserts a new node to the Graph.
     #[inline(always)]
     pub fn insert_node(&mut self, pos: Pos2, node: T) {
         self.effects.push(Effect::InsertNode { node, pos });
     }
 
-    /// Removes a node from the Snarl.
+    /// Removes a node from the Graph.
     #[inline(always)]
     pub fn remove_node(&mut self, node: NodeId) {
         self.effects.push(Effect::RemoveNode { node });
@@ -104,7 +104,7 @@ impl<T> Effects<T> {
     }
 }
 
-impl<T> Snarl<T> {
+impl<T> Graph<T> {
     pub fn apply_effects(&mut self, effects: Effects<T>) {
         if effects.effects.is_empty() {
             return;

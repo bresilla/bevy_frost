@@ -1,27 +1,27 @@
-//! Node-graph integration — thin glue around [`egui_snarl`] so graph
+//! Node-graph integration — thin glue around [`egui_graph`] so graph
 //! widgets inherit the frost palette and border language without
-//! every consumer having to hand-tune a `SnarlStyle`.
+//! every consumer having to hand-tune a `GraphStyle`.
 //!
 //! Two pieces of surface:
 //!
-//! * [`frost_snarl_style`] — builds a [`SnarlStyle`] configured with
+//! * [`frost_node_graph_style`] — builds a [`GraphStyle`] configured with
 //!   frost's `BG_*` / `widget_border` / accent colours, the same
 //!   corner radius as [`section`](crate::widgets::foldable::section),
 //!   and a pin/wire width that matches the border stroke. Pass the
 //!   returned style straight into
-//!   [`SnarlWidget::style`](egui_snarl::ui::SnarlWidget::style).
-//! * `pub use egui_snarl` re-export — callers don't need a second
-//!   direct dep. `use bevy_frost::snarl::{Snarl, SnarlViewer,
-//!   SnarlWidget, NodeId, InPin, OutPin, ...};` lands the full
+//!   [`GraphWidget::style`](egui_graph::ui::GraphWidget::style).
+//! * `pub use egui_graph` re-export — callers don't need a second
+//!   direct dep. `use bevy_frost::graph::{Graph, NodeViewer,
+//!   GraphWidget, NodeId, InPin, OutPin, ...};` lands the full
 //!   upstream surface.
 //!
 //! Drop the whole thing into any section body:
 //!
 //! ```ignore
 //! section(ui, "graph", "Graph", accent, true, |ui| {
-//!     SnarlWidget::new()
+//!     GraphWidget::new()
 //!         .id_salt("my_graph")
-//!         .style(frost_snarl_style(accent))
+//!         .style(frost_node_graph_style(accent))
 //!         .min_size(egui::vec2(320.0, 260.0))
 //!         .show(&mut state.graph, &mut state.viewer, ui);
 //! });
@@ -32,11 +32,11 @@ use egui;
 
 pub use frost_graph::{
     AnyPins, BackgroundPattern, Dots, Grid, Hex, InPin, InPinId, NodeHalo, NodeId, NodeLayout,
-    NodeViewBackend, NodeViewState, OutPin, OutPinId, PinInfo, PinPlacement, PinShape, Snarl,
-    SnarlPin, SnarlState, SnarlStyle, SnarlViewer, SnarlWidget, WireColorMode,
+    NodeViewBackend, NodeViewState, OutPin, OutPinId, PinInfo, PinPlacement, PinShape, Graph,
+    NodePin, GraphState, GraphStyle, NodeViewer, GraphWidget, WireColorMode,
 };
 
-// `frost_snarl` / `frost_snarl_with_opts` route through
+// `frost_node_graph` / `frost_node_graph_with_opts` route through
 // `crate::embed::maximizable_with_opts` for the fullscreen chip
 // + overlay swap. `OverlayOpts` is re-exported so callers pick up
 // the chip-placement type from the same module.
@@ -45,7 +45,7 @@ use crate::style::{
     glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
 };
 
-/// Build a [`SnarlStyle`] that inherits the frost palette + border
+/// Build a [`GraphStyle`] that inherits the frost palette + border
 /// language. Call per-frame with the current accent so the graph
 /// re-tints when the user swaps accent colour (the same way every
 /// other frost surface does).
@@ -64,7 +64,7 @@ use crate::style::{
 ///
 /// Everything else stays at the library default so scroll / zoom /
 /// selection interactions remain familiar to upstream users.
-pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
+pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
     // ── Blender-style geometry ──
     // Blender (4.x) measures all node geometry off `widget_unit = 20 px`:
     //   * NODE_DY (header height, row height) = widget_unit = 20 px
@@ -75,7 +75,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
     // We mirror those constants so the node geometry feels
     // proportionally identical, with frost's glass-fill background.
     // Horizontal padding shared by body AND header so the header
-    // band lines up with the body edges (snarl sizes each frame as
+    // band lines up with the body edges (graph sizes each frame as
     // content + 2 × inner_margin, so any divergence here makes the
     // header poke out like a hat).
     const NODE_PAD_X: i8 = 8;
@@ -111,10 +111,10 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         .inner_margin(egui::Margin::symmetric(NODE_PAD_X, NODE_PAD_Y));
 
     // Header — TRANSPARENT here. The category-coloured band is
-    // painted PER-NODE inside `SnarlViewer::show_header` (see the
+    // painted PER-NODE inside `NodeViewer::show_header` (see the
     // demo's `show_header` impl) by reading the node's category +
     // smearing a Unreal-style left-anchored gradient across the
-    // header rect. That keeps `frost_snarl_style` host-agnostic
+    // header rect. That keeps `frost_node_graph_style` host-agnostic
     // (no fixed colour palette baked in) and lets each app's
     // viewer decide which colour to spill.
     let header_frame = egui::Frame::new()
@@ -147,7 +147,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         egui::Color32::from_rgba_unmultiplied(grid_base.r(), grid_base.g(), grid_base.b(), 28),
     );
 
-    SnarlStyle {
+    GraphStyle {
         node_frame: Some(node_frame),
         header_frame: Some(header_frame),
         bg_frame: Some(
@@ -163,7 +163,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         //          quiet enough to disappear behind nodes.
         //   GAME → pointy-top hex tessellation (24-px circumradius)
         //          — sci-fi HUD motif (Halo waypoint, Stellaris).
-        bg_pattern: Some(if crate::style::theme().snarl_canvas_hex {
+        bg_pattern: Some(if crate::style::theme().graph_canvas_hex {
             BackgroundPattern::Hex(Hex::new(24.0))
         } else {
             BackgroundPattern::Dots(Dots::new(egui::vec2(30.0, 30.0), 1.0))
@@ -177,7 +177,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
             1.0, egui::Color32::from_black_alpha(160),
         )),
         // Wires — Blender uses 2.5 px width with a 1-px dark
-        // outline pass underneath; egui-snarl draws a single
+        // outline pass underneath; egui-graph draws a single
         // stroke, so we settle on 2.0 px (UE Blueprints' default
         // 1.5 px felt too thin against the dot grid).
         wire_width: Some(2.0),
@@ -190,14 +190,14 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // following a wire from its origin.
         wire_color_mode: Some(WireColorMode::FromSource),
         // Faux-bloom — wires and pins shed a soft halo in their
-        // type colour. Driven by `theme().snarl_wire_glow` /
-        // `snarl_pin_glow` so PRO stays "vibrant but tasteful"
+        // type colour. Driven by `theme().graph_wire_glow` /
+        // `graph_pin_glow` so PRO stays "vibrant but tasteful"
         // (~0.6 / 0.5) while GAME ramps to a full neon halo
         // (~1.0 / 0.85). Layered alpha-reduced strokes under
         // the crisp wire give a "post-process bloom" feel
         // without an actual GPU pass.
-        wire_glow: Some(crate::style::theme().snarl_wire_glow),
-        pin_glow:  Some(crate::style::theme().snarl_pin_glow),
+        wire_glow: Some(crate::style::theme().graph_wire_glow),
+        pin_glow:  Some(crate::style::theme().graph_pin_glow),
         // Pin glyph centre sits ON the body's border line — the
         // pin bisects the outline, half inside / half outside.
         // Reads as "above" / sitting on the border the way
@@ -206,7 +206,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         pin_placement: Some(PinPlacement::Edge),
         pin_inset: None,
         // Accent halo close to the body, painted UNDER pin
-        // glyphs (snarl reserves the painter slot before pins
+        // glyphs (graph reserves the painter slot before pins
         // submit, so pins always render on top of the halo
         // line). 3 px gap, 1.5 px stroke.
         node_halo: Some(NodeHalo {
@@ -220,7 +220,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         downscale_wire_frame: Some(true),
         upscale_wire_frame: Some(true),
         // ── Outside-in zoom ──
-        // Lock snarl's internal `TSTransform.scaling` to 1.0 so it
+        // Lock graph's internal `TSTransform.scaling` to 1.0 so it
         // never stretches the rasterised glyphs (a bitmap atlas
         // scaled past 1.0 is the source of the bilinear blur on
         // zoom). Zoom is instead driven from the outside in
@@ -230,7 +230,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // glyphs at the new pixel resolution AND the layout area
         // shrinks so nodes appear bigger. End result: text stays
         // sharp at any zoom level.
-        // Snarl's pan (TSTransform.translation) is still managed
+        // Graph's pan (TSTransform.translation) is still managed
         // internally by drag-pan inside the widget; only the zoom
         // axis is hijacked.
         min_scale: Some(1.0),
@@ -239,13 +239,13 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
         // needed and the right-click context menu already handles
         // it; freeing the right edge keeps the title bar clean.
         collapsible: Some(false),
-        // Zero the leading drag-space padding — by default snarl
+        // Zero the leading drag-space padding — by default graph
         // allocates an `icon_width × icon_width` (~16×16 px) hover
         // strip before `show_header`. That pushes our icon away
         // from the left edge of the header band and looks broken
         // next to a per-category coloured fill.
         header_drag_space: Some(egui::vec2(0.0, 0.0)),
-        ..SnarlStyle::new()
+        ..GraphStyle::new()
     }
 }
 
@@ -262,7 +262,7 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
 /// the graph is "gone" to the overlay — the hole is filled with a
 /// small "(maximised)" caption.
 ///
-/// Render an `egui-snarl` node graph through frost's sharp-zoom
+/// Render an `egui-graph` node graph through frost's sharp-zoom
 /// pipeline: a SECONDARY `egui::Context` with `pixels_per_point`
 /// compensated for zoom, painted into a wgpu texture by the
 /// [`NodeViewBackend`] and composited back into the parent UI. The
@@ -276,43 +276,43 @@ pub fn frost_snarl_style(accent: egui::Color32) -> SnarlStyle {
 /// secondary egui context and wgpu texture across frames; pass the
 /// SAME `NodeViewState` each frame for the same graph instance.
 ///
-/// Use this in place of [`SnarlWidget::new().show`] whenever you
+/// Use this in place of [`GraphWidget::new().show`] whenever you
 /// want the frost styling + the fullscreen affordance. The
 /// fullscreen chip lands top-right by default;
-/// [`frost_snarl_with_opts`] takes an [`OverlayOpts`] for custom
+/// [`frost_node_graph_with_opts`] takes an [`OverlayOpts`] for custom
 /// chip placement.
-pub fn frost_snarl<T, V: SnarlViewer<T>>(
+pub fn frost_node_graph<T, V: NodeViewer<T>>(
     ui: &mut egui::Ui,
     state: &mut NodeViewState,
     backend: &mut dyn NodeViewBackend,
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     accent: egui::Color32,
     desired_size: egui::Vec2,
 ) {
-    frost_snarl_with_opts(
-        ui, state, backend, snarl, viewer, accent, desired_size,
+    frost_node_graph_with_opts(
+        ui, state, backend, graph, viewer, accent, desired_size,
         OverlayOpts::default(),
     )
 }
 
-/// Like [`frost_snarl`] but accepts [`OverlayOpts`] so the caller
+/// Like [`frost_node_graph`] but accepts [`OverlayOpts`] so the caller
 /// picks where the fullscreen / minimize chip lands on the overlay
 /// (which edge + which cluster along that edge).
-pub fn frost_snarl_with_opts<T, V: SnarlViewer<T>>(
+pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
     ui: &mut egui::Ui,
     state: &mut NodeViewState,
     backend: &mut dyn NodeViewBackend,
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     accent: egui::Color32,
     desired_size: egui::Vec2,
     fs_opts: OverlayOpts,
 ) {
-    let id_for_snarl_base = egui::Id::new("frost_snarl_widget");
+    let id_for_graph_base = egui::Id::new("frost_node_graph_widget");
     // Auto-recentre bookkeeping. The `version` is folded into the
-    // SnarlWidget's id below; bumping it invalidates egui-snarl's
-    // saved transform so `SnarlState::initial` runs again and
+    // GraphWidget's id below; bumping it invalidates egui-graph's
+    // saved transform so `GraphState::initial` runs again and
     // refits the bb to the live viewport. We bump on first paint
     // (no `last_sz` yet) and whenever the viewport size drifts
     // more than `RESIZE_THRESHOLD` from the last fit — pane drags,
@@ -324,9 +324,9 @@ pub fn frost_snarl_with_opts<T, V: SnarlViewer<T>>(
     // mid-resolve rect.
     const RESIZE_THRESHOLD: f32 = 8.0;
     const SETTLE_FRAMES: u32 = 2;
-    let version_id = ui.id().with(("frost_snarl_version", id_for_snarl_base));
-    let last_sz_id = ui.id().with(("frost_snarl_last_sz", id_for_snarl_base));
-    let settle_id = ui.id().with(("frost_snarl_settle", id_for_snarl_base));
+    let version_id = ui.id().with(("frost_node_graph_version", id_for_graph_base));
+    let last_sz_id = ui.id().with(("frost_node_graph_last_sz", id_for_graph_base));
+    let settle_id = ui.id().with(("frost_node_graph_settle", id_for_graph_base));
 
     // `maximizable_with_opts` paints the maximize chip and, when
     // active, swaps to a fullscreen body — its body callback gets
@@ -336,7 +336,7 @@ pub fn frost_snarl_with_opts<T, V: SnarlViewer<T>>(
     // exact pixel dimensions of whichever surface owns the pane
     // this frame.
     crate::embed::maximizable_with_opts(
-        ui, id_for_snarl_base, accent, desired_size, fs_opts,
+        ui, id_for_graph_base, accent, desired_size, fs_opts,
         |inner_ui| {
             let size = inner_ui.available_size();
             // Sub-context theme bridge — `frost_graph::show_with_anchor`
@@ -405,34 +405,34 @@ pub fn frost_snarl_with_opts<T, V: SnarlViewer<T>>(
             if natural_bump {
                 state.set_zoom(1.0);
             }
-            // Versioned snarl id — bumping version forces a fresh
-            // fit because the saved SnarlStateData lookup misses.
-            let id_for_snarl = id_for_snarl_base.with(version);
+            // Versioned graph id — bumping version forces a fresh
+            // fit because the saved GraphStateData lookup misses.
+            let id_for_graph = id_for_graph_base.with(version);
 
             frost_graph::show_with_anchor(
                 inner_ui,
                 state,
                 backend,
                 size,
-                // Cursor-anchor the wheel zoom by nudging snarl's
+                // Cursor-anchor the wheel zoom by nudging graph's
                 // saved `TSTransform.translation` by the same
                 // sub-points delta `node_view::show_with_anchor`
-                // computes — applied here BEFORE the snarl widget
-                // runs in the body callback below, so snarl's
-                // first `SnarlState::load` of this frame picks up
+                // computes — applied here BEFORE the graph widget
+                // runs in the body callback below, so graph's
+                // first `GraphState::load` of this frame picks up
                 // the updated translation and the scene point
                 // under the cursor stays under the cursor.
                 |sub_ctx, delta| {
-                    frost_graph::SnarlState::nudge_saved_translation(
-                        sub_ctx, id_for_snarl, delta,
+                    frost_graph::GraphState::nudge_saved_translation(
+                        sub_ctx, id_for_graph, delta,
                     );
                 },
                 |sub_ui| {
-                    SnarlWidget::new()
-                        .id(id_for_snarl)
-                        .style(frost_snarl_style(accent))
+                    GraphWidget::new()
+                        .id(id_for_graph)
+                        .style(frost_node_graph_style(accent))
                         .min_size(size)
-                        .show(snarl, viewer, sub_ui);
+                        .show(graph, viewer, sub_ui);
                 },
             );
         },

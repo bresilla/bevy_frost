@@ -17,7 +17,7 @@
 //!
 //! Legacy paths `extras::maximize` (now [`crate::embed`]),
 //! `extras::node_view` (now [`frost_graph::node_view`]),
-//! `extras::snarl` / `extras::code_editor` (now the contents of
+//! `extras::vendored` / `extras::code_editor` (now the contents of
 //! the two standalone crates) are kept as re-exports under
 //! `#[doc(hidden)]` so existing imports keep compiling.
 

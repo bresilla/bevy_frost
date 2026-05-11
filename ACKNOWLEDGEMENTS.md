@@ -10,14 +10,14 @@ Per-crate acknowledgements:
 
 - [`core_crates/core/ACKNOWLEDGEMENTS.md`](core_crates/core/ACKNOWLEDGEMENTS.md)
   — bundled fonts (Iosevka) and other assets used by `frost_core`.
-- [`core_crates/graph/ACKNOWLEDGEMENTS.md`](core_crates/graph/ACKNOWLEDGEMENTS.md)
+- [`core_crates/modules/graph/ACKNOWLEDGEMENTS.md`](core_crates/modules/graph/ACKNOWLEDGEMENTS.md)
   — vendored `egui-snarl` used by `frost_graph`.
-- [`core_crates/code/ACKNOWLEDGEMENTS.md`](core_crates/code/ACKNOWLEDGEMENTS.md)
+- [`core_crates/modules/code/ACKNOWLEDGEMENTS.md`](core_crates/modules/code/ACKNOWLEDGEMENTS.md)
   — vendored `egui_code_editor` used by `frost_code`.
 
 ---
 
-## `core_crates/graph/src/snarl/`
+## `core_crates/modules/graph/src/vendored/`
 
 Derived from **egui-snarl** v0.9.0 — a node-graph widget for
 `egui`.
@@ -26,12 +26,12 @@ Derived from **egui-snarl** v0.9.0 — a node-graph widget for
 - Author: [@zakarumych](https://github.com/zakarumych)
 - License: MIT OR Apache-2.0
 - License files (verbatim copies):
-  - [`core_crates/graph/src/snarl/LICENSE-MIT`](core_crates/graph/src/snarl/LICENSE-MIT)
-  - [`core_crates/graph/src/snarl/LICENSE-APACHE`](core_crates/graph/src/snarl/LICENSE-APACHE)
+  - [`core_crates/modules/graph/src/vendored/LICENSE-MIT`](core_crates/modules/graph/src/vendored/LICENSE-MIT)
+  - [`core_crates/modules/graph/src/vendored/LICENSE-APACHE`](core_crates/modules/graph/src/vendored/LICENSE-APACHE)
 
 ---
 
-## `core_crates/code/src/vendored/`
+## `core_crates/modules/code/src/vendored/`
 
 Derived from **egui_code_editor** v0.2.21 — a syntax-highlighting
 multi-line text editor for `egui`.
@@ -41,7 +41,7 @@ multi-line text editor for `egui`.
   ([@p4ymak](https://github.com/p4ymak))
 - License: MIT
 - License file (verbatim copy):
-  - [`core_crates/code/src/vendored/LICENSE`](core_crates/code/src/vendored/LICENSE)
+  - [`core_crates/modules/code/src/vendored/LICENSE`](core_crates/modules/code/src/vendored/LICENSE)
 
 ---
 

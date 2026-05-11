@@ -1,8 +1,8 @@
 use egui::{Color32, Painter, Rect, Shape, Stroke, Style, Vec2, epaint::PathShape, pos2, vec2};
 
-use crate::snarl::{InPinId, OutPinId};
+use crate::vendored::{InPinId, OutPinId};
 
-use super::{SnarlStyle, WireStyle};
+use super::{GraphStyle, WireStyle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AnyPin {
@@ -34,7 +34,7 @@ pub struct PinWireInfo {
 }
 
 /// Uses `Painter` to draw a pin.
-pub trait SnarlPin {
+pub trait NodePin {
     /// Calculates pin Rect from the given parameters.
     fn pin_rect(&self, x: f32, y0: f32, y1: f32, size: f32) -> Rect {
         // Center vertically by default.
@@ -53,7 +53,7 @@ pub trait SnarlPin {
     #[must_use]
     fn draw(
         self,
-        snarl_style: &SnarlStyle,
+        graph_style: &GraphStyle,
         style: &Style,
         rect: Rect,
         painter: &Painter,
@@ -79,7 +79,7 @@ pub enum PinShape {
     Star,
 }
 
-/// Information about a pin returned by `SnarlViewer::show_input` and `SnarlViewer::show_output`.
+/// Information about a pin returned by `NodeViewer::show_input` and `NodeViewer::show_output`.
 ///
 /// All fields are optional.
 /// If a field is `None`, the default value is used derived from the graph style.
@@ -179,21 +179,21 @@ impl PinInfo {
 
     /// Returns the shape of the pin.
     #[must_use]
-    pub fn get_shape(&self, snarl_style: &SnarlStyle) -> PinShape {
-        self.shape.unwrap_or_else(|| snarl_style.get_pin_shape())
+    pub fn get_shape(&self, graph_style: &GraphStyle) -> PinShape {
+        self.shape.unwrap_or_else(|| graph_style.get_pin_shape())
     }
 
     /// Returns fill color of the pin.
     #[must_use]
-    pub fn get_fill(&self, snarl_style: &SnarlStyle, style: &Style) -> Color32 {
-        self.fill.unwrap_or_else(|| snarl_style.get_pin_fill(style))
+    pub fn get_fill(&self, graph_style: &GraphStyle, style: &Style) -> Color32 {
+        self.fill.unwrap_or_else(|| graph_style.get_pin_fill(style))
     }
 
     /// Returns outline stroke of the pin.
     #[must_use]
-    pub fn get_stroke(&self, snarl_style: &SnarlStyle, style: &Style) -> Stroke {
+    pub fn get_stroke(&self, graph_style: &GraphStyle, style: &Style) -> Stroke {
         self.stroke
-            .unwrap_or_else(|| snarl_style.get_pin_stroke(style))
+            .unwrap_or_else(|| graph_style.get_pin_stroke(style))
     }
 
     /// Draws the pin and returns color.
@@ -202,14 +202,14 @@ impl PinInfo {
     #[must_use]
     pub fn draw(
         &self,
-        snarl_style: &SnarlStyle,
+        graph_style: &GraphStyle,
         style: &Style,
         rect: Rect,
         painter: &Painter,
     ) -> PinWireInfo {
-        let shape = self.get_shape(snarl_style);
-        let fill = self.get_fill(snarl_style, style);
-        let stroke = self.get_stroke(snarl_style, style);
+        let shape = self.get_shape(graph_style);
+        let fill = self.get_fill(graph_style, style);
+        let stroke = self.get_stroke(graph_style, style);
 
         // Pin glow — 4-layer fake bloom under the crisp pin.
         // Each layer is a wider, alpha-reduced copy of the same
@@ -217,7 +217,7 @@ impl PinInfo {
         // smooth halo with no visible ring boundaries. Sizes
         // halved vs the earlier two-pass version so the halo
         // hugs the pin instead of bleeding into the row label.
-        let glow = snarl_style.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5);
+        let glow = graph_style.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5);
         if glow > 0.0 {
             // (expand_factor_of_width, alpha_factor) per layer,
             // outermost first.
@@ -242,20 +242,20 @@ impl PinInfo {
             color: self.wire_color.unwrap_or(fill),
             style: self
                 .wire_style
-                .unwrap_or_else(|| snarl_style.get_wire_style()),
+                .unwrap_or_else(|| graph_style.get_wire_style()),
         }
     }
 }
 
-impl SnarlPin for PinInfo {
+impl NodePin for PinInfo {
     fn draw(
         self,
-        snarl_style: &SnarlStyle,
+        graph_style: &GraphStyle,
         style: &Style,
         rect: Rect,
         painter: &Painter,
     ) -> PinWireInfo {
-        Self::draw(&self, snarl_style, style, rect, painter)
+        Self::draw(&self, graph_style, style, rect, painter)
     }
 }
 

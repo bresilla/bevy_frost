@@ -68,9 +68,9 @@ pub mod prelude {
 ///     let render_state = frame.wgpu_render_state().expect("wgpu");
 ///     let mut backend = egui_frost::EframeNodeViewBackend::new(render_state);
 ///     egui::CentralPanel::default().show(ctx, |ui| {
-///         frost_core::extras::graph::frost_snarl(
+///         frost_core::extras::graph::frost_node_graph(
 ///             ui, &mut self.node_view_state, &mut backend,
-///             &mut self.snarl, &mut self.viewer,
+///             &mut self.graph, &mut self.viewer,
 ///             accent, ui.available_size(),
 ///         );
 ///     });

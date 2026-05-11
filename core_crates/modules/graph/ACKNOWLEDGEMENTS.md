@@ -5,17 +5,17 @@ node-graph implementation in-place without upstream round-trips.
 The upstream license files are kept verbatim alongside the
 vendored sources.
 
-## Vendored sources (`src/snarl/`)
+## Vendored sources (`src/vendored/`)
 
 ### `egui-snarl` 0.9.0
 
-- **Path:** `src/snarl/`
+- **Path:** `src/vendored/`
 - **Upstream:** <https://github.com/zakarumych/egui-snarl>
 - **Author:** [@zakarumych](https://github.com/zakarumych)
 - **License:** MIT OR Apache-2.0
 - **License files (verbatim copies):**
-  - [`src/snarl/LICENSE-MIT`](src/snarl/LICENSE-MIT)
-  - [`src/snarl/LICENSE-APACHE`](src/snarl/LICENSE-APACHE)
+  - [`src/vendored/LICENSE-MIT`](src/vendored/LICENSE-MIT)
+  - [`src/vendored/LICENSE-APACHE`](src/vendored/LICENSE-APACHE)
 - **Why vendored:** we expect to keep iterating on node visuals,
   pin geometry, header/halo rendering and the sharp-zoom
   pipeline. Vendoring keeps the editing surface in this repo.

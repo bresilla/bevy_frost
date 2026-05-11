@@ -8,7 +8,7 @@
 //!
 //! ## Why
 //!
-//! `egui_snarl` (and `egui_node_graph`) scale the entire layout —
+//! `egui_graph` (and `egui_node_graph`) scale the entire layout —
 //! positions, font sizes, stroke widths — by a `zoom` factor while
 //! rendering inside the parent egui context. Because
 //! `pixels_per_point` is per-context (not per-widget), shape edges
@@ -31,7 +31,7 @@
 //!    `wgpu::Queue` + the parent egui renderer hooks.
 //! 2. Each frame the host calls a render function that takes the
 //!    state + backend + viewer (e.g.
-//!    `bevy_frost::extras::frost_snarl`) inside an `egui::Ui`.
+//!    `bevy_frost::extras::frost_node_graph`) inside an `egui::Ui`.
 //! 3. That function configures input for the secondary context
 //!    (forwarding pointer + key events from the parent), runs the
 //!    secondary context's frame, tessellates, asks the backend to
@@ -47,7 +47,7 @@ use egui::{ClippedPrimitive, Color32, Rect, Sense, Ui, Vec2};
 ///
 /// `zoom` is the user-facing camera state — natural convention:
 /// `1.0` = no zoom, `2.0` = zoomed in 2×, `0.5` = zoomed out 2×.
-/// Pan is owned by the embedded `SnarlWidget`'s own
+/// Pan is owned by the embedded `GraphWidget`'s own
 /// `TSTransform.translation`; we drive only the zoom axis from
 /// outside the widget (see `node_view::show` for why).
 pub struct NodeViewState {
@@ -57,13 +57,13 @@ pub struct NodeViewState {
     /// to compensate for zoom independently of the host's UI).
     sub_ctx: egui::Context,
     /// Reserved for future use — currently unread. The visible pan
-    /// lives in `SnarlWidget`'s `TSTransform.translation` instead.
+    /// lives in `GraphWidget`'s `TSTransform.translation` instead.
     pan: Vec2,
     /// Visible zoom factor — the value driving sub_ppp +
     /// screen_rect each frame. Smoothly chases `zoom_target` so a
     /// wheel notch produces an animated zoom rather than a jump
     /// (the discrete jump version felt janky because each notch
-    /// also nudged snarl's translation by a one-shot delta;
+    /// also nudged graph's translation by a one-shot delta;
     /// interpolating the zoom and applying a translation delta
     /// per smoothing frame instead makes the cursor anchor and
     /// the visual zoom move in lockstep at sub-frame granularity).
@@ -157,7 +157,7 @@ impl NodeViewState {
     /// Clamped to `[0.1, 10.0]` so the user can't zoom into a
     /// degenerate state. Sets BOTH the visible zoom and the
     /// smoothing target (so external callers — e.g. the
-    /// resize-fit reset in `frost_snarl_with_opts` — snap
+    /// resize-fit reset in `frost_node_graph_with_opts` — snap
     /// immediately rather than animating to the new value).
     pub fn set_zoom(&mut self, z: f32) {
         let clamped = z.clamp(0.1, 10.0);
@@ -403,7 +403,7 @@ fn render_into_target(
 ///
 /// `body` runs INSIDE the secondary context's central panel — it's
 /// where the host renders the actual graph widget (e.g.
-/// `SnarlWidget::show(snarl, viewer, ui)`).
+/// `GraphWidget::show(graph, viewer, ui)`).
 pub fn show<R>(
     parent_ui: &mut Ui,
     state: &mut NodeViewState,
@@ -417,7 +417,7 @@ pub fn show<R>(
 /// Variant of [`show`] with a per-zoom-step anchor callback —
 /// invoked AFTER `state.zoom` updates from a wheel event but
 /// BEFORE the body runs, so the embedded widget can shift its
-/// own pan (e.g. `SnarlWidget`'s `TSTransform.translation`) to
+/// own pan (e.g. `GraphWidget`'s `TSTransform.translation`) to
 /// keep the cursor-under content stationary across the zoom.
 ///
 /// Args passed to `on_zoom_anchor`:
@@ -461,10 +461,10 @@ pub fn show_with_anchor<R>(
     //
     // `state.zoom` is our visible zoom factor (1.0 = no zoom, 2.0
     // = zoomed in 2×). We DRIVE it from the outside instead of
-    // letting snarl's `TSTransform` scale geometry, because a
+    // letting graph's `TSTransform` scale geometry, because a
     // bitmap glyph atlas stretched past 1× is the source of the
-    // bilinear blur we're trying to avoid. Snarl's scaling is
-    // locked to 1.0 (see `frost_snarl_style`), so its
+    // bilinear blur we're trying to avoid. Graph's scaling is
+    // locked to 1.0 (see `frost_node_graph_style`), so its
     // `register_pan_and_zoom` only updates translation — perfect
     // for drag-pan, but we own the zoom.
     //
@@ -519,7 +519,7 @@ pub fn show_with_anchor<R>(
             .any(|e| matches!(e, egui::Event::PointerMoved(_)));
         // Strip mouse-wheel Line/Page events into a zoom-line
         // accumulator; leave touchpad Point events (they pass
-        // through as snarl pan via smooth_scroll_delta).
+        // through as graph pan via smooth_scroll_delta).
         let mut wheel_zoom_lines = 0.0_f32;
         parent_events.retain(|e| match e {
             egui::Event::MouseWheel {
@@ -607,7 +607,7 @@ pub fn show_with_anchor<R>(
     if pointer_over_sub {
         // `events_for_sub` was pre-extracted above (with mouse-
         // wheel Line/Page events stripped — those drive zoom
-        // smoothing, not snarl pan). Translate position-carrying
+        // smoothing, not graph pan). Translate position-carrying
         // events into sub-context space and forward.
         for ev in events_for_sub.iter_mut() {
             translate_event_to_sub(ev, rect, pos_scale);
@@ -615,7 +615,7 @@ pub fn show_with_anchor<R>(
         raw.events.extend(events_for_sub);
 
         // Only synthesise a `PointerMoved` when this frame had no
-        // real motion event of its own. Without this, egui-snarl
+        // real motion event of its own. Without this, egui-graph
         // would see `hover_pos = None` on idle frames and node
         // hover / click would go dead the moment the cursor stops.
         // With this, idle frames re-affirm the cursor position;

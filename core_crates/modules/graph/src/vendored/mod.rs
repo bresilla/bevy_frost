@@ -1,15 +1,15 @@
 //!
-//! # egui-snarl
+//! # egui-graph
 //!
 //! Provides a node-graph container for egui.
 //!
 //!
 
-// `non_ascii_idents` was here in the upstream snarl crate but is
+// `non_ascii_idents` was here in the upstream graph crate but is
 // ignored at module level — moved to a vendored sub-module, the
 // only place to opt into it is the workspace root, which is out
 // of scope. Drop it from the list to silence the lint warning.
-// Upstream snarl shipped strict `#![deny(missing_docs, …)]` at the
+// Upstream graph shipped strict `#![deny(missing_docs, …)]` at the
 // module root. Vendored here, those denies break our build whenever
 // a contributor lands a `pub` item without a doc comment. Downgraded
 // to warnings so the crate stays compiling.
@@ -24,9 +24,9 @@ use std::ops::{Index, IndexMut};
 use egui::{Pos2, ahash::HashSet};
 use slab::Slab;
 
-impl<T> Default for Snarl<T> {
+impl<T> Default for Graph<T> {
     fn default() -> Self {
-        Snarl::new()
+        Graph::new()
     }
 }
 
@@ -200,44 +200,44 @@ impl Wires {
     }
 }
 
-/// Snarl is generic node-graph container.
+/// Graph is generic node-graph container.
 ///
 /// It holds graph state - positioned nodes and wires between their pins.
-/// It can be rendered using [`Snarl::show`].
+/// It can be rendered using [`Graph::show`].
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Snarl<T> {
+pub struct Graph<T> {
     // #[cfg_attr(feature = "serde", serde(with = "serde_nodes"))]
     nodes: Slab<Node<T>>,
     wires: Wires,
 }
 
-impl<T> Snarl<T> {
-    /// Create a new empty Snarl.
+impl<T> Graph<T> {
+    /// Create a new empty Graph.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use egui_snarl::Snarl;
-    /// let snarl = Snarl::<()>::new();
+    /// # use egui_graph::Graph;
+    /// let graph = Graph::<()>::new();
     /// ```
     #[must_use]
     pub fn new() -> Self {
-        Snarl {
+        Graph {
             nodes: Slab::new(),
             wires: Wires::new(),
         }
     }
 
-    /// Adds a node to the Snarl.
+    /// Adds a node to the Graph.
     /// Returns the index of the node.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use egui_snarl::Snarl;
-    /// let mut snarl = Snarl::<()>::new();
-    /// snarl.insert_node(egui::pos2(0.0, 0.0), ());
+    /// # use egui_graph::Graph;
+    /// let mut graph = Graph::<()>::new();
+    /// graph.insert_node(egui::pos2(0.0, 0.0), ());
     /// ```
     pub fn insert_node(&mut self, pos: egui::Pos2, node: T) -> NodeId {
         let idx = self.nodes.insert(Node {
@@ -249,15 +249,15 @@ impl<T> Snarl<T> {
         NodeId(idx)
     }
 
-    /// Adds a node to the Snarl in collapsed state.
+    /// Adds a node to the Graph in collapsed state.
     /// Returns the index of the node.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use egui_snarl::Snarl;
-    /// let mut snarl = Snarl::<()>::new();
-    /// snarl.insert_node_collapsed(egui::pos2(0.0, 0.0), ());
+    /// # use egui_graph::Graph;
+    /// let mut graph = Graph::<()>::new();
+    /// graph.insert_node_collapsed(egui::pos2(0.0, 0.0), ());
     /// ```
     pub fn insert_node_collapsed(&mut self, pos: egui::Pos2, node: T) -> NodeId {
         let idx = self.nodes.insert(Node {
@@ -279,7 +279,7 @@ impl<T> Snarl<T> {
         self.nodes[node.0].open = open;
     }
 
-    /// Removes a node from the Snarl.
+    /// Removes a node from the Graph.
     /// Returns the node if it was removed.
     ///
     /// # Panics
@@ -289,10 +289,10 @@ impl<T> Snarl<T> {
     /// # Examples
     ///
     /// ```
-    /// # use egui_snarl::Snarl;
-    /// let mut snarl = Snarl::<()>::new();
-    /// let node = snarl.insert_node(egui::pos2(0.0, 0.0), ());
-    /// snarl.remove_node(node);
+    /// # use egui_graph::Graph;
+    /// let mut graph = Graph::<()>::new();
+    /// let node = graph.insert_node(egui::pos2(0.0, 0.0), ());
+    /// graph.remove_node(node);
     /// ```
     #[track_caller]
     pub fn remove_node(&mut self, idx: NodeId) -> T {
@@ -491,7 +491,7 @@ impl<T> Snarl<T> {
     }
 }
 
-impl<T> Index<NodeId> for Snarl<T> {
+impl<T> Index<NodeId> for Graph<T> {
     type Output = T;
 
     #[inline]
@@ -501,7 +501,7 @@ impl<T> Index<NodeId> for Snarl<T> {
     }
 }
 
-impl<T> IndexMut<NodeId> for Snarl<T> {
+impl<T> IndexMut<NodeId> for Graph<T> {
     #[inline]
     #[track_caller]
     fn index_mut(&mut self, idx: NodeId) -> &mut Self::Output {
@@ -818,19 +818,19 @@ pub struct InPin {
 }
 
 impl OutPin {
-    fn new<T>(snarl: &Snarl<T>, pin: OutPinId) -> Self {
+    fn new<T>(graph: &Graph<T>, pin: OutPinId) -> Self {
         OutPin {
             id: pin,
-            remotes: snarl.wires.wired_inputs(pin).collect(),
+            remotes: graph.wires.wired_inputs(pin).collect(),
         }
     }
 }
 
 impl InPin {
-    fn new<T>(snarl: &Snarl<T>, pin: InPinId) -> Self {
+    fn new<T>(graph: &Graph<T>, pin: InPinId) -> Self {
         InPin {
             id: pin,
-            remotes: snarl.wires.wired_outputs(pin).collect(),
+            remotes: graph.wires.wired_outputs(pin).collect(),
         }
     }
 }

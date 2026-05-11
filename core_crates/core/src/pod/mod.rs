@@ -1223,7 +1223,7 @@ impl Pod {
                 // ScrollArea here makes those widgets fight the bar:
                 // their reported size oscillates as the bar appears /
                 // disappears, triggering their own re-layout (e.g.
-                // snarl's `initial placing` request_discard spam),
+                // graph's `initial placing` request_discard spam),
                 // which causes the pod to re-measure → loop. Plain
                 // `paint_widgets` inside the clipped `child` is
                 // exactly what fill pods want: hard clip, no

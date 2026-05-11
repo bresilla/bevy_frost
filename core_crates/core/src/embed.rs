@@ -30,7 +30,7 @@
 //!
 //! The chip's Area runs at `Order::Tooltip` so it always paints
 //! and intercepts clicks above the wrapped widget's shapes, even
-//! when the widget (like `egui-snarl`) draws interactive content
+//! when the widget (like `egui-graph`) draws interactive content
 //! across its entire rect.
 
 use std::hash::Hash;
@@ -275,7 +275,7 @@ pub fn maximizable_with_opts(
 /// `Order::Tooltip` Area so it paints (and intercepts clicks)
 /// above the wrapped widget's own shapes — Areas at the same
 /// `Foreground` order would get shadowed by canvas widgets like
-/// the snarl graph that register their own foreground sub-layers.
+/// the graph graph that register their own foreground sub-layers.
 fn max_button_overlay(
     ctx: &egui::Context,
     pos: egui::Pos2,

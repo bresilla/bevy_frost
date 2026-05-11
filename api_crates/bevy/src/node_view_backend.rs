@@ -7,7 +7,7 @@
 //!
 //! ## Pipeline
 //!
-//! 1. The `frost_snarl` widget runs in main world. corekit
+//! 1. The `frost_node_graph` widget runs in main world. corekit
 //!    allocates a wgpu render target via the backend's
 //!    `wgpu()` (= Bevy's `RenderDevice` device clone), runs its
 //!    secondary egui context, tessellates, and paints the result
@@ -156,7 +156,7 @@ fn copy_node_view_textures(
 
 /// Backend instance. Construct fresh each frame from a Bevy
 /// system that has the necessary resources, then pass to
-/// `frost_snarl`.
+/// `frost_node_graph`.
 pub struct BevyNodeViewBackend<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,

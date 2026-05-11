@@ -32,8 +32,8 @@ use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // so egui_frost can reach them without any Bevy dep.
 use frost_core::extras::code::{frost_code_editor, Syntax};
 use frost_core::extras::graph::{
-    frost_snarl, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Snarl, SnarlPin,
-    SnarlViewer,
+    frost_node_graph, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Graph, NodePin,
+    NodeViewer,
 };
 use frost_core::container::Normal as FrostNormal;
 use egui_frost::EframeNodeViewBackend;
@@ -143,17 +143,17 @@ struct FrostApp {
     /// Persistent secondary-context state for the node graph
     /// (sub egui::Context, pan, zoom, wgpu render target).
     /// Owns wgpu resources, hence App-owned and passed by &mut
-    /// each frame into `frost_snarl`.
+    /// each frame into `frost_node_graph`.
     node_view: NodeViewState,
-    /// The actual node-graph data — held on the App so the snarl
+    /// The actual node-graph data — held on the App so the graph
     /// renderer can mutate it via &mut. Previously stashed in
     /// egui ctx data, but the v2 path needs a non-`'static`
     /// closure body to thread `&mut self.node_view`.
-    snarl: Snarl<GraphNode>,
+    graph: Graph<GraphNode>,
     /// The viewer (=node-painter trait impl) is a unit struct; it
-    /// could live anywhere but pairing it with the snarl on App
+    /// could live anywhere but pairing it with the graph on App
     /// keeps the callsite tidy.
-    viewer: GraphViewer,
+    viewer: DemoViewer,
 }
 
 impl Default for FrostApp {
@@ -169,8 +169,8 @@ impl Default for FrostApp {
             pastel: PastelToggle::default(),
             tint: TintRgba::default(),
             node_view: NodeViewState::new(),
-            snarl: default_graph(),
-            viewer: GraphViewer,
+            graph: default_graph(),
+            viewer: DemoViewer,
         }
     }
 }
@@ -210,11 +210,11 @@ impl eframe::App for FrostApp {
         // the whole frame.
         let render_state = frame
             .wgpu_render_state()
-            .expect("wgpu backend required for frost_snarl")
+            .expect("wgpu backend required for frost_node_graph")
             .clone();
         let FrostApp {
             accent, glass, open, placement, drag, family, mode, pastel, tint,
-            node_view, snarl, viewer,
+            node_view, graph, viewer,
         } = self;
         let mut active_theme = match (family.0, mode.0) {
         (0, 0) => frost_core::style::theme_pro(Mode::Dark),
@@ -290,7 +290,7 @@ impl eframe::App for FrostApp {
         // sharp-zoom node graph. Keep them &mut here so the
         // PANE_EDITOR branch can pass them down to `editor_pane`.
         let node_view_ref = &mut *node_view;
-        let snarl_ref = &mut *snarl;
+        let graph_ref = &mut *graph;
         let viewer_ref = &mut *viewer;
         let render_state_ref = &render_state;
         Pane2::new(button_id, label, anchor, accent_col)
@@ -301,7 +301,7 @@ impl eframe::App for FrostApp {
                 PANE_SCENE      => scene_pane(body_ui, anchor, accent_col),
                 PANE_EDITOR     => editor_pane(
                     body_ui, anchor, accent_col,
-                    node_view_ref, snarl_ref, viewer_ref, render_state_ref,
+                    node_view_ref, graph_ref, viewer_ref, render_state_ref,
                 ),
                 PANE_THEME      => theme_pane(
                     body_ui, anchor, accent_col,
@@ -866,7 +866,7 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                             frost_core::pod::TagItem::new("ribbons"),
                             frost_core::pod::TagItem::new("panes"),
                             frost_core::pod::TagItem::new("pods"),
-                            frost_core::pod::TagItem::new("snarl-graph"),
+                            frost_core::pod::TagItem::new("graph-graph"),
                             frost_core::pod::TagItem::new("code-editor"),
                             frost_core::pod::TagItem::new("theme/PRO"),
                             frost_core::pod::TagItem::new("theme/GAME"),
@@ -944,8 +944,8 @@ fn editor_pane(
     anchor: PaneAnchor,
     accent: egui::Color32,
     node_view: &mut NodeViewState,
-    snarl: &mut Snarl<GraphNode>,
-    viewer: &mut GraphViewer,
+    graph: &mut Graph<GraphNode>,
+    viewer: &mut DemoViewer,
     render_state: &egui_wgpu::RenderState,
 ) {
     let pane_id = egui::Id::new(PANE_EDITOR);
@@ -955,9 +955,9 @@ fn editor_pane(
     // ── Node graph container ──
     //
     // Bypass `render_containers` for the graph specifically: it
-    // needs `frost_snarl`, which drives a SECONDARY egui
+    // needs `frost_node_graph`, which drives a SECONDARY egui
     // context + wgpu texture for sharp-zoom rendering. That
-    // requires `&mut NodeViewState`, `&mut Snarl`, `&mut Viewer`,
+    // requires `&mut NodeViewState`, `&mut Graph`, `&mut Viewer`,
     // and a `&RenderState` borrow — none of which fit through
     // `with_custom_units`'s `'static` closure. Render directly
     // via `Normal::show_raw`, whose body callback is plain
@@ -967,8 +967,8 @@ fn editor_pane(
         .icon("flowchart")
         .show_raw(body, |graph_ui| {
             let avail = graph_ui.available_size_before_wrap();
-            frost_snarl(
-                graph_ui, node_view, &mut backend, snarl, viewer, accent, avail,
+            frost_node_graph(
+                graph_ui, node_view, &mut backend, graph, viewer, accent, avail,
             );
         });
 
@@ -1036,16 +1036,16 @@ impl GraphNode {
     }
 }
 
-fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
-    match snarl.get_node(pin.id.node) {
+fn eval_output(graph: &Graph<GraphNode>, pin: &OutPin) -> f64 {
+    match graph.get_node(pin.id.node) {
         Some(GraphNode::Number(v)) => *v,
         Some(GraphNode::Add) => {
             let mut sum = 0.0;
             for i in 0..2 {
-                let in_pin = snarl.in_pin(InPinId { node: pin.id.node, input: i });
+                let in_pin = graph.in_pin(InPinId { node: pin.id.node, input: i });
                 for remote in &in_pin.remotes {
-                    let out_pin = snarl.out_pin(*remote);
-                    sum += eval_output(snarl, &out_pin);
+                    let out_pin = graph.out_pin(*remote);
+                    sum += eval_output(graph, &out_pin);
                 }
             }
             sum
@@ -1054,71 +1054,71 @@ fn eval_output(snarl: &Snarl<GraphNode>, pin: &OutPin) -> f64 {
     }
 }
 
-fn eval_input(snarl: &Snarl<GraphNode>, pin: &InPin) -> f64 {
+fn eval_input(graph: &Graph<GraphNode>, pin: &InPin) -> f64 {
     pin.remotes
         .iter()
-        .map(|r| eval_output(snarl, &snarl.out_pin(*r)))
+        .map(|r| eval_output(graph, &graph.out_pin(*r)))
         .sum()
 }
 
 #[derive(Default)]
-struct GraphViewer;
+struct DemoViewer;
 
-impl SnarlViewer<GraphNode> for GraphViewer {
+impl NodeViewer<GraphNode> for DemoViewer {
     fn title(&mut self, n: &GraphNode) -> String { n.title().into() }
     fn inputs(&mut self, n: &GraphNode) -> usize { n.inputs() }
     fn outputs(&mut self, n: &GraphNode) -> usize { n.outputs() }
-    fn show_input(&mut self, pin: &InPin, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>)
-        -> impl SnarlPin + 'static
+    fn show_input(&mut self, pin: &InPin, ui: &mut egui::Ui, graph: &mut Graph<GraphNode>)
+        -> impl NodePin + 'static
     {
-        match snarl.get_node(pin.id.node) {
+        match graph.get_node(pin.id.node) {
             Some(GraphNode::Add) => {
                 let name = if pin.id.input == 0 { "a" } else { "b" };
                 if pin.remotes.is_empty() {
                     ui.label(format!("{name} = 0"));
                 } else {
-                    ui.label(format!("{name} = {:.2}", eval_input(snarl, pin)));
+                    ui.label(format!("{name} = {:.2}", eval_input(graph, pin)));
                 }
             }
             Some(GraphNode::Output) => {
-                let v = eval_input(snarl, pin);
+                let v = eval_input(graph, pin);
                 ui.label(format!("= {v:.3}"));
             }
             _ => {}
         }
         PinInfo::circle()
     }
-    fn show_output(&mut self, pin: &OutPin, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>)
-        -> impl SnarlPin + 'static
+    fn show_output(&mut self, pin: &OutPin, ui: &mut egui::Ui, graph: &mut Graph<GraphNode>)
+        -> impl NodePin + 'static
     {
-        if let Some(GraphNode::Number(v)) = snarl.get_node_mut(pin.id.node) {
+        if let Some(GraphNode::Number(v)) = graph.get_node_mut(pin.id.node) {
             ui.add(egui::DragValue::new(v).speed(0.05).fixed_decimals(2));
-        } else if let Some(GraphNode::Add) = snarl.get_node(pin.id.node) {
-            let v = eval_output(snarl, pin);
+        } else if let Some(GraphNode::Add) = graph.get_node(pin.id.node) {
+            let v = eval_output(graph, pin);
             ui.label(format!("= {v:.3}"));
         }
         PinInfo::circle()
     }
-    fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Snarl<GraphNode>) -> bool { true }
-    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>) {
+    fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Graph<GraphNode>) -> bool { true }
+    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut egui::Ui, graph: &mut Graph<GraphNode>) {
         ui.label("Add node");
         if ui.button("Number").clicked() {
-            snarl.insert_node(pos, GraphNode::Number(0.0));
+            graph.insert_node(pos, GraphNode::Number(0.0));
             ui.close();
         }
         if ui.button("Add").clicked() {
-            snarl.insert_node(pos, GraphNode::Add);
+            graph.insert_node(pos, GraphNode::Add);
             ui.close();
         }
         if ui.button("Output").clicked() {
-            snarl.insert_node(pos, GraphNode::Output);
+            graph.insert_node(pos, GraphNode::Output);
             ui.close();
         }
     }
 }
 
-fn default_graph() -> Snarl<GraphNode> {
-    let mut g = Snarl::new();
+fn default_graph() -> Graph<GraphNode> {
+    let mut g = Graph::new();
     let a = g.insert_node(egui::pos2(30.0, 40.0), GraphNode::Number(2.0));
     let b = g.insert_node(egui::pos2(30.0, 130.0), GraphNode::Number(3.0));
     let add = g.insert_node(egui::pos2(220.0, 80.0), GraphNode::Add);

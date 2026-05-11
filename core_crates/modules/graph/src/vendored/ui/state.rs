@@ -6,9 +6,9 @@ use egui::{
 };
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::snarl::{InPinId, NodeId, OutPinId, Snarl};
+use crate::vendored::{InPinId, NodeId, OutPinId, Graph};
 
-use super::{SnarlWidget, transform_matching_points};
+use super::{GraphWidget, transform_matching_points};
 
 pub type RowHeights = SmallVec<[f32; 8]>;
 
@@ -156,8 +156,8 @@ struct RectSelect {
     current: Pos2,
 }
 
-pub struct SnarlState {
-    /// Snarl viewport transform to global space.
+pub struct GraphState {
+    /// Graph viewport transform to global space.
     to_global: TSTransform,
 
     new_wires: Option<NewWires>,
@@ -220,14 +220,14 @@ impl SelectedNodes {
 }
 
 #[derive(Clone)]
-struct SnarlStateData {
+struct GraphStateData {
     to_global: TSTransform,
     new_wires: Option<NewWires>,
     new_wires_menu: bool,
     rect_selection: Option<RectSelect>,
 }
 
-impl SnarlStateData {
+impl GraphStateData {
     fn save(self, cx: &Context, id: Id) {
         cx.data_mut(|d| {
             d.insert_temp(id, self);
@@ -239,32 +239,32 @@ impl SnarlStateData {
     }
 }
 
-fn prune_selected_nodes<T>(selected_nodes: &mut SmallVec<[NodeId; 8]>, snarl: &Snarl<T>) -> bool {
+fn prune_selected_nodes<T>(selected_nodes: &mut SmallVec<[NodeId; 8]>, graph: &Graph<T>) -> bool {
     let old_size = selected_nodes.len();
-    selected_nodes.retain(|node| snarl.nodes.contains(node.0));
+    selected_nodes.retain(|node| graph.nodes.contains(node.0));
     old_size != selected_nodes.len()
 }
 
-impl SnarlState {
+impl GraphState {
     pub fn load<T>(
         cx: &Context,
         id: Id,
-        snarl: &Snarl<T>,
+        graph: &Graph<T>,
         ui_rect: Rect,
         min_scale: f32,
         max_scale: f32,
     ) -> Self {
-        let Some(data) = SnarlStateData::load(cx, id) else {
+        let Some(data) = GraphStateData::load(cx, id) else {
             cx.request_discard("Initial placing");
-            return Self::initial(id, snarl, ui_rect, min_scale, max_scale);
+            return Self::initial(id, graph, ui_rect, min_scale, max_scale);
         };
 
         let mut selected_nodes = SelectedNodes::load(cx, id).0;
-        let dirty = prune_selected_nodes(&mut selected_nodes, snarl);
+        let dirty = prune_selected_nodes(&mut selected_nodes, graph);
 
         let draw_order = DrawOrder::load(cx, id).0;
 
-        SnarlState {
+        GraphState {
             to_global: data.to_global,
             new_wires: data.new_wires,
             new_wires_menu: data.new_wires_menu,
@@ -276,10 +276,10 @@ impl SnarlState {
         }
     }
 
-    fn initial<T>(id: Id, snarl: &Snarl<T>, ui_rect: Rect, min_scale: f32, max_scale: f32) -> Self {
+    fn initial<T>(id: Id, graph: &Graph<T>, ui_rect: Rect, min_scale: f32, max_scale: f32) -> Self {
         let mut bb = Rect::NOTHING;
 
-        for (_, node) in &snarl.nodes {
+        for (_, node) in &graph.nodes {
             bb.extend_with(node.pos);
         }
 
@@ -296,7 +296,7 @@ impl SnarlState {
 
         let to_global = transform_matching_points(bb.center(), ui_rect.center(), scaling);
 
-        SnarlState {
+        GraphState {
             to_global,
             new_wires: None,
             new_wires_menu: false,
@@ -309,11 +309,11 @@ impl SnarlState {
     }
 
     #[inline(always)]
-    pub fn store<T>(mut self, snarl: &Snarl<T>, cx: &Context) {
-        self.dirty |= prune_selected_nodes(&mut self.selected_nodes, snarl);
+    pub fn store<T>(mut self, graph: &Graph<T>, cx: &Context) {
+        self.dirty |= prune_selected_nodes(&mut self.selected_nodes, graph);
 
         if self.dirty {
-            let data = SnarlStateData {
+            let data = GraphStateData {
                 to_global: self.to_global,
                 new_wires: self.new_wires,
                 new_wires_menu: self.new_wires_menu,
@@ -340,18 +340,18 @@ impl SnarlState {
     }
 
     /// Add `delta` (in sub-context points) to the saved
-    /// `TSTransform.translation` of the snarl with the given `id`,
-    /// directly via context data — no live `SnarlState` instance
+    /// `TSTransform.translation` of the graph with the given `id`,
+    /// directly via context data — no live `GraphState` instance
     /// required.
     ///
     /// Used by the outside-in zoom path in `node_view::show` to
     /// keep the scene point under the cursor stationary across a
     /// `zoom` step. The widget reads the saved `to_global` on the
-    /// next `SnarlState::load`, so writing here BEFORE
-    /// `SnarlWidget::show` runs makes the new translation take
+    /// next `GraphState::load`, so writing here BEFORE
+    /// `GraphWidget::show` runs makes the new translation take
     /// effect this frame.
     pub fn nudge_saved_translation(cx: &Context, id: Id, delta: egui::Vec2) {
-        let Some(mut data) = SnarlStateData::load(cx, id) else { return };
+        let Some(mut data) = GraphStateData::load(cx, id) else { return };
         data.to_global.translation += delta;
         data.save(cx, id);
     }
@@ -494,8 +494,8 @@ impl SnarlState {
         self.new_wires_menu = true;
     }
 
-    pub(crate) fn update_draw_order<T>(&mut self, snarl: &Snarl<T>) -> Vec<NodeId> {
-        let mut node_ids = snarl
+    pub(crate) fn update_draw_order<T>(&mut self, graph: &Graph<T>) -> Vec<NodeId> {
+        let mut node_ids = graph
             .nodes
             .iter()
             .map(|(id, _)| NodeId(id))
@@ -606,25 +606,25 @@ impl SnarlState {
     }
 }
 
-impl SnarlWidget {
-    /// Returns list of nodes selected in the UI for the `SnarlWidget` with same id.
+impl GraphWidget {
+    /// Returns list of nodes selected in the UI for the `GraphWidget` with same id.
     ///
-    /// Use same `Ui` instance that was used in [`SnarlWidget::show`].
+    /// Use same `Ui` instance that was used in [`GraphWidget::show`].
     #[must_use]
     #[inline]
     pub fn get_selected_nodes(self, ui: &Ui) -> Vec<NodeId> {
         self.get_selected_nodes_at(ui.id(), ui.ctx())
     }
 
-    /// Returns list of nodes selected in the UI for the `SnarlWidget` with same id.
+    /// Returns list of nodes selected in the UI for the `GraphWidget` with same id.
     ///
-    /// `ui_id` must be the Id of the `Ui` instance that was used in [`SnarlWidget::show`].
+    /// `ui_id` must be the Id of the `Ui` instance that was used in [`GraphWidget::show`].
     #[must_use]
     #[inline]
     pub fn get_selected_nodes_at(self, ui_id: Id, ctx: &Context) -> Vec<NodeId> {
-        let snarl_id = self.get_id(ui_id);
+        let graph_id = self.get_id(ui_id);
 
-        ctx.data(|d| d.get_temp::<SelectedNodes>(snarl_id).unwrap_or_default().0)
+        ctx.data(|d| d.get_temp::<SelectedNodes>(graph_id).unwrap_or_default().0)
             .into_vec()
     }
 }

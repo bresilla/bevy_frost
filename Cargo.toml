@@ -3,9 +3,9 @@ resolver = "3"
 members = [
     "api_crates/bevy",
     "api_crates/egui",
-    "core_crates/code",
     "core_crates/core",
-    "core_crates/graph",
+    "core_crates/modules/code",
+    "core_crates/modules/graph",
 ]
 
 
@@ -45,12 +45,14 @@ bevy_egui = { version = "0.39", default-features = false }
 # theme, embed mechanism). Package id is `frost_core`, which avoids
 # shadowing Rust's std `core` in derive expansions.
 frost_core = { path = "core_crates/core", version = "0.0.1" }
-# `frost_graph` — standalone vendored egui-snarl. Usable in any
-# egui app; ships sensible defaults, no frost-theming dep.
-frost_graph = { path = "core_crates/graph", version = "0.0.1" }
+# `frost_graph` — standalone vendored node-graph crate (forked from
+# `egui-snarl`, see `core_crates/modules/graph/ACKNOWLEDGEMENTS.md`
+# for upstream attribution). Usable in any egui app; ships
+# sensible defaults, no frost-theming dep.
+frost_graph = { path = "core_crates/modules/graph", version = "0.0.1" }
 # `frost_code` — standalone vendored egui_code_editor. Usable in
 # any egui app; ships sensible defaults, no frost-theming dep.
-frost_code = { path = "core_crates/code", version = "0.0.1" }
+frost_code = { path = "core_crates/modules/code", version = "0.0.1" }
 
 # `mimalloc` — drop-in global allocator. egui's tessellator + shape
 # `Vec`s thrash the system allocator under heavy heap pressure;

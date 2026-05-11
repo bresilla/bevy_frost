@@ -5,8 +5,8 @@ own code; this file lists what's embedded and where it came from.
 The standalone host widgets the kit ships with — `frost_graph`
 (node graph) and `frost_code` (code editor) — live in their own
 crates with their own acknowledgements; see
-[`../graph/ACKNOWLEDGEMENTS.md`](../graph/ACKNOWLEDGEMENTS.md) and
-[`../code/ACKNOWLEDGEMENTS.md`](../code/ACKNOWLEDGEMENTS.md).
+[`../modules/graph/ACKNOWLEDGEMENTS.md`](../modules/graph/ACKNOWLEDGEMENTS.md) and
+[`../modules/code/ACKNOWLEDGEMENTS.md`](../modules/code/ACKNOWLEDGEMENTS.md).
 
 ## Bundled font assets (`src/fonts/`)
 

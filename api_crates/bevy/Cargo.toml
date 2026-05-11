@@ -15,15 +15,16 @@ readme = "README.md"
 # code editor) under `bevy_frost::extras::*`.
 frost_core = { workspace = true, features = ["bevy"] }
 # Direct egui dep — needed by the input-firewall plugin and the
-# `gizmo_material` shader. The vendored extras (snarl + code
-# editor) now live in corekit so their transitive deps move with
-# them — no `egui-scale`/`slab`/`smallvec` here anymore.
+# `gizmo_material` shader. The vendored extras (`frost_graph` +
+# `frost_code`) ship as standalone crates so their transitive deps
+# move with them — no `egui-scale`/`slab`/`smallvec` here anymore.
 egui = { workspace = true }
 # Used by `BevyNodeViewBackend` to expose the wgpu device / queue
 # Bevy's render world owns. Texture registration is more involved
 # than eframe's path and currently lands as a `todo!()` placeholder
 # — Bevy needs a custom RenderApp node + Image asset extract
-# pipeline before sharp-zoom snarl works on the Bevy side.
+# pipeline before sharp-zoom node-graph rendering works on the
+# Bevy side.
 wgpu = { workspace = true }
 bevy = { workspace = true, features = [
     "std",

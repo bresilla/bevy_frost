@@ -1,9 +1,9 @@
 use egui::{emath::Rot2, vec2, Painter, Rect, Style, Vec2};
 
-use super::SnarlStyle;
+use super::GraphStyle;
 
 ///Grid background pattern.
-///Use `SnarlStyle::background_pattern_stroke` for change stroke options
+///Use `GraphStyle::background_pattern_stroke` for change stroke options
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
@@ -46,8 +46,8 @@ impl Grid {
         Self { spacing, angle }
     }
 
-    fn draw(&self, viewport: &Rect, snarl_style: &SnarlStyle, style: &Style, painter: &Painter) {
-        let bg_stroke = snarl_style.get_bg_pattern_stroke(style);
+    fn draw(&self, viewport: &Rect, graph_style: &GraphStyle, style: &Style, painter: &Painter) {
+        let bg_stroke = graph_style.get_bg_pattern_stroke(style);
 
         let spacing = vec2(self.spacing.x.max(1.0), self.spacing.y.max(1.0));
 
@@ -111,8 +111,8 @@ impl Dots {
         Self { spacing, radius }
     }
 
-    fn draw(&self, viewport: &Rect, snarl_style: &SnarlStyle, style: &Style, painter: &Painter) {
-        let stroke = snarl_style.get_bg_pattern_stroke(style);
+    fn draw(&self, viewport: &Rect, graph_style: &GraphStyle, style: &Style, painter: &Painter) {
+        let stroke = graph_style.get_bg_pattern_stroke(style);
         let fill = stroke.color;
 
         let spacing = vec2(self.spacing.x.max(1.0), self.spacing.y.max(1.0));
@@ -165,8 +165,8 @@ impl Hex {
         Self { size }
     }
 
-    fn draw(&self, viewport: &Rect, snarl_style: &SnarlStyle, style: &Style, painter: &Painter) {
-        let stroke = snarl_style.get_bg_pattern_stroke(style);
+    fn draw(&self, viewport: &Rect, graph_style: &GraphStyle, style: &Style, painter: &Painter) {
+        let stroke = graph_style.get_bg_pattern_stroke(style);
         let s = self.size.max(2.0);
         // Pointy-top hex: row pitch = 1.5 * s, col pitch =
         // sqrt(3) * s, odd rows offset by half-col.
@@ -258,14 +258,14 @@ impl BackgroundPattern {
     pub fn draw(
         &self,
         viewport: &Rect,
-        snarl_style: &SnarlStyle,
+        graph_style: &GraphStyle,
         style: &Style,
         painter: &Painter,
     ) {
         match self {
-            BackgroundPattern::Grid(g) => g.draw(viewport, snarl_style, style, painter),
-            BackgroundPattern::Dots(d) => d.draw(viewport, snarl_style, style, painter),
-            BackgroundPattern::Hex(h)  => h.draw(viewport, snarl_style, style, painter),
+            BackgroundPattern::Grid(g) => g.draw(viewport, graph_style, style, painter),
+            BackgroundPattern::Dots(d) => d.draw(viewport, graph_style, style, painter),
+            BackgroundPattern::Hex(h)  => h.draw(viewport, graph_style, style, painter),
             BackgroundPattern::NoPattern => {}
         }
     }

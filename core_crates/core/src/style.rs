@@ -621,7 +621,7 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
 /// *secondary* `egui::Context`s — `apply_theme`'s cache is keyed
 /// on the theme state, not on the context, so once the parent
 /// ctx has been styled the cache early-returns and any sibling
-/// sub-context (e.g. the one `node_view::show` runs snarl in)
+/// sub-context (e.g. the one `node_view::show` runs graph in)
 /// never receives the visuals. Calling this directly skips that
 /// gate.
 ///
@@ -1675,21 +1675,21 @@ pub struct Theme {
     /// Width of the indent-guide line painted at each depth level
     /// of a tree. PRO `1.0`, GAME `0.0` (guides off — flat list).
     pub tree_guide_width: f32,
-    /// Snarl graph pin stroke width. PRO `1.0`, GAME `0.0`.
-    pub snarl_pin_width:  f32,
-    /// Bloom intensity for snarl wires (`0.0` = no glow, `1.0+`
-    /// = strong neon halo). Read by `frost_snarl_style` and
-    /// passed straight through to `SnarlStyle::wire_glow`. PRO
+    /// Graph graph pin stroke width. PRO `1.0`, GAME `0.0`.
+    pub graph_pin_width:  f32,
+    /// Bloom intensity for graph wires (`0.0` = no glow, `1.0+`
+    /// = strong neon halo). Read by `frost_node_graph_style` and
+    /// passed straight through to `GraphStyle::wire_glow`. PRO
     /// 0.6 (vibrant but tasteful), GAME 1.0 (full neon).
-    pub snarl_wire_glow:  f32,
-    /// Bloom intensity for snarl pin glyphs — same scale and
-    /// semantics as `snarl_wire_glow`, applied to the pin
+    pub graph_wire_glow:  f32,
+    /// Bloom intensity for graph pin glyphs — same scale and
+    /// semantics as `graph_wire_glow`, applied to the pin
     /// shape's halo passes. PRO 0.5, GAME 0.85.
-    pub snarl_pin_glow:   f32,
-    /// Use a pointy-top hex tessellation as the snarl canvas
+    pub graph_pin_glow:   f32,
+    /// Use a pointy-top hex tessellation as the graph canvas
     /// background instead of the Blender-style dot grid. PRO
     /// false (dots), GAME true (hex — sci-fi HUD motif).
-    pub snarl_canvas_hex: bool,
+    pub graph_canvas_hex: bool,
     /// Render progress bars as discrete cells with 1-px gaps
     /// (Mass Effect / Apex shield style) instead of a smooth
     /// fill. PRO false (smooth), GAME true (segmented).
@@ -1877,10 +1877,10 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         pane_title_stripes: false,
         scramble_titles: false,
         tree_guide_width: 1.0,
-        snarl_pin_width:  1.0,
-        snarl_wire_glow:  0.6,
-        snarl_pin_glow:   0.5,
-        snarl_canvas_hex: false,
+        graph_pin_width:  1.0,
+        graph_wire_glow:  0.6,
+        graph_pin_glow:   0.5,
+        graph_canvas_hex: false,
         progressbar_segmented: false,
         pane_title_brackets: false,
         section_separator_strip_h: 2.0,
@@ -2083,10 +2083,10 @@ pub const fn theme_game(mode: Mode) -> Theme {
         pane_title_stripes: true,
         scramble_titles: true,
         tree_guide_width: 0.0,
-        snarl_pin_width:  0.0,
-        snarl_wire_glow:  1.0,
-        snarl_pin_glow:   0.85,
-        snarl_canvas_hex: true,
+        graph_pin_width:  0.0,
+        graph_wire_glow:  1.0,
+        graph_pin_glow:   0.85,
+        graph_canvas_hex: true,
         progressbar_segmented: true,
         pane_title_brackets: true,
         section_separator_strip_h: 14.0,

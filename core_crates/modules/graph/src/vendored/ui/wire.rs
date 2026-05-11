@@ -2,7 +2,7 @@ use core::f32;
 
 use egui::{Context, Id, Pos2, Rect, Shape, Stroke, Ui, ahash::HashMap, cache::CacheTrait, pos2};
 
-use crate::snarl::{InPinId, OutPinId};
+use crate::vendored::{InPinId, OutPinId};
 
 const MAX_CURVE_SAMPLES: usize = 100;
 
@@ -30,7 +30,7 @@ pub enum WireLayer {
 pub enum WireColorMode {
     /// Linear blend of source and target pin colours, drawn as
     /// a uniform fill (i.e. averaged once, not gradient-painted).
-    /// Default — preserves the upstream egui-snarl behaviour.
+    /// Default — preserves the upstream egui-graph behaviour.
     #[default]
     Mix,
     /// Wire takes the **output (source) pin's colour** uniformly
@@ -46,16 +46,16 @@ pub enum WireColorMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WireId {
     Connected {
-        snarl_id: Id,
+        graph_id: Id,
         out_pin: OutPinId,
         in_pin: InPinId,
     },
     NewInput {
-        snarl_id: Id,
+        graph_id: Id,
         in_pin: InPinId,
     },
     NewOutput {
-        snarl_id: Id,
+        graph_id: Id,
         out_pin: OutPinId,
     },
 }

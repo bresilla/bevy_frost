@@ -33,7 +33,7 @@ pub mod gizmo_material;
 pub mod node_view_backend;
 pub mod prelude;
 
-// `extras` (vendored snarl + code_editor + maximize) lives in
+// `extras` (vendored graph + code_editor + maximize) lives in
 // `corekit` so the egui-only `egui_frost` facade can ship the same
 // graph + code wrappers without dragging Bevy in. Re-exported here
 // at the legacy `bevy_frost::extras::*` path so existing call
@@ -194,6 +194,18 @@ fn consume_egui_input_system(
     let pane_rects = frost_core::pane::published_pane_rects(ctx);
     let cursor_over_pane = pane_rects.iter().any(|r| r.contains(pos));
 
+    // `egui.is_using_pointer()` is true whenever ANY egui widget has
+    // claimed the pointer this frame — text-edit drag in the code
+    // editor, graph canvas pan/wheel-zoom, slider drag, etc. Catches
+    // host widgets like `frost_node_graph` that use a secondary
+    // `egui::Context` underneath (the parent's pane rect contains
+    // the cursor, but the secondary ctx is the one with focus). We
+    // also check `wants_pointer_input` so a fresh click landing on
+    // an interactive widget is masked the same frame, not one frame
+    // late.
+    let egui_owns_pointer = ctx.is_using_pointer() || ctx.wants_pointer_input();
+    let ui_owns_pointer = cursor_over_pane || egui_owns_pointer;
+
     // Track which mouse buttons were pressed while the cursor was
     // over a pane. Released → drop from the set. The whole point
     // of the set is to remember presses across frames so a
@@ -202,7 +214,7 @@ fn consume_egui_input_system(
     for ev in button_events.read() {
         match ev.state {
             ButtonState::Pressed => {
-                if cursor_over_pane {
+                if ui_owns_pointer {
                     pressed_over_pane.insert(ev.button);
                 }
             }
@@ -240,7 +252,11 @@ fn consume_egui_input_system(
     // be in "drag" mode at this point — but zero the motion delta
     // anyway to defend against viewport cameras that orbit on plain
     // mouse motion.
-    if cursor_over_pane {
+    //
+    // Drain when EITHER the cursor sits on a pane OR egui has
+    // grabbed the pointer (e.g. an ongoing graph pan whose sub-
+    // context is consuming the wheel for canvas zoom).
+    if ui_owns_pointer {
         wheel_events.clear();
         accumulated_scroll.delta = Vec2::ZERO;
         accumulated_motion.delta = Vec2::ZERO;

@@ -33,12 +33,12 @@ use frost_core::ribbon::{
 };
 use frost_core::style::{srgb_to_egui, AccentColor, GlassOpacity, Mode};
 use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
-// Vendored extras — node graph (`egui-snarl`) and code editor
+// Vendored extras — node graph (`egui-graph`) and code editor
 // (`egui_code_editor`). Both live under `bevy_frost::extras`.
 use bevy_frost::extras::code::{frost_code_editor_with_opts, Syntax};
 use bevy_frost::extras::graph::{
-    frost_snarl, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Snarl, SnarlPin,
-    SnarlViewer,
+    frost_node_graph, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Graph, NodePin,
+    NodeViewer,
 };
 use bevy_frost::node_view_backend::{
     BevyNodeViewBackend, NodeViewSlots, PendingNodeViewCopies,
@@ -147,7 +147,7 @@ struct SelectedSwatch(Option<Entity>);
 
 /// Per-graph sharp-zoom state (secondary egui::Context, pan, zoom,
 /// wgpu render target). Held as a Bevy resource so the SAME state
-/// instance is passed to `frost_snarl` every frame for the same
+/// instance is passed to `frost_node_graph` every frame for the same
 /// editor pane — recreating it would drop the cached wgpu texture
 /// and renderer.
 #[derive(Resource)]
@@ -157,11 +157,11 @@ impl Default for EditorNodeView {
     fn default() -> Self { Self(NodeViewState::new()) }
 }
 
-/// The actual snarl graph for the editor pane. Same lifetime story
+/// The actual graph graph for the editor pane. Same lifetime story
 /// as `EditorNodeView` — needs to persist across frames so node
 /// edits + connections aren't reset.
 #[derive(Resource)]
-struct EditorGraph(Snarl<GraphNode>);
+struct EditorGraph(Graph<GraphNode>);
 
 impl Default for EditorGraph {
     fn default() -> Self { Self(default_graph()) }
@@ -600,7 +600,7 @@ fn ui_system(
                     let now = body_ui
                         .ctx()
                         .input(|i| i.time);
-                    let mut viewer = GraphViewer { time: now };
+                    let mut viewer = DemoViewer { time: now };
                     editor_pane(
                         body_ui, anchor, accent_col,
                         &mut node_view_params.editor_node_view.0,
@@ -621,16 +621,24 @@ fn ui_system(
 /// container). Used by [`render_containers`]. Tabbed containers run
 /// through the SAME wrapper so they get the inter-container three-dot
 /// drag handle painted just like the regular containers.
-struct ContainerSpec {
+struct ContainerSpec<'a> {
     id: egui::Id,
     title: String,
     icon: &'static str,
-    body: SpecBody,
+    body: SpecBody<'a>,
 }
 
-enum SpecBody {
+enum SpecBody<'a> {
     Pods(Vec<Pod>),
     Tabs(Vec<frost_core::container::Tab>),
+    /// Caller-supplied body closure for containers that need to
+    /// host non-`'static` content (e.g. the node graph, which
+    /// borrows `&mut NodeViewState` / `&mut Graph` from the parent
+    /// pane). Routed through `Normal::show_raw`, so the container
+    /// still gets the title strip, frame, fold animation AND the
+    /// inter-container three-dot drag handle painted by
+    /// `render_containers`.
+    Raw(Box<dyn FnOnce(&mut egui::Ui) + 'a>),
 }
 
 /// Render a vertical stack of containers inside a pane body, with
@@ -642,16 +650,16 @@ enum SpecBody {
 /// panes stack vertically → horizontal handle). Folded containers
 /// ignore drag so the user can't silently grow / shrink an invisible
 /// region.
-fn render_containers(
+fn render_containers<'a>(
     body_ui: &mut egui::Ui,
     pane_id: egui::Id,
     anchor: PaneAnchor,
     accent: egui::Color32,
-    containers: Vec<ContainerSpec>,
+    containers: Vec<ContainerSpec<'a>>,
 ) -> std::collections::HashMap<egui::Id, Vec<frost_core::pod::PodResponse>> {
     let defaults: Vec<egui::Id> = containers.iter().map(|c| c.id).collect();
     let order = frost_core::pane::section_order_for(body_ui.ctx(), pane_id, &defaults);
-    let mut by_id: std::collections::HashMap<egui::Id, ContainerSpec> =
+    let mut by_id: std::collections::HashMap<egui::Id, ContainerSpec<'a>> =
         containers.into_iter().map(|c| (c.id, c)).collect();
 
     let containers_stack_horizontally = !anchor.title_side().is_horizontal_strip();
@@ -674,6 +682,13 @@ fn render_containers(
         let resp = match spec.body {
             SpecBody::Pods(pods) => normal.show(body_ui, pods),
             SpecBody::Tabs(tabs) => normal.show_tabs(body_ui, tabs),
+            SpecBody::Raw(body) => {
+                normal.show_raw(body_ui, body);
+                // Raw bodies don't produce pod responses — return an
+                // empty Vec so the per-container result map stays
+                // consistent.
+                Vec::new()
+            }
         };
         responses.insert(cid, resp);
 
@@ -1168,7 +1183,7 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
                             frost_core::pod::TagItem::new("ribbons"),
                             frost_core::pod::TagItem::new("panes"),
                             frost_core::pod::TagItem::new("pods"),
-                            frost_core::pod::TagItem::new("snarl-graph"),
+                            frost_core::pod::TagItem::new("graph-graph"),
                             frost_core::pod::TagItem::new("code-editor"),
                             frost_core::pod::TagItem::new("theme/PRO"),
                             frost_core::pod::TagItem::new("theme/GAME"),
@@ -1244,9 +1259,9 @@ fn about_pane(body: &mut egui::Ui, anchor: PaneAnchor, accent: egui::Color32) {
 ///
 /// The graph container is rendered via `Normal::show_raw` rather
 /// than the standard `with_custom_units` pod path so we can pass
-/// `&mut NodeViewState`, `&mut Snarl`, `&mut Viewer`, and the
+/// `&mut NodeViewState`, `&mut Graph`, `&mut Viewer`, and the
 /// Bevy-side `&mut dyn NodeViewBackend` straight through to
-/// `frost_snarl`. The pod-path closure has a `'static` bound
+/// `frost_node_graph`. The pod-path closure has a `'static` bound
 /// that those refs can't satisfy.
 #[allow(clippy::too_many_arguments)]
 fn editor_pane(
@@ -1254,26 +1269,33 @@ fn editor_pane(
     anchor: PaneAnchor,
     accent: egui::Color32,
     node_view: &mut NodeViewState,
-    snarl: &mut Snarl<GraphNode>,
-    viewer: &mut GraphViewer,
+    graph: &mut Graph<GraphNode>,
+    viewer: &mut DemoViewer,
     backend: &mut BevyNodeViewBackend<'_>,
 ) {
     let pane_id = egui::Id::new(PANE_EDITOR);
     let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");
 
-    // ── Node graph container ──
-    Normal::new("Node graph", anchor, accent, cid_graph)
-        .icon("flowchart")
-        .show_raw(body, |graph_ui| {
-            let avail = graph_ui.available_size_before_wrap();
-            frost_snarl(
-                graph_ui, node_view, backend, snarl, viewer, accent, avail,
-            );
-        });
-
-    // ── Source code container — unchanged pod-list path ──
+    // Both containers flow through one `render_containers` call so
+    // they share the inter-container three-dot drag handle and the
+    // drag-to-reorder slot (`section_order_for`). The graph body
+    // uses `SpecBody::Raw` because its closure has to borrow
+    // `&mut NodeViewState`, `&mut Graph`, `&mut DemoViewer`,
+    // `&mut BevyNodeViewBackend` — all non-`'static`, which the
+    // pod-path's `'static` bound rejects.
     render_containers(body, pane_id, anchor, accent, vec![
+        ContainerSpec {
+            id: cid_graph,
+            title: "Node graph".into(),
+            icon: "flowchart",
+            body: SpecBody::Raw(Box::new(move |graph_ui| {
+                let avail = graph_ui.available_size_before_wrap();
+                frost_node_graph(
+                    graph_ui, node_view, backend, graph, viewer, accent, avail,
+                );
+            })),
+        },
         ContainerSpec {
             id: cid(PANE_EDITOR, "code"),
             title: "Source".into(),
@@ -1338,7 +1360,7 @@ impl PinType {
     ///   * Bool    → Bool         `#960000` (deep maroon).
     ///   * Text    → String       `#FF38C9` (hot pink).
     /// Combined with `WireColorMode::FromSource` in
-    /// `frost_snarl_style`, every wire takes the colour of its
+    /// `frost_node_graph_style`, every wire takes the colour of its
     /// source pin uniformly — the "Unreal Blueprint" look.
     fn color(self) -> egui::Color32 {
         match self {
@@ -2058,8 +2080,8 @@ impl GraphNode {
 /// the seconds-since-startup value the `Time` node emits. Each
 /// pull walks the upstream subtree once — fine for graphs of
 /// hundreds of nodes; if you chain thousands you'd add a memo.
-fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
-    let Some(node) = snarl.get_node(pin.id.node) else {
+fn eval_output(graph: &Graph<GraphNode>, time: f64, pin: &OutPin) -> Value {
+    let Some(node) = graph.get_node(pin.id.node) else {
         return Value::Number(0.0);
     };
     match node {
@@ -2070,79 +2092,79 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
         GraphNode::Bool(b) => Value::Bool(*b),
         GraphNode::Time => Value::Number(time),
         GraphNode::ScalarMath(op) => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_number();
             Value::Number(op.apply(a, b))
         }
         GraphNode::Trig(f) => {
-            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let x = eval_input_at(graph, time, pin.id.node, 0).as_number();
             Value::Number(f.apply(x))
         }
         GraphNode::Compare(op) => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_number();
             Value::Bool(op.apply(a, b))
         }
         GraphNode::Mix => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let t = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let t = eval_input_at(graph, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
             Value::Number(a + (b - a) * t)
         }
         GraphNode::Clamp => {
-            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let lo = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let hi = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let x = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let lo = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let hi = eval_input_at(graph, time, pin.id.node, 2).as_number();
             Value::Number(x.clamp(lo.min(hi), lo.max(hi)))
         }
         GraphNode::VectorMath(op) => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_vector();
             Value::Vector(op.apply(a, b))
         }
         GraphNode::Compose => {
-            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let y = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let z = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let x = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let y = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let z = eval_input_at(graph, time, pin.id.node, 2).as_number();
             Value::Vector([x, y, z])
         }
         GraphNode::Decompose => {
-            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let v = eval_input_at(graph, time, pin.id.node, 0).as_vector();
             Value::Number(v[pin.id.output.min(2)])
         }
         GraphNode::Length => {
-            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let v = eval_input_at(graph, time, pin.id.node, 0).as_vector();
             Value::Number((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt())
         }
         GraphNode::RgbToColor => {
-            let r = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let g = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let b = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let r = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let g = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let b = eval_input_at(graph, time, pin.id.node, 2).as_number();
             let to_u8 = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
             Value::Color(egui::Color32::from_rgb(to_u8(r), to_u8(g), to_u8(b)))
         }
         GraphNode::ColorMix => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_color();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_color();
-            let t = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0) as f32;
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_color();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_color();
+            let t = eval_input_at(graph, time, pin.id.node, 2).as_number().clamp(0.0, 1.0) as f32;
             let lerp = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round() as u8;
             Value::Color(egui::Color32::from_rgba_unmultiplied(
                 lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()), lerp(a.a(), b.a()),
             ))
         }
         GraphNode::IfElse => {
-            let cond = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
-            let then = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let elze = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let cond = eval_input_at(graph, time, pin.id.node, 0).as_bool();
+            let then = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let elze = eval_input_at(graph, time, pin.id.node, 2).as_number();
             Value::Number(if cond { then } else { elze })
         }
         // ── New scalar nodes ──
         GraphNode::MapRange => {
-            let x   = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let lo  = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let hi  = eval_input_at(snarl, time, pin.id.node, 2).as_number();
-            let olo = eval_input_at(snarl, time, pin.id.node, 3).as_number();
-            let ohi = eval_input_at(snarl, time, pin.id.node, 4).as_number();
+            let x   = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let lo  = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let hi  = eval_input_at(graph, time, pin.id.node, 2).as_number();
+            let olo = eval_input_at(graph, time, pin.id.node, 3).as_number();
+            let ohi = eval_input_at(graph, time, pin.id.node, 4).as_number();
             let span = hi - lo;
             if span.abs() < 1e-9 { Value::Number(olo) } else {
                 let t = ((x - lo) / span).clamp(0.0, 1.0);
@@ -2150,41 +2172,41 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             }
         }
         GraphNode::Smoothstep => {
-            let e0 = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let e1 = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let x  = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let e0 = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let e1 = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let x  = eval_input_at(graph, time, pin.id.node, 2).as_number();
             let span = e1 - e0;
             let t = if span.abs() < 1e-9 { 0.0 }
                     else { ((x - e0) / span).clamp(0.0, 1.0) };
             Value::Number(t * t * (3.0 - 2.0 * t))
         }
         GraphNode::Step => {
-            let edge = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let x    = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let edge = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let x    = eval_input_at(graph, time, pin.id.node, 1).as_number();
             Value::Number(if x < edge { 0.0 } else { 1.0 })
         }
         // ── New vector nodes ──
         GraphNode::Dot => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_vector();
             Value::Number(a[0]*b[0] + a[1]*b[1] + a[2]*b[2])
         }
         GraphNode::Distance => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_vector();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_vector();
             let d = [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
             Value::Number((d[0]*d[0] + d[1]*d[1] + d[2]*d[2]).sqrt())
         }
         GraphNode::Normalize => {
-            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
+            let v = eval_input_at(graph, time, pin.id.node, 0).as_vector();
             let len = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();
             if len < 1e-9 { Value::Vector([0.0; 3]) }
             else { Value::Vector([v[0]/len, v[1]/len, v[2]/len]) }
         }
         GraphNode::VectorRotate => {
-            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
-            let mut axis = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
-            let angle = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let v = eval_input_at(graph, time, pin.id.node, 0).as_vector();
+            let mut axis = eval_input_at(graph, time, pin.id.node, 1).as_vector();
+            let angle = eval_input_at(graph, time, pin.id.node, 2).as_number();
             let alen = (axis[0]*axis[0]+axis[1]*axis[1]+axis[2]*axis[2]).sqrt();
             if alen < 1e-9 { return Value::Vector(v); }
             axis = [axis[0]/alen, axis[1]/alen, axis[2]/alen];
@@ -2202,8 +2224,8 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             ])
         }
         GraphNode::Reflect => {
-            let v = eval_input_at(snarl, time, pin.id.node, 0).as_vector();
-            let mut n = eval_input_at(snarl, time, pin.id.node, 1).as_vector();
+            let v = eval_input_at(graph, time, pin.id.node, 0).as_vector();
+            let mut n = eval_input_at(graph, time, pin.id.node, 1).as_vector();
             let nlen = (n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();
             if nlen > 1e-9 { n = [n[0]/nlen, n[1]/nlen, n[2]/nlen]; }
             let d = 2.0 * (v[0]*n[0] + v[1]*n[1] + v[2]*n[2]);
@@ -2211,16 +2233,16 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
         }
         // ── New colour nodes ──
         GraphNode::HsvToColor => {
-            let h = eval_input_at(snarl, time, pin.id.node, 0).as_number().rem_euclid(1.0);
-            let s = eval_input_at(snarl, time, pin.id.node, 1).as_number().clamp(0.0, 1.0);
-            let v = eval_input_at(snarl, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
+            let h = eval_input_at(graph, time, pin.id.node, 0).as_number().rem_euclid(1.0);
+            let s = eval_input_at(graph, time, pin.id.node, 1).as_number().clamp(0.0, 1.0);
+            let v = eval_input_at(graph, time, pin.id.node, 2).as_number().clamp(0.0, 1.0);
             let (r, g, b) = hsv_to_rgb(h, s, v);
             let to_u8 = |x: f64| (x.clamp(0.0,1.0)*255.0).round() as u8;
             Value::Color(egui::Color32::from_rgb(to_u8(r), to_u8(g), to_u8(b)))
         }
         GraphNode::HueShift => {
-            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
-            let shift = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let c = eval_input_at(graph, time, pin.id.node, 0).as_color();
+            let shift = eval_input_at(graph, time, pin.id.node, 1).as_number();
             let (mut h, s, v) = rgb_to_hsv(
                 c.r() as f64 / 255.0, c.g() as f64 / 255.0, c.b() as f64 / 255.0,
             );
@@ -2232,15 +2254,15 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             ))
         }
         GraphNode::ColorInvert => {
-            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
+            let c = eval_input_at(graph, time, pin.id.node, 0).as_color();
             Value::Color(egui::Color32::from_rgba_unmultiplied(
                 255 - c.r(), 255 - c.g(), 255 - c.b(), c.a(),
             ))
         }
         GraphNode::BrightContrast => {
-            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
-            let bright   = eval_input_at(snarl, time, pin.id.node, 1).as_number();
-            let contrast = eval_input_at(snarl, time, pin.id.node, 2).as_number();
+            let c = eval_input_at(graph, time, pin.id.node, 0).as_color();
+            let bright   = eval_input_at(graph, time, pin.id.node, 1).as_number();
+            let contrast = eval_input_at(graph, time, pin.id.node, 2).as_number();
             let adjust = |x: f64| ((x - 0.5) * (1.0 + contrast) + 0.5 + bright).clamp(0.0, 1.0);
             let to_u8 = |x: f64| (x*255.0).round() as u8;
             Value::Color(egui::Color32::from_rgba_unmultiplied(
@@ -2251,8 +2273,8 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             ))
         }
         GraphNode::Gamma => {
-            let c = eval_input_at(snarl, time, pin.id.node, 0).as_color();
-            let g = eval_input_at(snarl, time, pin.id.node, 1).as_number().max(0.01);
+            let c = eval_input_at(graph, time, pin.id.node, 0).as_color();
+            let g = eval_input_at(graph, time, pin.id.node, 1).as_number().max(0.01);
             let to_u8 = |x: u8| ((x as f64 / 255.0).powf(g).clamp(0.0, 1.0) * 255.0).round() as u8;
             Value::Color(egui::Color32::from_rgba_unmultiplied(
                 to_u8(c.r()), to_u8(c.g()), to_u8(c.b()), c.a(),
@@ -2260,17 +2282,17 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
         }
         // ── New logic nodes ──
         GraphNode::BooleanMath(op) => {
-            let a = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
-            let b = eval_input_at(snarl, time, pin.id.node, 1).as_bool();
+            let a = eval_input_at(graph, time, pin.id.node, 0).as_bool();
+            let b = eval_input_at(graph, time, pin.id.node, 1).as_bool();
             Value::Bool(op.apply(a, b))
         }
         GraphNode::FloatToBool => {
-            let x = eval_input_at(snarl, time, pin.id.node, 0).as_number();
-            let t = eval_input_at(snarl, time, pin.id.node, 1).as_number();
+            let x = eval_input_at(graph, time, pin.id.node, 0).as_number();
+            let t = eval_input_at(graph, time, pin.id.node, 1).as_number();
             Value::Bool(x > t)
         }
         GraphNode::BoolToFloat => {
-            let b = eval_input_at(snarl, time, pin.id.node, 0).as_bool();
+            let b = eval_input_at(graph, time, pin.id.node, 0).as_bool();
             Value::Number(if b { 1.0 } else { 0.0 })
         }
         // ── New noise / wave ──
@@ -2282,7 +2304,7 @@ fn eval_output(snarl: &Snarl<GraphNode>, time: f64, pin: &OutPin) -> Value {
             Value::Number(((x ^ (x >> 16)) as f64 / u32::MAX as f64) * 2.0 - 1.0)
         }
         GraphNode::Wave(shape) => {
-            let t = eval_input_at(snarl, time, pin.id.node, 0).as_number();
+            let t = eval_input_at(graph, time, pin.id.node, 0).as_number();
             Value::Number(shape.apply(t))
         }
         GraphNode::Perlin { seed, frequency } => {
@@ -2380,35 +2402,35 @@ fn rgb_to_hsv(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
 /// First connected upstream value at `(node, input)`, defaulted to
 /// `Number(0.0)` when nothing is wired.
 fn eval_input_at(
-    snarl: &Snarl<GraphNode>,
+    graph: &Graph<GraphNode>,
     time: f64,
     node: frost_core::extras::graph::NodeId,
     input: usize,
 ) -> Value {
-    let in_pin = snarl.in_pin(InPinId { node, input });
+    let in_pin = graph.in_pin(InPinId { node, input });
     in_pin
         .remotes
         .first()
-        .map(|r| eval_output(snarl, time, &snarl.out_pin(*r)))
+        .map(|r| eval_output(graph, time, &graph.out_pin(*r)))
         .unwrap_or(Value::Number(0.0))
 }
 
-fn eval_input(snarl: &Snarl<GraphNode>, time: f64, pin: &InPin) -> Value {
+fn eval_input(graph: &Graph<GraphNode>, time: f64, pin: &InPin) -> Value {
     pin.remotes
         .first()
-        .map(|r| eval_output(snarl, time, &snarl.out_pin(*r)))
+        .map(|r| eval_output(graph, time, &graph.out_pin(*r)))
         .unwrap_or(Value::Number(0.0))
 }
 
 #[derive(Default)]
-struct GraphViewer {
+struct DemoViewer {
     /// Wall-clock seconds since startup, refreshed each frame by
     /// the editor pane. Threaded into `eval_output` so `Time` /
     /// `Perlin` nodes animate live.
     time: f64,
 }
 
-impl SnarlViewer<GraphNode> for GraphViewer {
+impl NodeViewer<GraphNode> for DemoViewer {
     fn title(&mut self, n: &GraphNode) -> String { n.title().into() }
     fn inputs(&mut self, n: &GraphNode) -> usize { n.inputs().len() }
     fn outputs(&mut self, n: &GraphNode) -> usize { n.outputs().len() }
@@ -2427,9 +2449,9 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         node: frost_core::extras::graph::NodeId,
         _inputs: &[InPin],
         _outputs: &[OutPin],
-        snarl: &Snarl<GraphNode>,
+        graph: &Graph<GraphNode>,
     ) -> egui::Frame {
-        let Some(n) = snarl.get_node(node) else { return default };
+        let Some(n) = graph.get_node(node) else { return default };
         let tint = n.category().color();
         // Translucent tint — the dark body fill below shows
         // through, knocking the saturation down so the seven
@@ -2455,9 +2477,9 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         _inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
+        graph: &mut Graph<GraphNode>,
     ) {
-        let Some(n) = snarl.get_node(node).cloned() else { return };
+        let Some(n) = graph.get_node(node).cloned() else { return };
         let title_color = egui::Color32::from_rgb(0xEE, 0xEE, 0xEE);
         let subtitle_color = egui::Color32::from_rgba_unmultiplied(
             0xEE, 0xEE, 0xEE, 0xB0,
@@ -2468,7 +2490,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         // The whole node ends up `max(title_w, every_pin_row_w,
         // body_w)`, exactly UE Slate's behaviour.
 
-        // With snarl's header layout fixed to `top_down(Min)`,
+        // With graph's header layout fixed to `top_down(Min)`,
         // a normal horizontal block is left-anchored as expected.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -2522,22 +2544,22 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         &mut self,
         pin: &InPin,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
-    ) -> impl SnarlPin + 'static {
+        graph: &mut Graph<GraphNode>,
+    ) -> impl NodePin + 'static {
         // UE Blueprint pin row:
         //   * Disconnected → `[pin glyph] [label] [default value]`.
         //   * Connected    → `[pin glyph] [label]` (no live value
         //     readout — UE never shows in-flight values on a
         //     connected pin; debugging is via watch / tooltip).
         let _ = self.time;
-        let (label, ty) = snarl
+        let (label, ty) = graph
             .get_node(pin.id.node)
             .and_then(|n| n.inputs().get(pin.id.input).copied())
             .unwrap_or(("", PinType::Number));
         ui.label(label);
         let connected = !pin.remotes.is_empty();
         if !connected {
-            inline_input_editor(snarl, pin, ty, ui);
+            inline_input_editor(graph, pin, ty, ui);
         }
         ty.pin(connected)
     }
@@ -2546,8 +2568,8 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         &mut self,
         pin: &OutPin,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
-    ) -> impl SnarlPin + 'static {
+        graph: &mut Graph<GraphNode>,
+    ) -> impl NodePin + 'static {
         // UE Blueprint output row: just `[label] [pin glyph]`.
         // **No live value readout**, **no value editor** — UE
         // never shows in-flight values on output pins. Source
@@ -2555,7 +2577,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         // editor in the body instead (see `show_body` below),
         // matching `Make Vector` / `Make LinearColor`.
         let connected = !pin.remotes.is_empty();
-        let (label, ty) = snarl
+        let (label, ty) = graph
             .get_node(pin.id.node)
             .map(|n| n.outputs())
             .and_then(|os| os.get(pin.id.output).copied())
@@ -2596,7 +2618,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         _inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
+        graph: &mut Graph<GraphNode>,
     ) {
         // No body width clamp — body sizes to its content like
         // UE Slate's natural measurement. Inline widgets below
@@ -2605,7 +2627,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
 
         let time = self.time;
         let accent = frost_core::style::active_accent();
-        let Some(n) = snarl.get_node_mut(node) else { return };
+        let Some(n) = graph.get_node_mut(node) else { return };
         match n {
             // ── Source-node value editors (UE: Make-* nodes) ──
             GraphNode::Number(v) => {
@@ -2760,14 +2782,14 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 *seed = seed_f as u32;
             }
             GraphNode::Display => {
-                let v = eval_input_at(snarl, time, node, 0).as_number();
-                draw_sparkline(snarl, node, ui, v);
+                let v = eval_input_at(graph, time, node, 0).as_number();
+                draw_sparkline(graph, node, ui, v);
             }
             GraphNode::Plot => {
-                let v = eval_input_at(snarl, time, node, 0).as_number();
+                let v = eval_input_at(graph, time, node, 0).as_number();
                 // Plot uses the same sparkline drawer but at a
                 // larger size — separate visual identity vs Display.
-                draw_sparkline(snarl, node, ui, v);
+                draw_sparkline(graph, node, ui, v);
             }
             // ── Sophisticated egui_plot line chart (HISTORY
             //    samples on the X axis, value on the Y axis with
@@ -2775,7 +2797,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
             GraphNode::PlotXY => {
                 use egui_plot::{Line, Plot, PlotPoints};
                 const HISTORY: usize = 256;
-                let v = eval_input_at(snarl, time, node, 0).as_number();
+                let v = eval_input_at(graph, time, node, 0).as_number();
                 let key = egui::Id::new(("frost_demo_plotxy", node));
                 let mut buf: Vec<f64> = ui
                     .ctx()
@@ -2807,7 +2829,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 ui.ctx().request_repaint();
             }
             GraphNode::Preview => {
-                let c = eval_input_at(snarl, time, node, 0).as_color();
+                let c = eval_input_at(graph, time, node, 0).as_color();
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(96.0, 40.0), egui::Sense::hover());
                 ui.painter().rect_filled(rect, 4.0, c);
@@ -2827,7 +2849,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 const H: usize = 64;
                 let seed = *seed;
                 let scale = *scale;
-                let offset = eval_input_at(snarl, time, node, 0).as_number();
+                let offset = eval_input_at(graph, time, node, 0).as_number();
                 let key = egui::Id::new(("frost_demo_noise_image", node));
                 // Cache the previous frame's parameters so we
                 // only regenerate the texture when something
@@ -2892,12 +2914,12 @@ impl SnarlViewer<GraphNode> for GraphViewer {
             //    swatch, etc.) — `Output` is the demo's
             //    universal "watch this value" node.
             GraphNode::Output => {
-                let in_pin = snarl.in_pin(InPinId { node, input: 0 });
+                let in_pin = graph.in_pin(InPinId { node, input: 0 });
                 let v = if in_pin.remotes.is_empty() {
                     Value::Number(0.0)
                 } else {
                     let r = in_pin.remotes[0];
-                    eval_output(snarl, time, &snarl.out_pin(r))
+                    eval_output(graph, time, &graph.out_pin(r))
                 };
                 let inferred_ty = match &v {
                     Value::Number(_) => PinType::Number,
@@ -2925,20 +2947,20 @@ impl SnarlViewer<GraphNode> for GraphViewer {
             GraphNode::NoiseField => {
                 const W: usize = 160;
                 const H: usize = 96;
-                // Read inputs FIRST (immutable borrow of snarl).
+                // Read inputs FIRST (immutable borrow of graph).
                 // Sensible defaults when a pin is disconnected:
                 // we treat `Number(0)` (the eval default) as
                 // "use this fallback" so the field renders
                 // something even on a freshly-spawned node with
                 // no wires. Connected non-zero inputs override.
-                let seed_in = eval_input_at(snarl, time, node, 0).as_number();
-                let off_x   = eval_input_at(snarl, time, node, 1).as_number();
-                let off_y   = eval_input_at(snarl, time, node, 2).as_number();
-                let freq_in = eval_input_at(snarl, time, node, 3).as_number();
-                let oct_in  = eval_input_at(snarl, time, node, 4).as_number();
-                let pers_in = eval_input_at(snarl, time, node, 5).as_number();
-                let lac_in  = eval_input_at(snarl, time, node, 6).as_number();
-                let gain_in = eval_input_at(snarl, time, node, 7).as_number();
+                let seed_in = eval_input_at(graph, time, node, 0).as_number();
+                let off_x   = eval_input_at(graph, time, node, 1).as_number();
+                let off_y   = eval_input_at(graph, time, node, 2).as_number();
+                let freq_in = eval_input_at(graph, time, node, 3).as_number();
+                let oct_in  = eval_input_at(graph, time, node, 4).as_number();
+                let pers_in = eval_input_at(graph, time, node, 5).as_number();
+                let lac_in  = eval_input_at(graph, time, node, 6).as_number();
+                let gain_in = eval_input_at(graph, time, node, 7).as_number();
                 let seed    = if seed_in.abs() < 1e-9 { 0xCAFE } else { seed_in as u32 };
                 let freq    = if freq_in.abs() < 1e-9 { 1.0 } else { freq_in };
                 let octaves = if oct_in  < 0.5 { 4u32 }
@@ -3024,10 +3046,10 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                     .data(|d| d.get_temp::<Vec<[f64; 4]>>(key))
                     .unwrap_or_default();
                 let sample = [
-                    eval_input_at(snarl, time, node, 0).as_number(),
-                    eval_input_at(snarl, time, node, 1).as_number(),
-                    eval_input_at(snarl, time, node, 2).as_number(),
-                    eval_input_at(snarl, time, node, 3).as_number(),
+                    eval_input_at(graph, time, node, 0).as_number(),
+                    eval_input_at(graph, time, node, 1).as_number(),
+                    eval_input_at(graph, time, node, 2).as_number(),
+                    eval_input_at(graph, time, node, 3).as_number(),
                 ];
                 if buf.len() >= HISTORY { buf.remove(0); }
                 buf.push(sample);
@@ -3056,7 +3078,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
                 ui.ctx().request_repaint();
             }
             GraphNode::VectorPreview => {
-                let v = eval_input_at(snarl, time, node, 0).as_vector();
+                let v = eval_input_at(graph, time, node, 0).as_vector();
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(140.0, 40.0), egui::Sense::hover());
                 let painter = ui.painter();
@@ -3089,12 +3111,12 @@ impl SnarlViewer<GraphNode> for GraphViewer {
         }
     }
 
-    fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Snarl<GraphNode>) -> bool { true }
+    fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Graph<GraphNode>) -> bool { true }
     fn show_graph_menu(
         &mut self,
         pos: egui::Pos2,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<GraphNode>,
+        graph: &mut Graph<GraphNode>,
     ) {
         ui.set_min_width(180.0);
         ui.label(egui::RichText::new("Add node").strong());
@@ -3102,7 +3124,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
 
         let mut spawn = |ui: &mut egui::Ui, label: &str, n: GraphNode| {
             if ui.button(label).clicked() {
-                snarl.insert_node(pos, n);
+                graph.insert_node(pos, n);
                 ui.close();
             }
         };
@@ -3179,7 +3201,7 @@ impl SnarlViewer<GraphNode> for GraphViewer {
 /// not inputs, so the bigger value editors still go on the source
 /// node's body / output row.
 fn inline_input_editor(
-    _snarl: &mut Snarl<GraphNode>,
+    _graph: &mut Graph<GraphNode>,
     _pin: &InPin,
     ty: PinType,
     ui: &mut egui::Ui,
@@ -3294,14 +3316,14 @@ where
 
 /// Per-Display-node ring buffer of recent values painted as a
 /// sparkline in the node body. Stored in egui ctx data keyed by
-/// the snarl node id so it survives across frames without leaking.
+/// the graph node id so it survives across frames without leaking.
 fn draw_sparkline(
-    snarl: &Snarl<GraphNode>,
+    graph: &Graph<GraphNode>,
     node: frost_core::extras::graph::NodeId,
     ui: &mut egui::Ui,
     current: f64,
 ) {
-    let _ = snarl; // signature parity for future inline-editor use
+    let _ = graph; // signature parity for future inline-editor use
     const HISTORY: usize = 96;
     let key = egui::Id::new(("frost_demo_sparkline", node));
     let mut buf: Vec<f32> = ui
@@ -3367,8 +3389,8 @@ fn draw_sparkline(
 ///   Perlin ─→ Compare ─→ IfElse ─→ Display
 ///   Num0  ─┘   Num1, Num-1 ─┘
 /// ```
-fn default_graph() -> Snarl<GraphNode> {
-    let mut g = Snarl::new();
+fn default_graph() -> Graph<GraphNode> {
+    let mut g = Graph::new();
 
     const COL_W: f32 = 340.0; // horizontal spacing between columns
     let col = |i: i32| (i as f32) * COL_W;
@@ -3479,7 +3501,7 @@ fn default_graph() -> Snarl<GraphNode> {
     let nfield   = g.insert_node(egui::pos2(col(2), row(2400.0)), GraphNode::NoiseField);
 
     // ── Wire it up ──
-    let connect = |g: &mut Snarl<GraphNode>, src, sout, dst, dinp| {
+    let connect = |g: &mut Graph<GraphNode>, src, sout, dst, dinp| {
         g.connect(OutPinId { node: src, output: sout }, InPinId { node: dst, input: dinp });
     };
     connect(&mut g, t,    0, mul, 0);

@@ -1,4 +1,4 @@
-//! This module provides functionality for showing [`Snarl`] graph in [`Ui`].
+//! This module provides functionality for showing [`Graph`] graph in [`Ui`].
 
 use std::{collections::HashMap, hash::Hash};
 
@@ -16,7 +16,7 @@ use egui::{
 use egui_scale::EguiScale;
 use smallvec::SmallVec;
 
-use crate::snarl::{InPin, InPinId, Node, NodeId, OutPin, OutPinId, Snarl, ui::wire::WireId};
+use crate::vendored::{InPin, InPinId, Node, NodeId, OutPin, OutPinId, Graph, ui::wire::WireId};
 
 mod background_pattern;
 mod pin;
@@ -33,9 +33,9 @@ use self::{
 
 pub use self::{
     background_pattern::{BackgroundPattern, Dots, Grid, Hex},
-    pin::{AnyPins, PinInfo, PinShape, SnarlPin},
-    state::SnarlState,
-    viewer::SnarlViewer,
+    pin::{AnyPins, PinInfo, PinShape, NodePin},
+    state::GraphState,
+    viewer::NodeViewer,
     wire::{WireColorMode, WireLayer, WireStyle},
 };
 
@@ -307,7 +307,7 @@ pub struct SelectionStyle {
     pub stroke: Stroke,
 }
 
-/// Accent halo painted around each node body. Snarl reserves a
+/// Accent halo painted around each node body. Graph reserves a
 /// shape slot in the painter buffer BEFORE the body + pins are
 /// submitted, then fills that slot with a rounded-rectangle
 /// stroke at `body_rect.expand(gap)`. Because the slot is
@@ -355,11 +355,11 @@ pub enum PinPlacement {
     },
 }
 
-/// Style for rendering Snarl.
+/// Style for rendering Graph.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
-pub struct SnarlStyle {
+pub struct GraphStyle {
     /// Controls how nodes are laid out.
     /// Defaults to [`NodeLayoutKind::Coil`].
     #[cfg_attr(
@@ -517,7 +517,7 @@ pub struct SnarlStyle {
 
     /// Faux-bloom intensity for pin glyphs (`0.0` = none,
     /// `1.0` = strong). Same multi-pass approach as
-    /// [`SnarlStyle::wire_glow`] but applied to pin shapes —
+    /// [`GraphStyle::wire_glow`] but applied to pin shapes —
     /// pins shed a soft halo in their type colour. Default `0.0`.
     #[cfg_attr(
         feature = "serde",
@@ -650,7 +650,7 @@ pub struct SnarlStyle {
     pub _non_exhaustive: (),
 }
 
-impl SnarlStyle {
+impl GraphStyle {
     fn get_node_layout(&self) -> NodeLayout {
         self.node_layout.unwrap_or_default()
     }
@@ -847,11 +847,11 @@ mod serde_frame_option {
     }
 }
 
-impl SnarlStyle {
-    /// Creates new [`SnarlStyle`] filled with default values.
+impl GraphStyle {
+    /// Creates new [`GraphStyle`] filled with default values.
     #[must_use]
     pub const fn new() -> Self {
-        SnarlStyle {
+        GraphStyle {
             node_layout: None,
             pin_size: None,
             pin_fill: None,
@@ -893,7 +893,7 @@ impl SnarlStyle {
     }
 }
 
-impl Default for SnarlStyle {
+impl Default for GraphStyle {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -925,32 +925,32 @@ struct PinResponse {
     wire_style: WireStyle,
 }
 
-/// Widget to display [`Snarl`] graph in [`Ui`].
+/// Widget to display [`Graph`] graph in [`Ui`].
 #[derive(Clone, Copy, Debug)]
-pub struct SnarlWidget {
+pub struct GraphWidget {
     id_salt: Id,
     id: Option<Id>,
-    style: SnarlStyle,
+    style: GraphStyle,
     min_size: Vec2,
     max_size: Vec2,
 }
 
-impl Default for SnarlWidget {
+impl Default for GraphWidget {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SnarlWidget {
-    /// Returns new [`SnarlWidget`] with default parameters.
+impl GraphWidget {
+    /// Returns new [`GraphWidget`] with default parameters.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
-        SnarlWidget {
-            id_salt: Id::new(":snarl:"),
+        GraphWidget {
+            id_salt: Id::new(":graph:"),
             id: None,
-            style: SnarlStyle::new(),
+            style: GraphStyle::new(),
             min_size: Vec2::ZERO,
             max_size: Vec2::INFINITY,
         }
@@ -961,7 +961,7 @@ impl SnarlWidget {
     /// Use this if you want to persist the state of the widget
     /// when it changes position in the widget hierarchy.
     ///
-    /// Prefer using [`SnarlWidget::id_salt`] otherwise.
+    /// Prefer using [`GraphWidget::id_salt`] otherwise.
     #[inline]
     #[must_use]
     pub const fn id(mut self, id: Id) -> Self {
@@ -973,7 +973,7 @@ impl SnarlWidget {
     ///
     /// It must be locally unique for the current [`Ui`] hierarchy position.
     ///
-    /// Ignored if [`SnarlWidget::id`] was set.
+    /// Ignored if [`GraphWidget::id`] was set.
     #[inline]
     #[must_use]
     pub fn id_salt(mut self, id_salt: impl Hash) -> Self {
@@ -981,15 +981,15 @@ impl SnarlWidget {
         self
     }
 
-    /// Set style parameters for the [`Snarl`] widget.
+    /// Set style parameters for the [`Graph`] widget.
     #[inline]
     #[must_use]
-    pub const fn style(mut self, style: SnarlStyle) -> Self {
+    pub const fn style(mut self, style: GraphStyle) -> Self {
         self.style = style;
         self
     }
 
-    /// Set minimum size of the [`Snarl`] widget.
+    /// Set minimum size of the [`Graph`] widget.
     #[inline]
     #[must_use]
     pub const fn min_size(mut self, min_size: Vec2) -> Self {
@@ -997,7 +997,7 @@ impl SnarlWidget {
         self
     }
 
-    /// Set maximum size of the [`Snarl`] widget.
+    /// Set maximum size of the [`Graph`] widget.
     #[inline]
     #[must_use]
     pub const fn max_size(mut self, max_size: Vec2) -> Self {
@@ -1010,20 +1010,20 @@ impl SnarlWidget {
         self.id.unwrap_or_else(|| ui_id.with(self.id_salt))
     }
 
-    /// Render [`Snarl`] using given viewer and style into the [`Ui`].
+    /// Render [`Graph`] using given viewer and style into the [`Ui`].
     #[inline]
-    pub fn show<T, V>(&self, snarl: &mut Snarl<T>, viewer: &mut V, ui: &mut Ui) -> egui::Response
+    pub fn show<T, V>(&self, graph: &mut Graph<T>, viewer: &mut V, ui: &mut Ui) -> egui::Response
     where
-        V: SnarlViewer<T>,
+        V: NodeViewer<T>,
     {
-        let snarl_id = self.get_id(ui.id());
+        let graph_id = self.get_id(ui.id());
 
-        show_snarl(
-            snarl_id,
+        show_graph(
+            graph_id,
             self.style,
             self.min_size,
             self.max_size,
-            snarl,
+            graph,
             viewer,
             ui,
         )
@@ -1031,17 +1031,17 @@ impl SnarlWidget {
 }
 
 #[inline(never)]
-fn show_snarl<T, V>(
-    snarl_id: Id,
-    mut style: SnarlStyle,
+fn show_graph<T, V>(
+    graph_id: Id,
+    mut style: GraphStyle,
     min_size: Vec2,
     max_size: Vec2,
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     ui: &mut Ui,
 ) -> egui::Response
 where
-    V: SnarlViewer<T>,
+    V: NodeViewer<T>,
 {
     #![allow(clippy::too_many_lines)]
 
@@ -1061,25 +1061,25 @@ where
     content_rect.max.x = content_rect.max.x.max(content_rect.min.x);
     content_rect.max.y = content_rect.max.y.max(content_rect.min.y);
 
-    let snarl_layer_id = LayerId::new(ui.layer_id().order, snarl_id);
+    let graph_layer_id = LayerId::new(ui.layer_id().order, graph_id);
 
-    ui.ctx().set_sublayer(ui.layer_id(), snarl_layer_id);
+    ui.ctx().set_sublayer(ui.layer_id(), graph_layer_id);
 
     let mut min_scale = style.get_min_scale();
     let mut max_scale = style.get_max_scale();
 
     let ui_rect = content_rect;
 
-    let mut snarl_state =
-        SnarlState::load(ui.ctx(), snarl_id, snarl, ui_rect, min_scale, max_scale);
-    let mut to_global = snarl_state.to_global();
+    let mut graph_state =
+        GraphState::load(ui.ctx(), graph_id, graph, ui_rect, min_scale, max_scale);
+    let mut to_global = graph_state.to_global();
 
     let clip_rect = ui.clip_rect();
 
     let mut ui = ui.new_child(
         UiBuilder::new()
             .ui_stack_info(UiStackInfo::new(UiKind::Frame).with_frame(bg_frame))
-            .layer_id(snarl_layer_id)
+            .layer_id(graph_layer_id)
             .max_rect(Rect::EVERYTHING)
             .sense(Sense::click_and_drag()),
     );
@@ -1094,19 +1094,19 @@ where
 
     clamp_scale(&mut to_global, min_scale, max_scale, ui_rect);
 
-    let mut snarl_resp = ui.response();
+    let mut graph_resp = ui.response();
     Scene::new()
         .zoom_range(min_scale..=max_scale)
-        .register_pan_and_zoom(&ui, &mut snarl_resp, &mut to_global);
+        .register_pan_and_zoom(&ui, &mut graph_resp, &mut to_global);
 
-    if snarl_resp.changed() {
+    if graph_resp.changed() {
         ui.ctx().request_repaint();
     }
 
     // Inform viewer about current transform.
-    viewer.current_transform(&mut to_global, snarl);
+    viewer.current_transform(&mut to_global, graph);
 
-    snarl_state.set_to_global(to_global);
+    graph_state.set_to_global(to_global);
 
     let to_global = to_global;
     let from_global = to_global.inverse();
@@ -1118,8 +1118,8 @@ where
     ui.set_clip_rect(viewport.intersect(viewport_clip));
     ui.expand_to_include_rect(viewport);
 
-    // Set transform for snarl layer.
-    ui.ctx().set_transform_layer(snarl_layer_id, to_global);
+    // Set transform for graph layer.
+    ui.ctx().set_transform_layer(graph_layer_id, to_global);
 
     // Map latest pointer position to graph space.
     latest_pos = latest_pos.map(|pos| from_global * pos);
@@ -1130,7 +1130,7 @@ where
         &style,
         ui.style(),
         ui.painter(),
-        snarl,
+        graph,
     );
 
     let mut node_moved = None;
@@ -1138,24 +1138,24 @@ where
 
     // Process selection rect.
     let mut rect_selection_ended = None;
-    if modifiers.shift || snarl_state.is_rect_selection() {
-        let select_resp = ui.interact(snarl_resp.rect, snarl_id.with("select"), Sense::drag());
+    if modifiers.shift || graph_state.is_rect_selection() {
+        let select_resp = ui.interact(graph_resp.rect, graph_id.with("select"), Sense::drag());
 
         if select_resp.dragged_by(PointerButton::Primary)
             && let Some(pos) = select_resp.interact_pointer_pos()
         {
-            if snarl_state.is_rect_selection() {
-                snarl_state.update_rect_selection(pos);
+            if graph_state.is_rect_selection() {
+                graph_state.update_rect_selection(pos);
             } else {
-                snarl_state.start_rect_selection(pos);
+                graph_state.start_rect_selection(pos);
             }
         }
 
         if select_resp.drag_stopped_by(PointerButton::Primary) {
-            if let Some(select_rect) = snarl_state.rect_selection() {
+            if let Some(select_rect) = graph_state.rect_selection() {
                 rect_selection_ended = Some(select_rect);
             }
-            snarl_state.stop_rect_selection();
+            graph_state.stop_rect_selection();
         }
     }
 
@@ -1173,26 +1173,26 @@ where
 
     let mut pin_hovered = None;
 
-    let draw_order = snarl_state.update_draw_order(snarl);
+    let draw_order = graph_state.update_draw_order(graph);
     let mut drag_released = false;
 
     let mut nodes_bb = Rect::NOTHING;
     let mut node_rects = Vec::new();
 
     for node_idx in draw_order {
-        if !snarl.nodes.contains(node_idx.0) {
+        if !graph.nodes.contains(node_idx.0) {
             continue;
         }
 
         // show_node(node_idx);
         let response = draw_node(
-            snarl,
+            graph,
             &mut ui,
             node_idx,
             viewer,
-            &mut snarl_state,
+            &mut graph_state,
             &style,
-            snarl_id,
+            graph_id,
             &mut input_info,
             modifiers,
             &mut output_info,
@@ -1222,7 +1222,7 @@ where
     let mut wire_shapes = Vec::new();
 
     // Draw and interact with wires
-    for wire in snarl.wires.iter() {
+    for wire in graph.wires.iter() {
         let Some(from_r) = output_info.get(&wire.out_pin) else {
             continue;
         };
@@ -1230,7 +1230,7 @@ where
             continue;
         };
 
-        if !snarl_state.has_new_wires() && snarl_resp.contains_pointer() && hovered_wire.is_none() {
+        if !graph_state.has_new_wires() && graph_resp.contains_pointer() && hovered_wire.is_none() {
             // Try to find hovered wire
             // If not dragging new wire
             // And not hovering over item above.
@@ -1239,7 +1239,7 @@ where
                 let wire_hit = hit_wire(
                     ui.ctx(),
                     WireId::Connected {
-                        snarl_id,
+                        graph_id,
                         out_pin: wire.out_pin,
                         in_pin: wire.in_pin,
                     },
@@ -1257,7 +1257,7 @@ where
                     hovered_wire = Some(wire);
 
                     let wire_r =
-                        ui.interact(snarl_resp.rect, ui.make_persistent_id(wire), Sense::click());
+                        ui.interact(graph_resp.rect, ui.make_persistent_id(wire), Sense::click());
 
                     //Remove hovered wire by second click
                     hovered_wire_disconnect |= wire_r.clicked_by(PointerButton::Secondary);
@@ -1297,7 +1297,7 @@ where
                 draw_wire(
                     &ui,
                     WireId::Connected {
-                        snarl_id,
+                        graph_id,
                         out_pin: wire.out_pin,
                         in_pin: wire.in_pin,
                     },
@@ -1318,7 +1318,7 @@ where
         draw_wire(
             &ui,
             WireId::Connected {
-                snarl_id,
+                graph_id,
                 out_pin: wire.out_pin,
                 in_pin: wire.in_pin,
             },
@@ -1336,9 +1336,9 @@ where
 
     // Remove hovered wire by second click
     if hovered_wire_disconnect && let Some(wire) = hovered_wire {
-        let out_pin = OutPin::new(snarl, wire.out_pin);
-        let in_pin = InPin::new(snarl, wire.in_pin);
-        viewer.disconnect(&out_pin, &in_pin, snarl);
+        let out_pin = OutPin::new(graph, wire.out_pin);
+        let in_pin = InPin::new(graph, wire.in_pin);
+        viewer.disconnect(&out_pin, &in_pin, graph);
     }
 
     if let Some(select_rect) = rect_selection_ended {
@@ -1353,13 +1353,13 @@ where
         });
 
         if modifiers.command {
-            snarl_state.deselect_many_nodes(select_nodes);
+            graph_state.deselect_many_nodes(select_nodes);
         } else {
-            snarl_state.select_many_nodes(!modifiers.shift, select_nodes);
+            graph_state.select_many_nodes(!modifiers.shift, select_nodes);
         }
     }
 
-    if let Some(select_rect) = snarl_state.rect_selection() {
+    if let Some(select_rect) = graph_state.rect_selection() {
         ui.painter().rect(
             select_rect,
             0.0,
@@ -1375,27 +1375,27 @@ where
     //
     // This uses `button_down` directly, instead of `clicked_by` to improve
     // responsiveness of the cancel action.
-    if snarl_state.has_new_wires() && ui.input(|x| x.pointer.button_down(PointerButton::Secondary))
+    if graph_state.has_new_wires() && ui.input(|x| x.pointer.button_down(PointerButton::Secondary))
     {
-        let _ = snarl_state.take_new_wires();
-        snarl_resp.flags.remove(Flags::CLICKED);
+        let _ = graph_state.take_new_wires();
+        graph_resp.flags.remove(Flags::CLICKED);
     }
 
     // Do centering unless no nodes are present.
-    if style.get_centering() && snarl_resp.double_clicked() && nodes_bb.is_finite() {
+    if style.get_centering() && graph_resp.double_clicked() && nodes_bb.is_finite() {
         let nodes_bb = nodes_bb.expand(100.0);
-        snarl_state.look_at(nodes_bb, ui_rect, min_scale, max_scale);
+        graph_state.look_at(nodes_bb, ui_rect, min_scale, max_scale);
     }
 
-    if modifiers.command && snarl_resp.clicked_by(PointerButton::Primary) {
-        snarl_state.deselect_all_nodes();
+    if modifiers.command && graph_resp.clicked_by(PointerButton::Primary) {
+        graph_state.deselect_all_nodes();
     }
 
     // Wire end position will be overridden when link graph menu is opened.
-    let mut wire_end_pos = latest_pos.unwrap_or_else(|| snarl_resp.rect.center());
+    let mut wire_end_pos = latest_pos.unwrap_or_else(|| graph_resp.rect.center());
 
     if drag_released {
-        let new_wires = snarl_state.take_new_wires();
+        let new_wires = graph_state.take_new_wires();
         if new_wires.is_some() {
             ui.ctx().request_repaint();
         }
@@ -1403,34 +1403,34 @@ where
             (Some(NewWires::In(in_pins)), Some(AnyPin::Out(out_pin))) => {
                 for in_pin in in_pins {
                     viewer.connect(
-                        &OutPin::new(snarl, out_pin),
-                        &InPin::new(snarl, in_pin),
-                        snarl,
+                        &OutPin::new(graph, out_pin),
+                        &InPin::new(graph, in_pin),
+                        graph,
                     );
                 }
             }
             (Some(NewWires::Out(out_pins)), Some(AnyPin::In(in_pin))) => {
                 for out_pin in out_pins {
                     viewer.connect(
-                        &OutPin::new(snarl, out_pin),
-                        &InPin::new(snarl, in_pin),
-                        snarl,
+                        &OutPin::new(graph, out_pin),
+                        &InPin::new(graph, in_pin),
+                        graph,
                     );
                 }
             }
-            (Some(new_wires), None) if snarl_resp.hovered() => {
+            (Some(new_wires), None) if graph_resp.hovered() => {
                 let pins = match &new_wires {
                     NewWires::In(x) => AnyPins::In(x),
                     NewWires::Out(x) => AnyPins::Out(x),
                 };
 
-                if viewer.has_dropped_wire_menu(pins, snarl) {
+                if viewer.has_dropped_wire_menu(pins, graph) {
                     // A wire is dropped without connecting to a pin.
                     // Show context menu for the wire drop.
-                    snarl_state.set_new_wires_menu(new_wires);
+                    graph_state.set_new_wires_menu(new_wires);
 
                     // Force open context menu.
-                    snarl_resp.flags.insert(Flags::LONG_TOUCHED);
+                    graph_resp.flags.insert(Flags::LONG_TOUCHED);
                 }
             }
             _ => {}
@@ -1438,14 +1438,14 @@ where
     }
 
     if let Some(interact_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-        if let Some(new_wires) = snarl_state.take_new_wires_menu() {
+        if let Some(new_wires) = graph_state.take_new_wires_menu() {
             let pins = match &new_wires {
                 NewWires::In(x) => AnyPins::In(x),
                 NewWires::Out(x) => AnyPins::Out(x),
             };
 
-            if viewer.has_dropped_wire_menu(pins, snarl) {
-                snarl_resp.context_menu(|ui| {
+            if viewer.has_dropped_wire_menu(pins, graph) {
+                graph_resp.context_menu(|ui| {
                     let pins = match &new_wires {
                         NewWires::In(x) => AnyPins::In(x),
                         NewWires::Out(x) => AnyPins::Out(x),
@@ -1457,24 +1457,24 @@ where
                     wire_end_pos = menu_pos;
 
                     // The context menu is opened as *link* graph menu.
-                    viewer.show_dropped_wire_menu(menu_pos, ui, pins, snarl);
+                    viewer.show_dropped_wire_menu(menu_pos, ui, pins, graph);
 
                     // Even though menu could be closed in `show_dropped_wire_menu`,
                     // we need to revert the new wires here, because menu state is inaccessible.
                     // Next frame context menu won't be shown and wires will be removed.
-                    snarl_state.set_new_wires_menu(new_wires);
+                    graph_state.set_new_wires_menu(new_wires);
                 });
             }
-        } else if viewer.has_graph_menu(interact_pos, snarl) {
-            snarl_resp.context_menu(|ui| {
+        } else if viewer.has_graph_menu(interact_pos, graph) {
+            graph_resp.context_menu(|ui| {
                 let menu_pos = from_global * ui.cursor().min;
 
-                viewer.show_graph_menu(menu_pos, ui, snarl);
+                viewer.show_graph_menu(menu_pos, ui, graph);
             });
         }
     }
 
-    match snarl_state.new_wires() {
+    match graph_state.new_wires() {
         None => {}
         Some(NewWires::In(in_pins)) => {
             for &in_pin in in_pins {
@@ -1483,7 +1483,7 @@ where
 
                 draw_wire(
                     &ui,
-                    WireId::NewInput { snarl_id, in_pin },
+                    WireId::NewInput { graph_id, in_pin },
                     &mut wire_shapes,
                     wire_frame_size,
                     style.get_upscale_wire_frame(),
@@ -1503,7 +1503,7 @@ where
 
                 draw_wire(
                     &ui,
-                    WireId::NewOutput { snarl_id, out_pin },
+                    WireId::NewOutput { graph_id, out_pin },
                     &mut wire_shapes,
                     wire_frame_size,
                     style.get_upscale_wire_frame(),
@@ -1527,43 +1527,43 @@ where
         }
     }
 
-    ui.advance_cursor_after_rect(Rect::from_min_size(snarl_resp.rect.min, Vec2::ZERO));
+    ui.advance_cursor_after_rect(Rect::from_min_size(graph_resp.rect.min, Vec2::ZERO));
 
     if let Some(node) = node_to_top
-        && snarl.nodes.contains(node.0)
+        && graph.nodes.contains(node.0)
     {
-        snarl_state.node_to_top(node);
+        graph_state.node_to_top(node);
     }
 
     if let Some((node, delta)) = node_moved
-        && snarl.nodes.contains(node.0)
+        && graph.nodes.contains(node.0)
     {
         ui.ctx().request_repaint();
-        if snarl_state.selected_nodes().contains(&node) {
-            for node in snarl_state.selected_nodes() {
-                let node = &mut snarl.nodes[node.0];
+        if graph_state.selected_nodes().contains(&node) {
+            for node in graph_state.selected_nodes() {
+                let node = &mut graph.nodes[node.0];
                 node.pos += delta;
             }
         } else {
-            let node = &mut snarl.nodes[node.0];
+            let node = &mut graph.nodes[node.0];
             node.pos += delta;
         }
     }
 
-    snarl_state.store(snarl, ui.ctx());
+    graph_state.store(graph, ui.ctx());
 
-    snarl_resp
+    graph_resp
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn draw_inputs<T, V>(
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     node: NodeId,
     inputs: &[InPin],
     pin_size: f32,
-    style: &SnarlStyle,
+    style: &GraphStyle,
     node_ui: &mut Ui,
     inputs_rect: Rect,
     payload_clip_rect: Rect,
@@ -1571,13 +1571,13 @@ fn draw_inputs<T, V>(
     min_pin_y_top: f32,
     min_pin_y_bottom: f32,
     input_spacing: Option<f32>,
-    snarl_state: &mut SnarlState,
+    graph_state: &mut GraphState,
     modifiers: Modifiers,
     input_positions: &mut HashMap<InPinId, PinResponse>,
     heights: Heights,
 ) -> DrawPinsResponse
 where
-    V: SnarlViewer<T>,
+    V: NodeViewer<T>,
 {
     let mut drag_released = false;
     let mut pin_hovered = None;
@@ -1590,7 +1590,7 @@ where
             .id_salt("inputs"),
     );
 
-    let snarl_clip_rect = node_ui.clip_rect();
+    let graph_clip_rect = node_ui.clip_rect();
     inputs_ui.shrink_clip_rect(payload_clip_rect);
 
     let pin_layout = Layout::left_to_right(Align::Min);
@@ -1620,13 +1620,13 @@ where
             let y1 = pin_ui.max_rect().max.y;
 
             // Show input content
-            let snarl_pin = viewer.show_input(in_pin, pin_ui, snarl);
-            if !snarl.nodes.contains(node.0) {
+            let node_pin = viewer.show_input(in_pin, pin_ui, graph);
+            if !graph.nodes.contains(node.0) {
                 // If removed
                 return;
             }
 
-            let pin_rect = snarl_pin.pin_rect(
+            let pin_rect = node_pin.pin_rect(
                 input_x,
                 min_pin_y_top.max(y0),
                 min_pin_y_bottom.max(y1),
@@ -1634,18 +1634,18 @@ where
             );
 
             // Interact with pin shape.
-            pin_ui.set_clip_rect(snarl_clip_rect);
+            pin_ui.set_clip_rect(graph_clip_rect);
 
             let r = pin_ui.interact(pin_rect, pin_ui.next_auto_id(), Sense::click_and_drag());
 
             pin_ui.skip_ahead_auto_ids(1);
 
             if r.clicked_by(PointerButton::Secondary) {
-                if snarl_state.has_new_wires() {
-                    snarl_state.remove_new_wire_in(in_pin.id);
+                if graph_state.has_new_wires() {
+                    graph_state.remove_new_wire_in(in_pin.id);
                 } else {
-                    viewer.drop_inputs(in_pin, snarl);
-                    if !snarl.nodes.contains(node.0) {
+                    viewer.drop_inputs(in_pin, graph);
+                    if !graph.nodes.contains(node.0) {
                         // If removed
                         return;
                     }
@@ -1653,16 +1653,16 @@ where
             }
             if r.drag_started_by(PointerButton::Primary) {
                 if modifiers.command {
-                    snarl_state.start_new_wires_out(&in_pin.remotes);
+                    graph_state.start_new_wires_out(&in_pin.remotes);
                     if !modifiers.shift {
-                        snarl.drop_inputs(in_pin.id);
-                        if !snarl.nodes.contains(node.0) {
+                        graph.drop_inputs(in_pin.id);
+                        if !graph.nodes.contains(node.0) {
                             // If removed
                             return;
                         }
                     }
                 } else {
-                    snarl_state.start_new_wire_in(in_pin.id);
+                    graph_state.start_new_wire_in(in_pin.id);
                 }
             }
 
@@ -1673,12 +1673,12 @@ where
             let mut visual_pin_rect = r.rect;
 
             if r.contains_pointer() {
-                if snarl_state.has_new_wires_in() {
+                if graph_state.has_new_wires_in() {
                     if modifiers.shift && !modifiers.command {
-                        snarl_state.add_new_wire_in(in_pin.id);
+                        graph_state.add_new_wire_in(in_pin.id);
                     }
                     if !modifiers.shift && modifiers.command {
-                        snarl_state.remove_new_wire_in(in_pin.id);
+                        graph_state.remove_new_wire_in(in_pin.id);
                     }
                 }
                 pin_hovered = Some(AnyPin::In(in_pin.id));
@@ -1686,7 +1686,7 @@ where
             }
 
             let wire_info =
-                snarl_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
+                node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
 
             input_positions.insert(
                 in_pin.id,
@@ -1717,12 +1717,12 @@ where
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn draw_outputs<T, V>(
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     node: NodeId,
     outputs: &[OutPin],
     pin_size: f32,
-    style: &SnarlStyle,
+    style: &GraphStyle,
     node_ui: &mut Ui,
     outputs_rect: Rect,
     payload_clip_rect: Rect,
@@ -1730,13 +1730,13 @@ fn draw_outputs<T, V>(
     min_pin_y_top: f32,
     min_pin_y_bottom: f32,
     output_spacing: Option<f32>,
-    snarl_state: &mut SnarlState,
+    graph_state: &mut GraphState,
     modifiers: Modifiers,
     output_positions: &mut HashMap<OutPinId, PinResponse>,
     heights: Heights,
 ) -> DrawPinsResponse
 where
-    V: SnarlViewer<T>,
+    V: NodeViewer<T>,
 {
     let mut drag_released = false;
     let mut pin_hovered = None;
@@ -1748,7 +1748,7 @@ where
             .id_salt("outputs"),
     );
 
-    let snarl_clip_rect = node_ui.clip_rect();
+    let graph_clip_rect = node_ui.clip_rect();
     outputs_ui.shrink_clip_rect(payload_clip_rect);
 
     let pin_layout = Layout::right_to_left(Align::Min);
@@ -1780,31 +1780,31 @@ where
             let y1 = pin_ui.max_rect().max.y;
 
             // Show output content
-            let snarl_pin = viewer.show_output(out_pin, pin_ui, snarl);
-            if !snarl.nodes.contains(node.0) {
+            let node_pin = viewer.show_output(out_pin, pin_ui, graph);
+            if !graph.nodes.contains(node.0) {
                 // If removed
                 return;
             }
 
-            let pin_rect = snarl_pin.pin_rect(
+            let pin_rect = node_pin.pin_rect(
                 output_x,
                 min_pin_y_top.max(y0),
                 min_pin_y_bottom.max(y1),
                 pin_size,
             );
 
-            pin_ui.set_clip_rect(snarl_clip_rect);
+            pin_ui.set_clip_rect(graph_clip_rect);
 
             let r = pin_ui.interact(pin_rect, pin_ui.next_auto_id(), Sense::click_and_drag());
 
             pin_ui.skip_ahead_auto_ids(1);
 
             if r.clicked_by(PointerButton::Secondary) {
-                if snarl_state.has_new_wires() {
-                    snarl_state.remove_new_wire_out(out_pin.id);
+                if graph_state.has_new_wires() {
+                    graph_state.remove_new_wire_out(out_pin.id);
                 } else {
-                    viewer.drop_outputs(out_pin, snarl);
-                    if !snarl.nodes.contains(node.0) {
+                    viewer.drop_outputs(out_pin, graph);
+                    if !graph.nodes.contains(node.0) {
                         // If removed
                         return;
                     }
@@ -1812,17 +1812,17 @@ where
             }
             if r.drag_started_by(PointerButton::Primary) {
                 if modifiers.command {
-                    snarl_state.start_new_wires_in(&out_pin.remotes);
+                    graph_state.start_new_wires_in(&out_pin.remotes);
 
                     if !modifiers.shift {
-                        snarl.drop_outputs(out_pin.id);
-                        if !snarl.nodes.contains(node.0) {
+                        graph.drop_outputs(out_pin.id);
+                        if !graph.nodes.contains(node.0) {
                             // If removed
                             return;
                         }
                     }
                 } else {
-                    snarl_state.start_new_wire_out(out_pin.id);
+                    graph_state.start_new_wire_out(out_pin.id);
                 }
             }
 
@@ -1833,12 +1833,12 @@ where
             let mut visual_pin_rect = r.rect;
 
             if r.contains_pointer() {
-                if snarl_state.has_new_wires_out() {
+                if graph_state.has_new_wires_out() {
                     if modifiers.shift && !modifiers.command {
-                        snarl_state.add_new_wire_out(out_pin.id);
+                        graph_state.add_new_wire_out(out_pin.id);
                     }
                     if !modifiers.shift && modifiers.command {
-                        snarl_state.remove_new_wire_out(out_pin.id);
+                        graph_state.remove_new_wire_out(out_pin.id);
                     }
                 }
                 pin_hovered = Some(AnyPin::Out(out_pin.id));
@@ -1846,7 +1846,7 @@ where
             }
 
             let wire_info =
-                snarl_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
+                node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
 
             output_positions.insert(
                 out_pin.id,
@@ -1875,7 +1875,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn draw_body<T, V>(
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     viewer: &mut V,
     node: NodeId,
     inputs: &[InPin],
@@ -1883,10 +1883,10 @@ fn draw_body<T, V>(
     ui: &mut Ui,
     body_rect: Rect,
     payload_clip_rect: Rect,
-    _snarl_state: &SnarlState,
+    _graph_state: &GraphState,
 ) -> DrawBodyResponse
 where
-    V: SnarlViewer<T>,
+    V: NodeViewer<T>,
 {
     let mut body_ui = ui.new_child(
         UiBuilder::new()
@@ -1897,7 +1897,7 @@ where
 
     body_ui.shrink_clip_rect(payload_clip_rect);
 
-    viewer.show_body(node, inputs, outputs, &mut body_ui, snarl);
+    viewer.show_body(node, inputs, outputs, &mut body_ui, graph);
 
     let final_rect = body_ui.min_rect();
     ui.expand_to_include_rect(final_rect.intersect(payload_clip_rect));
@@ -1912,42 +1912,42 @@ where
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn draw_node<T, V>(
-    snarl: &mut Snarl<T>,
+    graph: &mut Graph<T>,
     ui: &mut Ui,
     node: NodeId,
     viewer: &mut V,
-    snarl_state: &mut SnarlState,
-    style: &SnarlStyle,
-    snarl_id: Id,
+    graph_state: &mut GraphState,
+    style: &GraphStyle,
+    graph_id: Id,
     input_positions: &mut HashMap<InPinId, PinResponse>,
     modifiers: Modifiers,
     output_positions: &mut HashMap<OutPinId, PinResponse>,
 ) -> Option<DrawNodeResponse>
 where
-    V: SnarlViewer<T>,
+    V: NodeViewer<T>,
 {
     let Node {
         pos,
         open,
         ref value,
-    } = snarl.nodes[node.0];
+    } = graph.nodes[node.0];
 
     // Collect pins
     let inputs_count = viewer.inputs(value);
     let outputs_count = viewer.outputs(value);
 
     let inputs = (0..inputs_count)
-        .map(|idx| InPin::new(snarl, InPinId { node, input: idx }))
+        .map(|idx| InPin::new(graph, InPinId { node, input: idx }))
         .collect::<Vec<_>>();
 
     let outputs = (0..outputs_count)
-        .map(|idx| OutPin::new(snarl, OutPinId { node, output: idx }))
+        .map(|idx| OutPin::new(graph, OutPinId { node, output: idx }))
         .collect::<Vec<_>>();
 
     let node_pos = pos.round_ui();
 
     // Generate persistent id for the node.
-    let node_id = snarl_id.with(("snarl-node", node));
+    let node_id = graph_id.with(("graph-node", node));
 
     let openness = ui.ctx().animate_bool(node_id, open);
 
@@ -1965,7 +1965,7 @@ where
         node,
         &inputs,
         &outputs,
-        snarl,
+        graph,
     );
 
     let header_frame = viewer.header_frame(
@@ -1973,13 +1973,13 @@ where
         node,
         &inputs,
         &outputs,
-        snarl,
+        graph,
     );
 
     // Rect for node + frame margin.
     let node_frame_rect = node_rect + node_frame.total_margin();
 
-    if snarl_state.selected_nodes().contains(&node) {
+    if graph_state.selected_nodes().contains(&node) {
         let select_style = style.get_select_style(ui.style());
 
         let select_rect = node_frame_rect + select_style.margin;
@@ -2014,9 +2014,9 @@ where
 
     if r.clicked_by(PointerButton::Primary) || r.dragged_by(PointerButton::Primary) {
         if modifiers.shift {
-            snarl_state.select_one_node(modifiers.command, node);
+            graph_state.select_one_node(modifiers.command, node);
         } else if modifiers.command {
-            snarl_state.deselect_one_node(node);
+            graph_state.deselect_one_node(node);
         }
     }
 
@@ -2024,25 +2024,25 @@ where
         node_to_top = Some(node);
     }
 
-    if viewer.has_node_menu(&snarl.nodes[node.0].value) {
+    if viewer.has_node_menu(&graph.nodes[node.0].value) {
         r.context_menu(|ui| {
-            viewer.show_node_menu(node, &inputs, &outputs, ui, snarl);
+            viewer.show_node_menu(node, &inputs, &outputs, ui, graph);
         });
     }
 
-    if !snarl.nodes.contains(node.0) {
+    if !graph.nodes.contains(node.0) {
         node_state.clear(ui.ctx());
         // If removed
         return None;
     }
 
-    if viewer.has_on_hover_popup(&snarl.nodes[node.0].value) {
+    if viewer.has_on_hover_popup(&graph.nodes[node.0].value) {
         r.on_hover_ui_at_pointer(|ui| {
-            viewer.show_on_hover_popup(node, &inputs, &outputs, ui, snarl);
+            viewer.show_on_hover_popup(node, &inputs, &outputs, ui, graph);
         });
     }
 
-    if !snarl.nodes.contains(node.0) {
+    if !graph.nodes.contains(node.0) {
         node_state.clear(ui.ctx());
         // If removed
         return None;
@@ -2068,8 +2068,8 @@ where
         .map(|_| node_ui.painter().add(egui::Shape::Noop));
 
     let r = node_frame.show(node_ui, |ui| {
-        if viewer.has_node_style(node, &inputs, &outputs, snarl) {
-            viewer.apply_node_style(ui.style_mut(), node, &inputs, &outputs, snarl);
+        if viewer.has_node_style(node, &inputs, &outputs, graph) {
+            viewer.apply_node_style(ui.style_mut(), node, &inputs, &outputs, graph);
         }
 
         // Input pins' center side by X axis.
@@ -2142,7 +2142,7 @@ where
         );
 
         let node_layout =
-            viewer.node_layout(style.get_node_layout(), node, &inputs, &outputs, snarl);
+            viewer.node_layout(style.get_node_layout(), node, &inputs, &outputs, graph);
 
         let payload_clip_rect =
             Rect::from_min_max(node_rect.min, pos2(node_rect.max.x, f32::INFINITY));
@@ -2151,7 +2151,7 @@ where
             NodeLayoutKind::Coil => {
                 // Show input pins.
                 let r = draw_inputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &inputs,
@@ -2164,7 +2164,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     input_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     input_positions,
                     node_layout.input_heights(&node_state),
@@ -2181,7 +2181,7 @@ where
                 let inputs_rect = r.final_rect;
                 let inputs_size = inputs_rect.size();
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2189,7 +2189,7 @@ where
                 // Show output pins.
 
                 let r = draw_outputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &outputs,
@@ -2202,7 +2202,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     output_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     output_positions,
                     node_layout.output_heights(&node_state),
@@ -2219,7 +2219,7 @@ where
                 let outputs_rect = r.final_rect;
                 let outputs_size = outputs_rect.size();
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2235,7 +2235,7 @@ where
                 let mut pins_rect = inputs_rect.union(outputs_rect);
 
                 // Show body if there's one.
-                if viewer.has_body(&snarl.nodes.get(node.0).unwrap().value) {
+                if viewer.has_body(&graph.nodes.get(node.0).unwrap().value) {
                     let body_rect = Rect::from_min_max(
                         pos2(
                             inputs_rect.right() + ui.spacing().item_spacing.x,
@@ -2248,7 +2248,7 @@ where
                     );
 
                     let r = draw_body(
-                        snarl,
+                        graph,
                         viewer,
                         node,
                         &inputs,
@@ -2256,7 +2256,7 @@ where
                         ui,
                         body_rect,
                         payload_clip_rect,
-                        snarl_state,
+                        graph_state,
                     );
 
                     new_pins_size.x += r.final_rect.width() + ui.spacing().item_spacing.x;
@@ -2264,7 +2264,7 @@ where
 
                     pins_rect = pins_rect.union(body_rect);
 
-                    if !snarl.nodes.contains(node.0) {
+                    if !graph.nodes.contains(node.0) {
                         // If removed
                         return;
                     }
@@ -2276,7 +2276,7 @@ where
                 // Show input pins.
 
                 let r = draw_inputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &inputs,
@@ -2289,7 +2289,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     input_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     input_positions,
                     node_layout.input_heights(&node_state),
@@ -2309,7 +2309,7 @@ where
 
                 let mut next_y = inputs_rect.bottom() + ui.spacing().item_spacing.y;
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2317,11 +2317,11 @@ where
                 let mut pins_rect = inputs_rect;
 
                 // Show body if there's one.
-                if viewer.has_body(&snarl.nodes.get(node.0).unwrap().value) {
+                if viewer.has_body(&graph.nodes.get(node.0).unwrap().value) {
                     let body_rect = payload_rect.intersect(Rect::everything_below(next_y));
 
                     let r = draw_body(
-                        snarl,
+                        graph,
                         viewer,
                         node,
                         &inputs,
@@ -2329,7 +2329,7 @@ where
                         ui,
                         body_rect,
                         payload_clip_rect,
-                        snarl_state,
+                        graph_state,
                     );
 
                     let body_rect = r.final_rect;
@@ -2337,7 +2337,7 @@ where
                     new_pins_size.x = f32::max(new_pins_size.x, body_rect.width());
                     new_pins_size.y += body_rect.height() + ui.spacing().item_spacing.y;
 
-                    if !snarl.nodes.contains(node.0) {
+                    if !graph.nodes.contains(node.0) {
                         // If removed
                         return;
                     }
@@ -2351,7 +2351,7 @@ where
                 let outputs_rect = payload_rect.intersect(Rect::everything_below(next_y));
 
                 let r = draw_outputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &outputs,
@@ -2364,7 +2364,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     output_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     output_positions,
                     node_layout.output_heights(&node_state),
@@ -2380,7 +2380,7 @@ where
 
                 let outputs_rect = r.final_rect;
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2400,7 +2400,7 @@ where
 
                 let outputs_rect = payload_rect;
                 let r = draw_outputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &outputs,
@@ -2413,7 +2413,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     output_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     output_positions,
                     node_layout.output_heights(&node_state),
@@ -2433,7 +2433,7 @@ where
 
                 let mut next_y = outputs_rect.bottom() + ui.spacing().item_spacing.y;
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2441,11 +2441,11 @@ where
                 let mut pins_rect = outputs_rect;
 
                 // Show body if there's one.
-                if viewer.has_body(&snarl.nodes.get(node.0).unwrap().value) {
+                if viewer.has_body(&graph.nodes.get(node.0).unwrap().value) {
                     let body_rect = payload_rect.intersect(Rect::everything_below(next_y));
 
                     let r = draw_body(
-                        snarl,
+                        graph,
                         viewer,
                         node,
                         &inputs,
@@ -2453,7 +2453,7 @@ where
                         ui,
                         body_rect,
                         payload_clip_rect,
-                        snarl_state,
+                        graph_state,
                     );
 
                     let body_rect = r.final_rect;
@@ -2461,7 +2461,7 @@ where
                     new_pins_size.x = f32::max(new_pins_size.x, body_rect.width());
                     new_pins_size.y += body_rect.height() + ui.spacing().item_spacing.y;
 
-                    if !snarl.nodes.contains(node.0) {
+                    if !graph.nodes.contains(node.0) {
                         // If removed
                         return;
                     }
@@ -2475,7 +2475,7 @@ where
                 let inputs_rect = payload_rect.intersect(Rect::everything_below(next_y));
 
                 let r = draw_inputs(
-                    snarl,
+                    graph,
                     viewer,
                     node,
                     &inputs,
@@ -2488,7 +2488,7 @@ where
                     node_rect.min.y,
                     node_rect.min.y + node_state.header_height(),
                     input_spacing,
-                    snarl_state,
+                    graph_state,
                     modifiers,
                     input_positions,
                     node_layout.input_heights(&node_state),
@@ -2504,7 +2504,7 @@ where
 
                 let inputs_rect = r.final_rect;
 
-                if !snarl.nodes.contains(node.0) {
+                if !graph.nodes.contains(node.0) {
                     // If removed
                     return;
                 }
@@ -2521,7 +2521,7 @@ where
             }
         };
 
-        if viewer.has_footer(&snarl.nodes[node.0].value) {
+        if viewer.has_footer(&graph.nodes[node.0].value) {
             let footer_rect = Rect::from_min_max(
                 pos2(
                     node_rect.left(),
@@ -2538,7 +2538,7 @@ where
             );
             footer_ui.shrink_clip_rect(payload_clip_rect);
 
-            viewer.show_footer(node, &inputs, &outputs, &mut footer_ui, snarl);
+            viewer.show_footer(node, &inputs, &outputs, &mut footer_ui, graph);
 
             let final_rect = footer_ui.min_rect();
             ui.expand_to_include_rect(final_rect.intersect(payload_clip_rect));
@@ -2547,7 +2547,7 @@ where
             new_pins_size.x = f32::max(new_pins_size.x, footer_size.x);
             new_pins_size.y += footer_size.y + ui.spacing().item_spacing.y;
 
-            if !snarl.nodes.contains(node.0) {
+            if !graph.nodes.contains(node.0) {
                 // If removed
                 return;
             }
@@ -2561,7 +2561,7 @@ where
         // Show node's header
         //
         // We use `Layout::top_down(Align::Min)` — left-aligned —
-        // instead of upstream egui-snarl's `Align::Center`. The
+        // instead of upstream egui-graph's `Align::Center`. The
         // centred variant horizontally centres any child whose
         // width is less than the header's max width, so any
         // viewer that puts a smaller-than-full-width LTR row in
@@ -2590,13 +2590,13 @@ where
 
                     if r.clicked_by(PointerButton::Primary) {
                         // Toggle node's openness.
-                        snarl.open_node(node, !open);
+                        graph.open_node(node, !open);
                     }
                 }
 
                 ui.allocate_exact_size(header_drag_space, Sense::hover());
 
-                viewer.show_header(node, &inputs, &outputs, ui, snarl);
+                viewer.show_header(node, &inputs, &outputs, ui, graph);
 
                 header_rect = ui.min_rect();
             });
@@ -2642,14 +2642,14 @@ where
         );
     }
 
-    if !snarl.nodes.contains(node.0) {
+    if !graph.nodes.contains(node.0) {
         ui.ctx().request_repaint();
         node_state.clear(ui.ctx());
         // If removed
         return None;
     }
 
-    viewer.final_node_rect(node, r.response.rect, ui, snarl);
+    viewer.final_node_rect(node, r.response.rect, ui, graph);
 
     node_state.store(ui.ctx());
     Some(DrawNodeResponse {
@@ -2749,14 +2749,14 @@ fn with_alpha_factor(c: Color32, f: f32) -> Color32 {
 //     })
 // }
 
-impl<T> Snarl<T> {
-    /// Render [`Snarl`] using given viewer and style into the [`Ui`].
+impl<T> Graph<T> {
+    /// Render [`Graph`] using given viewer and style into the [`Ui`].
     #[inline]
-    pub fn show<V>(&mut self, viewer: &mut V, style: &SnarlStyle, id_salt: impl Hash, ui: &mut Ui)
+    pub fn show<V>(&mut self, viewer: &mut V, style: &GraphStyle, id_salt: impl Hash, ui: &mut Ui)
     where
-        V: SnarlViewer<T>,
+        V: NodeViewer<T>,
     {
-        show_snarl(
+        show_graph(
             ui.make_persistent_id(id_salt),
             *style,
             Vec2::ZERO,
@@ -2795,7 +2795,7 @@ fn scale_transform_around(transform: &TSTransform, scaling: f32, point: Pos2) ->
 }
 
 #[test]
-const fn snarl_style_is_send_sync() {
+const fn graph_style_is_send_sync() {
     const fn is_send_sync<T: Send + Sync>() {}
-    is_send_sync::<SnarlStyle>();
+    is_send_sync::<GraphStyle>();
 }
