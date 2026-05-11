@@ -196,18 +196,21 @@ pub fn maximizable_with_opts(
             );
         }
 
-        // Full-window overlay at `Order::Foreground`. Frame has
-        // NO corner radius / stroke / inner margin — the whole
-        // point is to cover the screen edge-to-edge, so any
-        // rounding or inset reads as "not actually full" at the
-        // corners. The body fills the full screen; the minimize
-        // ribbon button floats on top in the upper-right corner,
-        // exactly where a regular right-rail ribbon button would
-        // land (`EDGE_GAP` from each edge, `SIDE_BTN_SIZE` chip).
+        // Full-window overlay at `Order::Background` — the same
+        // layer `Pane2` uses. Painting at Background (instead of
+        // Foreground) lets host apps paint their own
+        // `Order::Middle` ribbons / tooltips ON TOP of the overlay
+        // when the widget is fullscreen, so the host can compose a
+        // "new canvas" look around the maximised body using the
+        // standard frost UI primitives (`ribbon::draw_assembly`,
+        // floating panes, etc.) — the consumer just branches on
+        // `is_any_fullscreen(ctx)` and paints whichever rail set
+        // belongs to the fullscreen mode. Frame has NO corner
+        // radius / stroke / inner margin so it covers edge-to-edge.
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
         egui::Area::new(ui.id().with(("frost_maximize_overlay", id_salt)))
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Background)
             .fixed_pos(screen.min)
             .show(&ctx, |ui| {
                 ui.set_min_size(screen.size());

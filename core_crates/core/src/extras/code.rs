@@ -64,6 +64,24 @@ pub fn frost_code_editor(
     )
 }
 
+/// The maximise-state key the code-editor wrapper registers with
+/// [`crate::embed`], computed from the caller-supplied `id_salt`
+/// (the same one passed to [`frost_code_editor`]). Compare against
+/// [`crate::embed::fullscreen_owner`] to detect "is THIS code
+/// editor the one currently in fullscreen?".
+#[must_use]
+pub fn code_fullscreen_key(id_salt: impl Hash) -> egui::Id {
+    crate::embed::maximize_state_key(id_salt)
+}
+
+/// `true` while the code editor identified by `id_salt` is
+/// currently in its fullscreen overlay. Shorthand for
+/// `fullscreen_owner(ctx) == Some(code_fullscreen_key(id_salt))`.
+#[must_use]
+pub fn is_code_fullscreen(ctx: &egui::Context, id_salt: impl Hash) -> bool {
+    crate::embed::fullscreen_owner(ctx) == Some(code_fullscreen_key(id_salt))
+}
+
 /// Same as [`frost_code_editor`] but accepts an [`OverlayOpts`] so
 /// the caller can choose where the minimize chip lands on the
 /// fullscreen overlay (which edge + which cluster along that edge).

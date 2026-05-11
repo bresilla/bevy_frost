@@ -297,6 +297,26 @@ pub fn frost_node_graph<T, V: NodeViewer<T>>(
 }
 
 /// Like [`frost_node_graph`] but accepts [`OverlayOpts`] so the caller
+/// The maximise-state key the node-graph wrapper registers with
+/// [`crate::embed`]. Compare against
+/// [`crate::embed::fullscreen_owner`] to detect "is the graph the
+/// one currently in fullscreen?" — useful when the host wants to
+/// paint graph-specific chrome (toolbar / category sidebar /
+/// status line) on top of the maximised canvas using its normal
+/// ribbon assembly.
+#[must_use]
+pub fn graph_fullscreen_key() -> egui::Id {
+    crate::embed::maximize_state_key(egui::Id::new("frost_node_graph_widget"))
+}
+
+/// `true` while the node-graph widget is currently in its
+/// fullscreen overlay. Shorthand for
+/// `fullscreen_owner(ctx) == Some(graph_fullscreen_key())`.
+#[must_use]
+pub fn is_graph_fullscreen(ctx: &egui::Context) -> bool {
+    crate::embed::fullscreen_owner(ctx) == Some(graph_fullscreen_key())
+}
+
 /// picks where the fullscreen / minimize chip lands on the overlay
 /// (which edge + which cluster along that edge).
 pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(

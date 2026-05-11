@@ -37,8 +37,8 @@ use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // (`egui_code_editor`). Both live under `bevy_frost::extras`.
 use bevy_frost::extras::code::{frost_code_editor_with_opts, Syntax};
 use bevy_frost::extras::graph::{
-    frost_node_graph, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Graph, NodePin,
-    NodeViewer,
+    frost_node_graph, InPin, InPinId, NodeViewState, OutPin, OutPinId, PinInfo, Graph,
+    NodePin, NodeViewer,
 };
 use bevy_frost::node_view_backend::{
     BevyNodeViewBackend, NodeViewSlots, PendingNodeViewCopies,
@@ -55,6 +55,15 @@ const RIBBON_RIGHT:  &str = "demo_ribbon_right";
 const RIBBON_TOP:    &str = "demo_ribbon_top";
 const RIBBON_BOTTOM: &str = "demo_ribbon_bottom";
 
+// Fullscreen-only ribbons. Painted only while a maximizable widget
+// (node graph / code editor) is in its fullscreen overlay — driven
+// by `is_any_fullscreen(ctx)` in the per-frame top-level callback
+// below. Uses the SAME ribbon API as the regular rails, so the
+// fullscreen view looks like a fresh canvas built from the same
+// frost UI primitives.
+const RIBBON_FS_TOP:   &str = "demo_ribbon_fs_top";
+const RIBBON_FS_LEFT:  &str = "demo_ribbon_fs_left";
+
 const PANE_WIDGETS:    &str = "demo_pane_widgets";
 const PANE_CONTAINERS: &str = "demo_pane_containers";
 const PANE_SCENE:      &str = "demo_pane_scene";
@@ -65,6 +74,27 @@ const PANE_ABOUT:      &str = "demo_pane_about";
 
 const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
+
+// Fullscreen-only ribbon actions. Click targets are no-ops in this
+// demo — purpose is to show that "the same ribbon API works as
+// fullscreen chrome too" with different toolsets per widget kind.
+// Graph fullscreen:
+const FS_GRAPH_ADD:      &str = "demo_fs_graph_add";
+const FS_GRAPH_FRAME:    &str = "demo_fs_graph_frame";
+const FS_GRAPH_CLEAR:    &str = "demo_fs_graph_clear";
+const FS_GRAPH_SAVE:     &str = "demo_fs_graph_save";
+const FS_CAT_SOURCES:    &str = "demo_fs_cat_sources";
+const FS_CAT_MATH:       &str = "demo_fs_cat_math";
+const FS_CAT_NOISE:      &str = "demo_fs_cat_noise";
+const FS_CAT_LOGIC:      &str = "demo_fs_cat_logic";
+// Code-editor fullscreen:
+const FS_CODE_SAVE:      &str = "demo_fs_code_save";
+const FS_CODE_RUN:       &str = "demo_fs_code_run";
+const FS_CODE_FORMAT:    &str = "demo_fs_code_format";
+const FS_CODE_FIND:      &str = "demo_fs_code_find";
+const FS_FILE_MAIN:      &str = "demo_fs_file_main";
+const FS_FILE_LIB:       &str = "demo_fs_file_lib";
+const FS_FILE_CARGO:     &str = "demo_fs_file_cargo";
 
 const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
     (RIBBON_LEFT,   PANE_WIDGETS,    PaneAnchor::LeftRail(RailZone::Start),    "Widgets"),
@@ -117,6 +147,83 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
                  child_ribbon: None, role: Some(RibbonRole::Icon) },
     RibbonItem { id: ACTION_NEXT_CUBE, ribbon: RIBBON_BOTTOM, cluster: RibbonCluster::End,   slot: 1,
                  glyph: RibbonGlyph::Icon("arrow-right"), tooltip: "Next cube",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+];
+
+// ─── Fullscreen-only ribbon sets ───────────────────────────────────
+//
+// Painted by `draw_assembly` only while the corresponding widget is
+// in its fullscreen overlay — branched in the per-frame paint via
+// `is_graph_fullscreen` / `is_code_fullscreen`. Each set uses the
+// SAME ribbon API as the regular rails, so the fullscreen view is
+// a fresh canvas built from the same frost UI primitives.
+
+// Shared rail-definitions reused by both fullscreen flavours. Items
+// reference these by id; the per-widget `RIBBON_ITEMS_FS_*` slices
+// below decide which icons populate each rail.
+const RIBBONS_FS: &[RibbonDef] = &[
+    RibbonDef { id: RIBBON_FS_TOP,  edge: RibbonEdge::Top,  role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: false,
+                accepts: &[] },
+    RibbonDef { id: RIBBON_FS_LEFT, edge: RibbonEdge::Left, role: RibbonRole::Panel,
+                mode: RibbonMode::ThreeSided, draggable: false,
+                accepts: &[] },
+];
+
+// Node-graph fullscreen: a graph-builder toolbar across the top
+// (Add / Frame / Clear / Save) plus a category sidebar on the left
+// (Sources / Math / Noise / Logic).
+const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
+    RibbonItem { id: FS_GRAPH_ADD,    ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 0,
+                 glyph: RibbonGlyph::Icon("add"),       tooltip: "Add node",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_GRAPH_FRAME,  ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 1,
+                 glyph: RibbonGlyph::Icon("expand"),    tooltip: "Frame all",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_GRAPH_CLEAR,  ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 2,
+                 glyph: RibbonGlyph::Icon("trash"),     tooltip: "Clear graph",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_GRAPH_SAVE,   ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::End,   slot: 0,
+                 glyph: RibbonGlyph::Icon("save"),      tooltip: "Save graph",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CAT_SOURCES,  ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 0,
+                 glyph: RibbonGlyph::Icon("dot"),       tooltip: "Sources",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CAT_MATH,     ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 1,
+                 glyph: RibbonGlyph::Icon("calculator"), tooltip: "Math",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CAT_NOISE,    ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 2,
+                 glyph: RibbonGlyph::Icon("wave"),      tooltip: "Noise",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CAT_LOGIC,    ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 3,
+                 glyph: RibbonGlyph::Icon("flowchart"), tooltip: "Logic",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+];
+
+// Code-editor fullscreen: an editor toolbar across the top
+// (Save / Run / Format / Find) plus a file-switcher sidebar on the
+// left (main.rs / lib.rs / Cargo.toml).
+const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
+    RibbonItem { id: FS_CODE_SAVE,    ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 0,
+                 glyph: RibbonGlyph::Icon("save"),      tooltip: "Save",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CODE_RUN,     ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 1,
+                 glyph: RibbonGlyph::Icon("play"),      tooltip: "Run",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CODE_FORMAT,  ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::Start, slot: 2,
+                 glyph: RibbonGlyph::Icon("wand"),      tooltip: "Format",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_CODE_FIND,    ribbon: RIBBON_FS_TOP,  cluster: RibbonCluster::End,   slot: 0,
+                 glyph: RibbonGlyph::Icon("search"),    tooltip: "Find",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_FILE_MAIN,    ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 0,
+                 glyph: RibbonGlyph::Icon("code"),      tooltip: "main.rs",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_FILE_LIB,     ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 1,
+                 glyph: RibbonGlyph::Icon("book"),      tooltip: "lib.rs",
+                 child_ribbon: None, role: Some(RibbonRole::Icon) },
+    RibbonItem { id: FS_FILE_CARGO,   ribbon: RIBBON_FS_LEFT, cluster: RibbonCluster::Start, slot: 2,
+                 glyph: RibbonGlyph::Icon("box"),       tooltip: "Cargo.toml",
                  child_ribbon: None, role: Some(RibbonRole::Icon) },
 ];
 
@@ -491,14 +598,42 @@ fn ui_system(
     frost_core::style::apply_theme(ctx, *accent, *glass);
 
     let accent_col = frost_core::style::active_accent();
-    // Fullscreen-view gate: when ANY maximizable widget is in
-    // full-window mode, skip the ribbon assembly + every pane that
-    // doesn't host the fullscreen widget. The fullscreen view truly
-    // owns the screen — no ribbons, no other panes, no Bevy scene
-    // (the camera-disable system handles the latter).
+    // Fullscreen-view branch. The fullscreen overlay paints at
+    // `Order::Background`, so the ribbon assembly below (drawn at
+    // `Order::Middle`) layers over the maximised canvas. Which set
+    // of items the rails carry depends on WHICH widget is fullscreen
+    // — graph and code get their own toolsets, picked via the
+    // module-supplied `is_graph_fullscreen` / `is_code_fullscreen`
+    // helpers.
     let fs_active = frost_core::extras::maximize::is_any_fullscreen(ctx);
+    let graph_fs = bevy_frost::extras::graph::is_graph_fullscreen(ctx);
+    let code_fs  = bevy_frost::extras::code::is_code_fullscreen(
+        ctx, cid(PANE_EDITOR, "code_state"),
+    );
     let mut clicks: Vec<frost_core::ribbon::RibbonClick> = Vec::new();
-    if !fs_active {
+    if fs_active {
+        let fs_items: &[RibbonItem] = if graph_fs {
+            RIBBON_ITEMS_FS_GRAPH
+        } else if code_fs {
+            RIBBON_ITEMS_FS_CODE
+        } else {
+            // Some other maximizable widget is fullscreen (none in
+            // this demo) — fall back to the graph set so the rails
+            // still paint.
+            RIBBON_ITEMS_FS_GRAPH
+        };
+        // Per-frame scratch state — fullscreen rails aren't
+        // draggable and don't open panes, so we hand `draw_assembly`
+        // throwaway buffers.
+        let mut fs_open      = frost_core::ribbon::RibbonOpen::default();
+        let mut fs_placement = frost_core::ribbon::RibbonPlacement::default();
+        let mut fs_drag      = frost_core::ribbon::RibbonDrag::default();
+        let _ = draw_assembly(
+            ctx, accent_col, RIBBONS_FS, fs_items,
+            &mut fs_open, &mut fs_placement, &mut fs_drag,
+            |_| false,
+        );
+    } else {
         clicks = draw_assembly(
             ctx, accent_col, RIBBONS, RIBBON_ITEMS,
             &mut open, &mut placement, &mut drag,
