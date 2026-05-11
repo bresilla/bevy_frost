@@ -16,7 +16,7 @@ use egui::{
 use egui_scale::EguiScale;
 use smallvec::SmallVec;
 
-use crate::vendored::{InPin, InPinId, Node, NodeId, OutPin, OutPinId, Graph, ui::wire::WireId};
+use crate::vendored::{Graph, InPin, InPinId, Node, NodeId, OutPin, OutPinId, ui::wire::WireId};
 
 mod background_pattern;
 mod pin;
@@ -33,7 +33,7 @@ use self::{
 
 pub use self::{
     background_pattern::{BackgroundPattern, Dots, Grid, Hex},
-    pin::{AnyPins, PinInfo, PinShape, NodePin},
+    pin::{AnyPins, NodePin, PinInfo, PinShape},
     state::GraphState,
     viewer::NodeViewer,
     wire::{WireColorMode, WireLayer, WireStyle},
@@ -332,7 +332,12 @@ pub struct NodeHalo {
 
 impl Default for NodeHalo {
     fn default() -> Self {
-        Self { color: Color32::WHITE, gap: 4.0, width: 1.5, radius: 8 }
+        Self {
+            color: Color32::WHITE,
+            gap: 4.0,
+            width: 1.5,
+            radius: 8,
+        }
     }
 }
 
@@ -716,7 +721,7 @@ impl GraphStyle {
     }
 
     #[allow(dead_code)] // mirrors `get_wire_glow`; kept symmetric for future
-                        // pin-halo render paths that will read it.
+    // pin-halo render paths that will read it.
     fn get_pin_glow(&self) -> f32 {
         self.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5)
     }
@@ -1268,7 +1273,7 @@ where
         }
 
         let color = match style.get_wire_color_mode() {
-            WireColorMode::Mix        => mix_colors(from_r.wire_color, to_r.wire_color),
+            WireColorMode::Mix => mix_colors(from_r.wire_color, to_r.wire_color),
             WireColorMode::FromSource => from_r.wire_color,
             WireColorMode::FromTarget => to_r.wire_color,
         };
@@ -1288,12 +1293,8 @@ where
         let glow = style.get_wire_glow();
         if glow > 0.0 {
             // (width_factor, alpha_factor) per layer, outermost first.
-            const GLOW_LAYERS: [(f32, f32); 4] = [
-                (2.0, 0.08),
-                (1.7, 0.12),
-                (1.4, 0.18),
-                (1.2, 0.25),
-            ];
+            const GLOW_LAYERS: [(f32, f32); 4] =
+                [(2.0, 0.08), (1.7, 0.12), (1.4, 0.18), (1.2, 0.25)];
             for (w_mul, a_mul) in GLOW_LAYERS {
                 let layer_color = with_alpha_factor(color, a_mul * glow);
                 draw_wire(
@@ -1687,8 +1688,7 @@ where
                 visual_pin_rect = visual_pin_rect.scale_from_center(1.2);
             }
 
-            let wire_info =
-                node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
+            let wire_info = node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
 
             input_positions.insert(
                 in_pin.id,
@@ -1847,8 +1847,7 @@ where
                 visual_pin_rect = visual_pin_rect.scale_from_center(1.2);
             }
 
-            let wire_info =
-                node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
+            let wire_info = node_pin.draw(style, pin_ui.style(), visual_pin_rect, pin_ui.painter());
 
             output_positions.insert(
                 out_pin.id,

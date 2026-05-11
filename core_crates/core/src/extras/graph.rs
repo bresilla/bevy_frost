@@ -27,13 +27,12 @@
 //! });
 //! ```
 
-
 use egui;
 
 pub use frost_graph::{
-    AnyPins, BackgroundPattern, Dots, Grid, Hex, InPin, InPinId, NodeHalo, NodeId, NodeLayout,
-    NodeViewBackend, NodeViewState, OutPin, OutPinId, PinInfo, PinPlacement, PinShape, Graph,
-    NodePin, GraphState, GraphStyle, NodeViewer, GraphWidget, WireColorMode,
+    AnyPins, BackgroundPattern, Dots, Graph, GraphState, GraphStyle, GraphWidget, Grid, Hex, InPin,
+    InPinId, NodeHalo, NodeId, NodeLayout, NodePin, NodeViewBackend, NodeViewState, NodeViewer,
+    OutPin, OutPinId, PinInfo, PinPlacement, PinShape, WireColorMode,
 };
 
 // `frost_node_graph` / `frost_node_graph_with_opts` route through
@@ -42,7 +41,8 @@ pub use frost_graph::{
 // the chip-placement type from the same module.
 pub use crate::embed::OverlayOpts;
 use crate::style::{
-    glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
+    FrameRole, GraphCanvasPattern, RadiusRole, StrokeRole, frame_for, glass_alpha_window,
+    glass_fill, radius_for, stroke_for,
 };
 
 /// Build a [`GraphStyle`] that inherits the frost palette + border
@@ -78,8 +78,7 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
     // band lines up with the body edges (graph sizes each frame as
     // content + 2 × inner_margin, so any divergence here makes the
     // header poke out like a hat).
-    const NODE_PAD_X: i8 = 8;
-    const NODE_PAD_Y: i8 = 4;
+    let graph = crate::style::theme().graph;
 
     // Body uses the frost section recipe — same fill, border and
     // corner radius every foldable section / container in the
@@ -94,21 +93,9 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
     //     button / dropdown / search input renders.
     //   * `theme().radius_md` matches the container corner radius
     //     (PRO 6 px, GAME 0 px square).
-    let body_fill = glass_fill(
-        crate::style::section_fill(accent),
-        accent,
-        glass_alpha_card(),
-    );
-    let body_stroke = egui::Stroke::new(
-        crate::style::theme().border_width,
-        widget_border(accent),
-    );
-    let body_radius = crate::style::theme().radius_md;
-    let node_frame = egui::Frame::new()
-        .fill(body_fill)
-        .stroke(body_stroke)
-        .corner_radius(egui::CornerRadius::same(body_radius))
-        .inner_margin(egui::Margin::symmetric(NODE_PAD_X, NODE_PAD_Y));
+    let node_frame = frame_for(FrameRole::Section, accent)
+        .inner_margin(egui::Margin::symmetric(graph.node_pad_x, graph.node_pad_y));
+    let body_radius = crate::style::theme().shape.radius_md;
 
     // Header — TRANSPARENT here. The category-coloured band is
     // painted PER-NODE inside `NodeViewer::show_header` (see the
@@ -121,11 +108,16 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
         .corner_radius(egui::CornerRadius {
-            nw: body_radius, ne: body_radius, sw: 0, se: 0,
+            nw: body_radius,
+            ne: body_radius,
+            sw: 0,
+            se: 0,
         })
         .inner_margin(egui::Margin {
-            left: NODE_PAD_X, right: NODE_PAD_X,
-            top: NODE_PAD_Y, bottom: NODE_PAD_Y,
+            left: graph.node_pad_x,
+            right: graph.node_pad_x,
+            top: graph.node_pad_y,
+            bottom: graph.node_pad_y,
         });
 
     // Background mirrors the code-editor recipe — `pane_fill(accent)`
@@ -144,8 +136,20 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
     let grid_base = crate::style::contrast_text_for(canvas_base);
     let grid_stroke = egui::Stroke::new(
         1.0,
-        egui::Color32::from_rgba_unmultiplied(grid_base.r(), grid_base.g(), grid_base.b(), 28),
+        egui::Color32::from_rgba_unmultiplied(
+            grid_base.r(),
+            grid_base.g(),
+            grid_base.b(),
+            graph.grid_alpha,
+        ),
     );
+
+    let bg_pattern = match graph.canvas_pattern {
+        GraphCanvasPattern::Dots { spacing, radius } => {
+            BackgroundPattern::Dots(Dots::new(egui::vec2(spacing, spacing), radius))
+        }
+        GraphCanvasPattern::Hex { radius } => BackgroundPattern::Hex(Hex::new(radius)),
+    };
 
     GraphStyle {
         node_frame: Some(node_frame),
@@ -153,9 +157,9 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
         bg_frame: Some(
             egui::Frame::new()
                 .fill(bg_fill)
-                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
-                .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
-                .inner_margin(egui::Margin::same(2)),
+                .stroke(stroke_for(StrokeRole::WidgetBorder, accent))
+                .corner_radius(radius_for(RadiusRole::Pane))
+                .inner_margin(egui::Margin::same(graph.bg_inner_margin)),
         ),
         // Canvas pattern is theme-driven:
         //   PRO  → Blender-style dot grid (30-px pitch, 1-px radius)
@@ -163,24 +167,21 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
         //          quiet enough to disappear behind nodes.
         //   GAME → pointy-top hex tessellation (24-px circumradius)
         //          — sci-fi HUD motif (Halo waypoint, Stellaris).
-        bg_pattern: Some(if crate::style::theme().graph_canvas_hex {
-            BackgroundPattern::Hex(Hex::new(24.0))
-        } else {
-            BackgroundPattern::Dots(Dots::new(egui::vec2(30.0, 30.0), 1.0))
-        }),
+        bg_pattern: Some(bg_pattern),
         bg_pattern_stroke: Some(grid_stroke),
         // Pin defaults — overridden per-node-type by the demo's
         // `PinType::pin()` builder. Blender uses a 1-px black
         // outline on every socket; mirrored here.
         pin_fill: Some(crate::style::on_section()),
         pin_stroke: Some(egui::Stroke::new(
-            1.0, egui::Color32::from_black_alpha(160),
+            graph.pin_stroke_width,
+            egui::Color32::from_black_alpha(graph.pin_stroke_alpha),
         )),
         // Wires — Blender uses 2.5 px width with a 1-px dark
         // outline pass underneath; egui-graph draws a single
         // stroke, so we settle on 2.0 px (UE Blueprints' default
         // 1.5 px felt too thin against the dot grid).
-        wire_width: Some(2.0),
+        wire_width: Some(graph.wire_width),
         wire_style: None,
         // Unreal-Blueprints wire colour rule — the wire takes the
         // OUTPUT (source) pin's colour uniformly along its length,
@@ -196,8 +197,8 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
         // (~1.0 / 0.85). Layered alpha-reduced strokes under
         // the crisp wire give a "post-process bloom" feel
         // without an actual GPU pass.
-        wire_glow: Some(crate::style::theme().graph_wire_glow),
-        pin_glow:  Some(crate::style::theme().graph_pin_glow),
+        wire_glow: Some(graph.wire_glow),
+        pin_glow: Some(graph.pin_glow),
         // Pin glyph centre sits ON the body's border line — the
         // pin bisects the outline, half inside / half outside.
         // Reads as "above" / sitting on the border the way
@@ -211,11 +212,11 @@ pub fn frost_node_graph_style(accent: egui::Color32) -> GraphStyle {
         // line). 3 px gap, 1.5 px stroke.
         node_halo: Some(NodeHalo {
             color: accent,
-            gap: 3.0,
-            width: 1.5,
+            gap: graph.node_halo_gap,
+            width: graph.node_halo_width,
             // Halo follows the body's rounded corners — body
             // radius + a bit of slack for the outset.
-            radius: body_radius.saturating_add(3),
+            radius: body_radius.saturating_add(graph.node_halo_radius_outset),
         }),
         downscale_wire_frame: Some(true),
         upscale_wire_frame: Some(true),
@@ -291,7 +292,13 @@ pub fn frost_node_graph<T, V: NodeViewer<T>>(
     desired_size: egui::Vec2,
 ) {
     frost_node_graph_with_opts(
-        ui, state, backend, graph, viewer, accent, desired_size,
+        ui,
+        state,
+        backend,
+        graph,
+        viewer,
+        accent,
+        desired_size,
         OverlayOpts::default(),
     )
 }
@@ -344,8 +351,12 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
     // mid-resolve rect.
     const RESIZE_THRESHOLD: f32 = 8.0;
     const SETTLE_FRAMES: u32 = 2;
-    let version_id = ui.id().with(("frost_node_graph_version", id_for_graph_base));
-    let last_sz_id = ui.id().with(("frost_node_graph_last_sz", id_for_graph_base));
+    let version_id = ui
+        .id()
+        .with(("frost_node_graph_version", id_for_graph_base));
+    let last_sz_id = ui
+        .id()
+        .with(("frost_node_graph_last_sz", id_for_graph_base));
     let settle_id = ui.id().with(("frost_node_graph_settle", id_for_graph_base));
 
     // `maximizable_with_opts` paints the maximize chip and, when
@@ -356,7 +367,11 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
     // exact pixel dimensions of whichever surface owns the pane
     // this frame.
     crate::embed::maximizable_with_opts(
-        ui, id_for_graph_base, accent, desired_size, fs_opts,
+        ui,
+        id_for_graph_base,
+        accent,
+        desired_size,
+        fs_opts,
         |inner_ui| {
             let size = inner_ui.available_size();
             // Sub-context theme bridge — `frost_graph::show_with_anchor`
@@ -378,8 +393,7 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
             );
 
             let parent_ctx = inner_ui.ctx().clone();
-            let mut version: u32 =
-                parent_ctx.data(|d| d.get_temp(version_id)).unwrap_or(0);
+            let mut version: u32 = parent_ctx.data(|d| d.get_temp(version_id)).unwrap_or(0);
             let last_sz: Option<egui::Vec2> =
                 parent_ctx.data(|d| d.get_temp::<egui::Vec2>(last_sz_id));
             let settle_left: u32 = parent_ctx
@@ -443,9 +457,7 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
                 // the updated translation and the scene point
                 // under the cursor stays under the cursor.
                 |sub_ctx, delta| {
-                    frost_graph::GraphState::nudge_saved_translation(
-                        sub_ctx, id_for_graph, delta,
-                    );
+                    frost_graph::GraphState::nudge_saved_translation(sub_ctx, id_for_graph, delta);
                 },
                 |sub_ui| {
                     GraphWidget::new()
@@ -458,7 +470,6 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
         },
     );
 }
-
 
 // ─── Typed PaneBody constructor ─────────────────────────────────────
 //

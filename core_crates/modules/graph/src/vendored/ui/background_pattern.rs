@@ -1,4 +1,4 @@
-use egui::{emath::Rot2, vec2, Painter, Rect, Style, Vec2};
+use egui::{Painter, Rect, Style, Vec2, emath::Rot2, vec2};
 
 use super::GraphStyle;
 
@@ -100,7 +100,10 @@ pub struct Dots {
 
 impl Default for Dots {
     fn default() -> Self {
-        Self { spacing: DEFAULT_GRID_SPACING, radius: 1.0 }
+        Self {
+            spacing: DEFAULT_GRID_SPACING,
+            radius: 1.0,
+        }
     }
 }
 
@@ -185,14 +188,18 @@ impl Hex {
         let verts: [Vec2; 6] = [
             vec2(0.0, -s),
             vec2(col_pitch * 0.5, -s * 0.5),
-            vec2(col_pitch * 0.5,  s * 0.5),
-            vec2(0.0,  s),
-            vec2(-col_pitch * 0.5,  s * 0.5),
+            vec2(col_pitch * 0.5, s * 0.5),
+            vec2(0.0, s),
+            vec2(-col_pitch * 0.5, s * 0.5),
             vec2(-col_pitch * 0.5, -s * 0.5),
         ];
         for row in min_row..=max_row {
             let cy = row as f32 * row_pitch;
-            let row_offset = if row.rem_euclid(2) == 0 { 0.0 } else { col_pitch * 0.5 };
+            let row_offset = if row.rem_euclid(2) == 0 {
+                0.0
+            } else {
+                col_pitch * 0.5
+            };
             for col in min_col..=max_col {
                 let cx = col as f32 * col_pitch + row_offset;
                 let centre = egui::pos2(cx, cy);
@@ -265,7 +272,7 @@ impl BackgroundPattern {
         match self {
             BackgroundPattern::Grid(g) => g.draw(viewport, graph_style, style, painter),
             BackgroundPattern::Dots(d) => d.draw(viewport, graph_style, style, painter),
-            BackgroundPattern::Hex(h)  => h.draw(viewport, graph_style, style, painter),
+            BackgroundPattern::Hex(h) => h.draw(viewport, graph_style, style, painter),
             BackgroundPattern::NoPattern => {}
         }
     }

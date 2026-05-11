@@ -19,11 +19,11 @@
 //! once at theme-apply time and register each `(family, bytes)` pair
 //! as `egui::FontFamily::Name(family)`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use egui;
-use iconflow::{fonts, try_icon, IconRef, Pack, Size, Style};
+use iconflow::{IconRef, Pack, Size, Style, fonts, try_icon};
 
 /// `true` once `ctx.set_fonts(...)` has installed the iconflow font
 /// families in egui — set from [`crate::style::install_fonts`]
@@ -47,9 +47,10 @@ fn fonts_ready() -> bool {
 pub(crate) fn install_iconflow_fonts(fonts_def: &mut egui::FontDefinitions) {
     for asset in fonts() {
         let key = asset.family.to_string();
-        fonts_def
-            .font_data
-            .insert(key.clone(), Arc::new(egui::FontData::from_static(asset.bytes)));
+        fonts_def.font_data.insert(
+            key.clone(),
+            Arc::new(egui::FontData::from_static(asset.bytes)),
+        );
         fonts_def
             .families
             .insert(egui::FontFamily::Name(asset.family.into()), vec![key]);
@@ -105,10 +106,7 @@ pub fn paint_section_icon(
             paint_icon(&ui.painter(), pos, align, name, size, color);
         }
         Icon::Svg(svg) => {
-            let rect = align.anchor_rect(egui::Rect::from_min_size(
-                pos,
-                egui::vec2(size, size),
-            ));
+            let rect = align.anchor_rect(egui::Rect::from_min_size(pos, egui::vec2(size, size)));
             // Stable URI per SVG content so egui's loader can cache;
             // a tiny djb2 hash keeps the URI short without pulling
             // in `std::collections::hash_map::DefaultHasher`.
@@ -172,6 +170,12 @@ pub fn paint_icon(
         return;
     }
     if let Some((glyph, family)) = icon(name) {
-        painter.text(pos, align, glyph.to_string(), egui::FontId::new(size, family), color);
+        painter.text(
+            pos,
+            align,
+            glyph.to_string(),
+            egui::FontId::new(size, family),
+            color,
+        );
     }
 }

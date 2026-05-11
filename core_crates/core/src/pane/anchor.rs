@@ -65,19 +65,19 @@ impl PaneAnchor {
     pub fn title_side(self) -> TitleSide {
         match self {
             // Left/Right rail corner panes flip to horizontal title.
-            PaneAnchor::LeftRail(RailZone::Start)    => TitleSide::Top,
-            PaneAnchor::LeftRail(RailZone::Middle)   => TitleSide::Left,
-            PaneAnchor::LeftRail(RailZone::End)      => TitleSide::Bottom,
-            PaneAnchor::RightRail(RailZone::Start)   => TitleSide::Top,
-            PaneAnchor::RightRail(RailZone::Middle)  => TitleSide::Right,
-            PaneAnchor::RightRail(RailZone::End)     => TitleSide::Bottom,
+            PaneAnchor::LeftRail(RailZone::Start) => TitleSide::Top,
+            PaneAnchor::LeftRail(RailZone::Middle) => TitleSide::Left,
+            PaneAnchor::LeftRail(RailZone::End) => TitleSide::Bottom,
+            PaneAnchor::RightRail(RailZone::Start) => TitleSide::Top,
+            PaneAnchor::RightRail(RailZone::Middle) => TitleSide::Right,
+            PaneAnchor::RightRail(RailZone::End) => TitleSide::Bottom,
             // Top/Bottom rail corner panes flip to vertical title.
-            PaneAnchor::TopRail(RailZone::Start)     => TitleSide::Left,
-            PaneAnchor::TopRail(RailZone::Middle)    => TitleSide::Top,
-            PaneAnchor::TopRail(RailZone::End)       => TitleSide::Right,
-            PaneAnchor::BottomRail(RailZone::Start)  => TitleSide::Left,
+            PaneAnchor::TopRail(RailZone::Start) => TitleSide::Left,
+            PaneAnchor::TopRail(RailZone::Middle) => TitleSide::Top,
+            PaneAnchor::TopRail(RailZone::End) => TitleSide::Right,
+            PaneAnchor::BottomRail(RailZone::Start) => TitleSide::Left,
             PaneAnchor::BottomRail(RailZone::Middle) => TitleSide::Bottom,
-            PaneAnchor::BottomRail(RailZone::End)    => TitleSide::Right,
+            PaneAnchor::BottomRail(RailZone::End) => TitleSide::Right,
         }
     }
 

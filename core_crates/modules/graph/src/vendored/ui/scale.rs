@@ -1,6 +1,6 @@
 use egui_scale::EguiScale;
 
-use super::{BackgroundPattern, PinPlacement, SelectionStyle, GraphStyle, WireStyle};
+use super::{BackgroundPattern, GraphStyle, PinPlacement, SelectionStyle, WireStyle};
 
 impl EguiScale for WireStyle {
     #[inline(always)]

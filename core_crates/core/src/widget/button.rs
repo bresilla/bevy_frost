@@ -23,8 +23,8 @@
 //!   stretched by `theme().button_anim_scale`.
 
 use crate::style::{
-    body_accent, contrast_text_for, glass_alpha_card, pane_fill, section_fill,
-    section_show_frame, surface_lift_target, theme, widget_border,
+    body_accent, contrast_text_for, glass_alpha_card, pane_fill, section_fill, section_show_frame,
+    surface_lift_target, theme, widget_border,
 };
 
 /// Default button row height (single row, no subtitle).
@@ -136,18 +136,18 @@ impl<'a> Button<'a> {
 
     /// Paint the button into `ui` and return its `Response`.
     pub fn show(self, ui: &mut egui::Ui, accent: egui::Color32) -> egui::Response {
+        let th = theme();
+        let button = th.widgets.button;
         let height = self.height.unwrap_or(if self.subtitle.is_some() {
-            BUTTON_ROW_H_SUBTITLE
+            button.subtitle_row_h
         } else {
-            BUTTON_ROW_H
+            button.row_h
         });
         let w = ui.available_width();
-        let (rect, resp) =
-            ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::click());
         if !ui.is_rect_visible(rect) {
             return resp;
         }
-        let th = theme();
         let radius = egui::CornerRadius::same(th.radius_widget);
 
         // No press-shrink — buttons keep their footprint on hold so a
@@ -178,33 +178,29 @@ impl<'a> Button<'a> {
         // both paths so the visuals can't drift.
         let hover_t = if th.animations_enabled {
             let dur = 0.25 * th.button_anim_scale.max(0.01);
-            ui.ctx().animate_bool_with_time(
-                resp.id.with("frost_button_hover"),
-                active,
-                dur,
-            )
+            ui.ctx()
+                .animate_bool_with_time(resp.id.with("frost_button_hover"), active, dur)
         } else if active {
             1.0
         } else {
             0.0
         };
 
-        let rest_solid = lerp_col(base, target, th.button_tint_rest);
+        let rest_solid = lerp_col(base, target, button.tint_rest);
         let rest_bg = with_alpha(rest_solid, glass_alpha_card());
         // Press destination — picks `body_acc` solid in GAME (theme
         // sets `button_full_accent_on_press`), otherwise the standard
         // press-tint glass. Used as the convergence colour by both
         // plain and animated paths so a button looks the same at
         // hover_t = 1 regardless of animation flag.
-        let target_bg = if th.button_full_accent_on_press {
+        let target_bg = if button.full_accent_on_press {
             // Solid accent at full alpha — visually the same colour
             // a long-held GAME button collapses onto.
             with_alpha(body_acc, 255)
         } else {
-            let press_solid = lerp_col(base, target, th.button_tint_press);
+            let press_solid = lerp_col(base, target, button.tint_press);
             with_alpha(press_solid, glass_alpha_card())
         };
-
 
         // Painter for the rect interior. Uses `painted_rect` (the
         // depressed rect) so the bg, border, and FillStyle overlay
@@ -251,12 +247,9 @@ impl<'a> Button<'a> {
         // contents track the press shrink in lockstep with bg/border.
         let painter = ui.painter_at(painted_rect);
         // ─── Glyph column ───
-        const EDGE_PAD: f32 = 8.0;
-        const GLYPH_W: f32 = 14.0;
-        const GLYPH_GAP: f32 = 8.0;
         let (text_left, text_right) = if let Some(g) = self.glyph {
             let glyph_pos = egui::pos2(
-                painted_rect.min.x + EDGE_PAD + GLYPH_W * 0.5,
+                painted_rect.min.x + button.edge_pad + button.glyph_w * 0.5,
                 painted_rect.center().y,
             );
             // Treat `glyph` as an icon NAME first (Fluent UI lookup
@@ -269,7 +262,7 @@ impl<'a> Button<'a> {
                     glyph_pos,
                     egui::Align2::CENTER_CENTER,
                     g,
-                    BUTTON_GLYPH_FONT,
+                    button.glyph_font,
                     accent,
                 );
             } else {
@@ -277,15 +270,15 @@ impl<'a> Button<'a> {
                     glyph_pos,
                     egui::Align2::CENTER_CENTER,
                     g,
-                    egui::FontId::proportional(BUTTON_GLYPH_FONT),
+                    egui::FontId::proportional(button.glyph_font),
                     accent,
                 );
             }
             // Mirror the glyph column on the right so the text block
             // stays centred in the visible chrome.
             (
-                painted_rect.min.x + EDGE_PAD + GLYPH_W + GLYPH_GAP,
-                painted_rect.max.x - (EDGE_PAD + GLYPH_W + GLYPH_GAP),
+                painted_rect.min.x + button.edge_pad + button.glyph_w + button.glyph_gap,
+                painted_rect.max.x - (button.edge_pad + button.glyph_w + button.glyph_gap),
             )
         } else {
             (painted_rect.min.x, painted_rect.max.x)
@@ -298,14 +291,14 @@ impl<'a> Button<'a> {
             let label_galley = elided_galley(
                 ui,
                 self.label,
-                egui::FontId::proportional(BUTTON_LABEL_FONT),
+                egui::FontId::proportional(button.label_font),
                 primary,
                 max_text_w,
             );
             let sub_galley = elided_galley(
                 ui,
                 sub,
-                egui::FontId::proportional(BUTTON_SUBTITLE_FONT),
+                egui::FontId::proportional(button.subtitle_font),
                 secondary,
                 max_text_w,
             );
@@ -342,7 +335,7 @@ impl<'a> Button<'a> {
                 label_centre,
                 egui::Align2::CENTER_CENTER,
                 self.label,
-                egui::FontId::proportional(BUTTON_LABEL_FONT),
+                egui::FontId::proportional(button.label_font),
                 primary,
             );
         }
@@ -378,7 +371,10 @@ pub fn card_button(
     subtitle: &str,
     accent: egui::Color32,
 ) -> egui::Response {
-    Button::new(name).glyph(glyph).subtitle(subtitle).show(ui, accent)
+    Button::new(name)
+        .glyph(glyph)
+        .subtitle(subtitle)
+        .show(ui, accent)
 }
 
 // ─── Colour helpers ────────────────────────────────────────────────
@@ -388,7 +384,11 @@ pub fn card_button(
 fn lerp_col(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let t = t.clamp(0.0, 1.0);
     let blend = |x: u8, y: u8| ((x as f32) * (1.0 - t) + (y as f32) * t).round() as u8;
-    egui::Color32::from_rgb(blend(a.r(), b.r()), blend(a.g(), b.g()), blend(a.b(), b.b()))
+    egui::Color32::from_rgb(
+        blend(a.r(), b.r()),
+        blend(a.g(), b.g()),
+        blend(a.b(), b.b()),
+    )
 }
 
 /// Lerp two `Color32`s in premultiplied space, INCLUDING alpha — so
@@ -429,12 +429,7 @@ fn with_alpha(solid: egui::Color32, alpha: u8) -> egui::Color32 {
 /// (e.g. tree-row collapse / expand rows that already shift indent
 /// columns when toggled).
 #[allow(dead_code)]
-fn press_depress_amount(
-    ctx: &egui::Context,
-    resp_id: egui::Id,
-    pressed: bool,
-    max_px: f32,
-) -> f32 {
+fn press_depress_amount(ctx: &egui::Context, resp_id: egui::Id, pressed: bool, max_px: f32) -> f32 {
     let th = theme();
     if !th.animations_enabled {
         return 0.0;
@@ -477,12 +472,8 @@ fn paint_click_pulse(
             let progress = elapsed / pulse_dur;
             let inflate = egui::lerp(2.0..=8.0, progress);
             let alpha = ((1.0 - progress) * 0.6 * 255.0).round().clamp(0.0, 255.0) as u8;
-            let pulse = egui::Color32::from_rgba_unmultiplied(
-                accent.r(),
-                accent.g(),
-                accent.b(),
-                alpha,
-            );
+            let pulse =
+                egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha);
             painter.rect_stroke(
                 rect.expand(inflate),
                 radius,
@@ -514,13 +505,7 @@ fn elided_galley(
 
 // ─── Animation paint ───────────────────────────────────────────────
 
-fn paint_fill(
-    p: &egui::Painter,
-    rect: egui::Rect,
-    t: f32,
-    color: egui::Color32,
-    style: FillStyle,
-) {
+fn paint_fill(p: &egui::Painter, rect: egui::Rect, t: f32, color: egui::Color32, style: FillStyle) {
     use FillStyle::*;
     match style {
         SlideLeft => fill_slide_left(p, rect, t, color),
@@ -635,7 +620,11 @@ fn fill_corner_squares(p: &egui::Painter, rect: egui::Rect, t: f32, c: egui::Col
     let q = |x_min: f32, y_min: f32| {
         egui::Rect::from_min_size(egui::pos2(x_min, y_min), egui::vec2(qw, qh))
     };
-    p.rect_filled(q(rect.min.x - dx, rect.min.y - dy), egui::CornerRadius::ZERO, c);
+    p.rect_filled(
+        q(rect.min.x - dx, rect.min.y - dy),
+        egui::CornerRadius::ZERO,
+        c,
+    );
     p.rect_filled(q(cx + dx, rect.min.y - dy), egui::CornerRadius::ZERO, c);
     p.rect_filled(q(rect.min.x - dx, cy + dy), egui::CornerRadius::ZERO, c);
     p.rect_filled(q(cx + dx, cy + dy), egui::CornerRadius::ZERO, c);
@@ -669,10 +658,8 @@ fn fill_equalizer(p: &egui::Painter, rect: egui::Rect, t: f32, c: egui::Color32)
     let bar_h = rect.height() * t;
     for i in 0..4 {
         let x = rect.min.x + (i as f32) * bar_w;
-        let bar = egui::Rect::from_min_size(
-            egui::pos2(x, rect.max.y - bar_h),
-            egui::vec2(bar_w, bar_h),
-        );
+        let bar =
+            egui::Rect::from_min_size(egui::pos2(x, rect.max.y - bar_h), egui::vec2(bar_w, bar_h));
         p.rect_filled(bar, egui::CornerRadius::ZERO, c);
     }
 }
@@ -681,25 +668,14 @@ fn fill_horizontal_slide(p: &egui::Painter, rect: egui::Rect, t: f32, c: egui::C
     let h = rect.height();
     let dy = h * (1.0 - t);
     let top = rect.translate(egui::vec2(0.0, -dy));
-    let top_clipped = egui::Rect::from_min_max(
-        top.min,
-        egui::pos2(top.max.x, top.max.y - h * 0.5),
-    );
+    let top_clipped = egui::Rect::from_min_max(top.min, egui::pos2(top.max.x, top.max.y - h * 0.5));
     p.rect_filled(top_clipped, egui::CornerRadius::ZERO, c);
     let bot = rect.translate(egui::vec2(0.0, dy));
-    let bot_clipped = egui::Rect::from_min_max(
-        egui::pos2(bot.min.x, bot.min.y + h * 0.5),
-        bot.max,
-    );
+    let bot_clipped = egui::Rect::from_min_max(egui::pos2(bot.min.x, bot.min.y + h * 0.5), bot.max);
     p.rect_filled(bot_clipped, egui::CornerRadius::ZERO, c);
 }
 
-fn fill_horizontal_slide_delayed(
-    p: &egui::Painter,
-    rect: egui::Rect,
-    t: f32,
-    c: egui::Color32,
-) {
+fn fill_horizontal_slide_delayed(p: &egui::Painter, rect: egui::Rect, t: f32, c: egui::Color32) {
     let half_h = rect.height() * 0.5;
     let phase_a = (t * 2.0).clamp(0.0, 1.0);
     let phase_b = ((t - 0.5) * 2.0).clamp(0.0, 1.0);
@@ -726,12 +702,7 @@ fn fill_horizontal_slide_delayed(
     }
 }
 
-fn fill_vertical_slide_delayed(
-    p: &egui::Painter,
-    rect: egui::Rect,
-    t: f32,
-    c: egui::Color32,
-) {
+fn fill_vertical_slide_delayed(p: &egui::Painter, rect: egui::Rect, t: f32, c: egui::Color32) {
     let half_w = rect.width() * 0.5;
     let phase_a = (t * 2.0).clamp(0.0, 1.0);
     let phase_b = ((t - 0.5) * 2.0).clamp(0.0, 1.0);

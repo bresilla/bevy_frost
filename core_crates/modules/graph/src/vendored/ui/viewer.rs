@@ -1,10 +1,10 @@
-use egui::{emath::TSTransform, Painter, Pos2, Rect, Style, Ui};
+use egui::{Painter, Pos2, Rect, Style, Ui, emath::TSTransform};
 
-use crate::vendored::{InPin, InPinId, NodeId, OutPin, OutPinId, Graph};
+use crate::vendored::{Graph, InPin, InPinId, NodeId, OutPin, OutPinId};
 
 use super::{
+    BackgroundPattern, GraphStyle, NodeLayout,
     pin::{AnyPins, NodePin},
-    BackgroundPattern, NodeLayout, GraphStyle,
 };
 
 /// `NodeViewer` is a trait for viewing a Graph.

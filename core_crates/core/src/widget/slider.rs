@@ -9,8 +9,8 @@
 //! (separators are container/pod chrome here, not row-level).
 
 use crate::style::{
-    contrast_text_for, on_panel_dim, on_track, theme, track_fill, widget_border,
-    BODY_FONT_SIZE,
+    BODY_FONT_SIZE, FillRole, RadiusRole, StrokeRole, contrast_text_for, fill_for, on_panel_dim,
+    on_track, radius_for, stroke_for, theme,
 };
 
 /// Bar row height — matches `frostcore::widgets::slider::BAR_H = 18`.
@@ -31,16 +31,8 @@ pub fn slider(
     suffix: &str,
     accent: egui::Color32,
 ) -> egui::Response {
-    slider_h(
-        ui,
-        label,
-        value,
-        range,
-        decimals,
-        suffix,
-        accent,
-        SLIDER_ROW_H,
-    )
+    let row_h = theme().widgets.slider.row_h;
+    slider_h(ui, label, value, range, decimals, suffix, accent, row_h)
 }
 
 /// Variable-height variant — `row_height` is the height of EACH
@@ -57,11 +49,8 @@ pub fn slider_h(
 ) -> egui::Response {
     let total_w = ui.available_width().max(1.0);
     let total_h = row_height * 2.0;
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(total_w, total_h),
-        egui::Sense::hover(),
-    );
-    let scale = row_height / SLIDER_ROW_H;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
+    let scale = row_height / theme().widgets.slider.row_h;
     if !label.is_empty() {
         ui.painter().text(
             egui::pos2(rect.left(), rect.top() + row_height * 0.5),
@@ -81,8 +70,7 @@ pub fn slider_h(
     let denom = (hi - lo).max(f64::EPSILON);
     if let Some(pos) = bar_resp.interact_pointer_pos() {
         if bar_resp.dragged() || bar_resp.clicked() {
-            let t = ((pos.x - bar_rect.min.x) as f64 / bar_rect.width() as f64)
-                .clamp(0.0, 1.0);
+            let t = ((pos.x - bar_rect.min.x) as f64 / bar_rect.width() as f64).clamp(0.0, 1.0);
             let new_val = (lo + t * denom).clamp(lo, hi);
             if (new_val - *value).abs() > f64::EPSILON {
                 *value = new_val;
@@ -108,14 +96,13 @@ fn paint_value_bar(
     scale: f32,
 ) {
     let f = fraction.clamp(0.0, 1.0);
-    let th = theme();
     let painter = ui.painter_at(rect);
-    let corner = egui::CornerRadius::same(th.radius_widget);
+    let corner = radius_for(RadiusRole::Widget);
     painter.rect(
         rect,
         corner,
-        track_fill(accent),
-        egui::Stroke::new(th.border_width, widget_border(accent)),
+        fill_for(FillRole::Track, accent),
+        stroke_for(StrokeRole::WidgetBorder, accent),
         egui::epaint::StrokeKind::Inside,
     );
     if f > 0.0 {
@@ -125,7 +112,7 @@ fn paint_value_bar(
     }
     if !text.is_empty() {
         let font = egui::FontId::new(
-            (SLIDER_VALUE_FONT * scale).round(),
+            (theme().widgets.slider.value_font * scale).round(),
             egui::FontFamily::Monospace,
         );
         let centre = rect.center();

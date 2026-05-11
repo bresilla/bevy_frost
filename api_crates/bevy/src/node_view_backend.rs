@@ -35,12 +35,12 @@ use bevy::asset::{Assets, RenderAssetUsages};
 use bevy::image::Image;
 use bevy::prelude::*;
 use bevy::render::{
+    Render, RenderApp, RenderSystems,
     extract_resource::{ExtractResource, ExtractResourcePlugin},
     render_asset::RenderAssets,
     render_resource::{Extent3d, TextureDimension},
     renderer::{RenderDevice, RenderQueue},
     texture::GpuImage,
-    Render, RenderApp, RenderSystems,
 };
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use frost_core::extras::node_view::NodeViewBackend;
@@ -127,7 +127,9 @@ fn copy_node_view_textures(
     });
     let mut any = false;
     for copy in &pending.entries {
-        let Some(gpu_image) = images.get(copy.target_handle.id()) else { continue };
+        let Some(gpu_image) = images.get(copy.target_handle.id()) else {
+            continue;
+        };
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &copy.source_texture,
@@ -258,17 +260,13 @@ impl<'a> NodeViewBackend for BevyNodeViewBackend<'a> {
     ) {
         // Find the Bevy handle for this texture id and queue the
         // copy in render world.
-        let target_handle = self
-            .slots
-            .by_size
-            .iter()
-            .find_map(|(_, (h, tid))| {
-                if *tid == tex_id {
-                    Some(h.clone())
-                } else {
-                    None
-                }
-            });
+        let target_handle = self.slots.by_size.iter().find_map(|(_, (h, tid))| {
+            if *tid == tex_id {
+                Some(h.clone())
+            } else {
+                None
+            }
+        });
         if let Some(target_handle) = target_handle {
             self.pending.entries.push(NodeViewCopy {
                 source_texture: texture.clone(),

@@ -6,7 +6,7 @@
 
 use egui::Sense;
 
-use crate::style::{caption, on_section, space, theme, track_fill};
+use crate::style::{caption, on_section, space, theme};
 
 // ─── Caption ────────────────────────────────────────────────────────
 
@@ -34,19 +34,13 @@ pub const LABEL_COL_WIDTH: f32 = 140.0;
 /// layout language as [`crate::widget::badge::badge_row`] but
 /// generic over what fills the right side — toggles, drag values,
 /// chip clusters, …
-pub fn labelled_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    right: impl FnOnce(&mut egui::Ui),
-) {
+pub fn labelled_row(ui: &mut egui::Ui, label: &str, right: impl FnOnce(&mut egui::Ui)) {
     labelled_row_custom_left(
         ui,
         |ui| {
             ui.add(
-                egui::Label::new(
-                    egui::RichText::new(label).color(on_section()).size(11.0),
-                )
-                .truncate(),
+                egui::Label::new(egui::RichText::new(label).color(on_section()).size(11.0))
+                    .truncate(),
             );
         },
         right,
@@ -90,21 +84,13 @@ pub fn labelled_row_custom_left(
 // (`button`, `readout`, `slider`, `dropdown`, `text_input`).
 
 /// Full-width primary button — alias for [`crate::widget::button`].
-pub fn wide_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    accent: egui::Color32,
-) -> egui::Response {
+pub fn wide_button(ui: &mut egui::Ui, label: &str, accent: egui::Color32) -> egui::Response {
     crate::widget::button(ui, label, accent)
 }
 
 /// Read-only "label : value" row — alias for
 /// [`crate::widget::readout`].
-pub fn readout_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &str,
-) -> egui::Response {
+pub fn readout_row(ui: &mut egui::Ui, label: &str, value: &str) -> egui::Response {
     crate::widget::readout(ui, label, value)
 }
 
@@ -154,8 +140,7 @@ pub fn dropdown_control<H: std::hash::Hash>(
 pub fn row_separator(ui: &mut egui::Ui) {
     let avail_w = ui.available_width();
     let h = 1.0;
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(avail_w, h + space::TIGHT), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, h + space::TIGHT), Sense::hover());
     let line_y = rect.center().y;
     ui.painter().hline(
         rect.min.x..=rect.max.x,
@@ -173,9 +158,6 @@ pub fn key_chip(ui: &mut egui::Ui, keys: &str) -> egui::Response {
         .monospace()
         .small()
         .color(crate::style::on_track());
-    let frame = egui::Frame::new()
-        .fill(track_fill(accent))
-        .inner_margin(egui::Margin::symmetric(5, 1))
-        .corner_radius(egui::CornerRadius::same(theme().radius_widget));
+    let frame = crate::style::frame_for(crate::style::FrameRole::KeyChip, accent);
     frame.show(ui, |ui| ui.label(chip)).response
 }

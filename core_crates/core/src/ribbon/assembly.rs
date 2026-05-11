@@ -43,11 +43,15 @@
 //! non-nested). Phase 2 will add drag with the accept-list + child
 //! ribbons.
 
-#[cfg(feature = "bevy")] use bevy::prelude::*;
-use std::collections::HashMap;
+#[cfg(feature = "bevy")]
+use bevy::prelude::*;
 use egui;
+use std::collections::HashMap;
 
-use super::paint::{paint_ribbon_button, paint_ribbon_glyph, ribbon_button_fg, EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
+use super::paint::{
+    EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE, paint_ribbon_button, paint_ribbon_glyph,
+    ribbon_button_fg,
+};
 
 // ─── Enums: edge / cluster / mode / role ────────────────────────────
 
@@ -274,10 +278,7 @@ pub struct RibbonPlacement {
 
 impl RibbonPlacement {
     /// Resolved position for `item`, folding in any user drag.
-    pub fn resolve(
-        &self,
-        item: &RibbonItem,
-    ) -> (&'static str, RibbonCluster, u32) {
+    pub fn resolve(&self, item: &RibbonItem) -> (&'static str, RibbonCluster, u32) {
         self.overrides
             .get(item.id)
             .copied()
@@ -357,9 +358,9 @@ fn compute_side_insets(ribbons: &[RibbonDef]) -> SideInsets {
     let with_rail = EDGE_GAP + SIDE_BTN_SIZE + SIDE_BTN_GAP;
     let inset = |present: bool| if present { with_rail } else { EDGE_GAP };
     SideInsets {
-        left:   inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Left)),
-        right:  inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Right)),
-        top:    inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Top)),
+        left: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Left)),
+        right: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Right)),
+        top: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Top)),
         bottom: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Bottom)),
     }
 }
@@ -544,7 +545,10 @@ fn accepts_drop(source: &RibbonDef, target: &RibbonDef) -> bool {
     if source.id == target.id {
         return true;
     }
-    target.accepts.iter().any(|&id| id == source.id || id == "*")
+    target
+        .accepts
+        .iter()
+        .any(|&id| id == source.id || id == "*")
 }
 
 /// Clusters that a given mode exposes as drop-targets. `Centered` /
@@ -635,42 +639,37 @@ fn cluster_region(
                 let t1 = strip.min.y + h;
                 let t2 = strip.min.y + h * 2.0;
                 match cluster {
-                    RibbonCluster::Start => egui::Rect::from_min_max(
-                        strip.min,
-                        egui::pos2(strip.max.x, t1),
-                    ),
+                    RibbonCluster::Start => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(strip.max.x, t1))
+                    }
                     RibbonCluster::Middle => egui::Rect::from_min_max(
                         egui::pos2(strip.min.x, t1),
                         egui::pos2(strip.max.x, t2),
                     ),
-                    RibbonCluster::End => egui::Rect::from_min_max(
-                        egui::pos2(strip.min.x, t2),
-                        strip.max,
-                    ),
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(strip.min.x, t2), strip.max)
+                    }
                 }
             } else {
                 let w = strip.width() / 3.0;
                 let t1 = strip.min.x + w;
                 let t2 = strip.min.x + w * 2.0;
                 match cluster {
-                    RibbonCluster::Start => egui::Rect::from_min_max(
-                        strip.min,
-                        egui::pos2(t1, strip.max.y),
-                    ),
+                    RibbonCluster::Start => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(t1, strip.max.y))
+                    }
                     RibbonCluster::Middle => egui::Rect::from_min_max(
                         egui::pos2(t1, strip.min.y),
                         egui::pos2(t2, strip.max.y),
                     ),
-                    RibbonCluster::End => egui::Rect::from_min_max(
-                        egui::pos2(t2, strip.min.y),
-                        strip.max,
-                    ),
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(t2, strip.min.y), strip.max)
+                    }
                 }
             }
         }
     }
 }
-
 
 /// Draw every ribbon + every button in the assembly. Runs panel
 /// exclusivity for `Panel` ribbons (click toggles `RibbonOpen`),
@@ -701,10 +700,7 @@ pub fn draw_assembly(
         ribbons.iter().any(|r| r.edge == RibbonEdge::Bottom),
     ];
     ctx.data_mut(|d| {
-        d.insert_temp::<[bool; 4]>(
-            egui::Id::new("frost_published_ribbon_edges"),
-            presence,
-        );
+        d.insert_temp::<[bool; 4]>(egui::Id::new("frost_published_ribbon_edges"), presence);
     });
 
     // ── Resolve baseline positions ─────────────────────────────────
@@ -767,7 +763,11 @@ pub fn draw_assembly(
                 for slot in 0..total_with_ghost {
                     let p = place_button(tgt_def, tgt_cluster_eff, slot, total_with_ghost, insets);
                     let rect = screen_rect(ctx, p);
-                    let c = if axis_is_y { rect.center().y } else { rect.center().x };
+                    let c = if axis_is_y {
+                        rect.center().y
+                    } else {
+                        rect.center().x
+                    };
                     let d = (c - cursor_axis).abs();
                     if d < best_d {
                         best_d = d;
@@ -915,10 +915,8 @@ pub fn draw_assembly(
                 } else {
                     egui::Sense::click()
                 };
-                let (rect, r) = ui.allocate_exact_size(
-                    egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE),
-                    sense,
-                );
+                let (rect, r) =
+                    ui.allocate_exact_size(egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE), sense);
                 paint_ribbon_button(
                     ui.painter(),
                     rect,
@@ -969,9 +967,7 @@ pub fn draw_assembly(
     // A faint accent-tinted rect drawn at the target cluster's
     // insertion slot, so the user sees the landing spot separately
     // from the button they're dragging (which floats at the cursor).
-    if let (Some(_dragged_id), Some((tgt_rid, tgt_cluster_eff, insert))) =
-        (drag.item, target)
-    {
+    if let (Some(_dragged_id), Some((tgt_rid, tgt_cluster_eff, insert))) = (drag.item, target) {
         if let Some(tgt_def) = ribbons.iter().find(|d| d.id == tgt_rid) {
             // Recompute the target occupant count so the outline sits
             // exactly where a drop would land.
@@ -998,17 +994,11 @@ pub fn draw_assembly(
                         egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE),
                         egui::Sense::hover(),
                     );
-                    let th = crate::style::theme();
                     ui.painter().rect(
                         r,
-                        egui::CornerRadius::same(th.radius_md),
-                        egui::Color32::from_rgba_unmultiplied(
-                            accent.r(),
-                            accent.g(),
-                            accent.b(),
-                            th.ghost_fill_alpha,
-                        ),
-                        egui::Stroke::new(th.ghost_stroke_width, accent),
+                        crate::style::radius_for(crate::style::RadiusRole::Section),
+                        crate::style::fill_for(crate::style::FillRole::DragGhost, accent),
+                        crate::style::stroke_for(crate::style::StrokeRole::DragGhost, accent),
                         egui::StrokeKind::Inside,
                     );
                 });
@@ -1024,11 +1014,18 @@ pub fn draw_assembly(
 
     // ── Commit drag release / drop ─────────────────────────────────
     if drag_stopped_this_frame {
-        if let (Some(dragged_id), Some((tgt_rid, tgt_cluster_eff, insert))) =
-            (drag.item, target)
-        {
+        if let (Some(dragged_id), Some((tgt_rid, tgt_cluster_eff, insert))) = (drag.item, target) {
             if let Some(src) = drag.source {
-                resolve_drop(placement, ribbons, items, dragged_id, src, tgt_rid, tgt_cluster_eff, insert);
+                resolve_drop(
+                    placement,
+                    ribbons,
+                    items,
+                    dragged_id,
+                    src,
+                    tgt_rid,
+                    tgt_cluster_eff,
+                    insert,
+                );
             }
         }
         drag.item = None;
@@ -1156,7 +1153,6 @@ fn resolve_drop(
     }
 }
 
-
 /// Build the persistent-width storage id for a `(ribbon, cluster)`.
 /// Use this to scope [`crate::floating::floating_window_scoped`] so
 /// each cluster's panels keep their own width.
@@ -1238,20 +1234,20 @@ pub fn panel_anchor_offset(
     let v_mid = (insets.top - insets.bottom) * 0.5;
     match (def.edge, cluster) {
         // LEFT rail — pane slides RIGHT off the rail.
-        (RibbonEdge::Left,  RibbonCluster::Start)  => egui::vec2(side_inset, v_start),
-        (RibbonEdge::Left,  RibbonCluster::Middle) => egui::vec2(side_inset, v_mid),
-        (RibbonEdge::Left,  RibbonCluster::End)    => egui::vec2(side_inset, v_end),
+        (RibbonEdge::Left, RibbonCluster::Start) => egui::vec2(side_inset, v_start),
+        (RibbonEdge::Left, RibbonCluster::Middle) => egui::vec2(side_inset, v_mid),
+        (RibbonEdge::Left, RibbonCluster::End) => egui::vec2(side_inset, v_end),
         // RIGHT rail — pane slides LEFT off the rail.
-        (RibbonEdge::Right, RibbonCluster::Start)  => egui::vec2(-side_inset, v_start),
+        (RibbonEdge::Right, RibbonCluster::Start) => egui::vec2(-side_inset, v_start),
         (RibbonEdge::Right, RibbonCluster::Middle) => egui::vec2(-side_inset, v_mid),
-        (RibbonEdge::Right, RibbonCluster::End)    => egui::vec2(-side_inset, v_end),
+        (RibbonEdge::Right, RibbonCluster::End) => egui::vec2(-side_inset, v_end),
         // TOP rail — pane slides DOWN off the rail.
-        (RibbonEdge::Top,    RibbonCluster::Start)  => egui::vec2(h_start, side_inset),
-        (RibbonEdge::Top,    RibbonCluster::Middle) => egui::vec2(h_mid,   side_inset),
-        (RibbonEdge::Top,    RibbonCluster::End)    => egui::vec2(h_end,   side_inset),
+        (RibbonEdge::Top, RibbonCluster::Start) => egui::vec2(h_start, side_inset),
+        (RibbonEdge::Top, RibbonCluster::Middle) => egui::vec2(h_mid, side_inset),
+        (RibbonEdge::Top, RibbonCluster::End) => egui::vec2(h_end, side_inset),
         // BOTTOM rail — pane slides UP off the rail.
-        (RibbonEdge::Bottom, RibbonCluster::Start)  => egui::vec2(h_start, -side_inset),
-        (RibbonEdge::Bottom, RibbonCluster::Middle) => egui::vec2(h_mid,   -side_inset),
-        (RibbonEdge::Bottom, RibbonCluster::End)    => egui::vec2(h_end,   -side_inset),
+        (RibbonEdge::Bottom, RibbonCluster::Start) => egui::vec2(h_start, -side_inset),
+        (RibbonEdge::Bottom, RibbonCluster::Middle) => egui::vec2(h_mid, -side_inset),
+        (RibbonEdge::Bottom, RibbonCluster::End) => egui::vec2(h_end, -side_inset),
     }
 }

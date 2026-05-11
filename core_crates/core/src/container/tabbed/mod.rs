@@ -25,7 +25,11 @@ pub struct Tab {
 
 impl Tab {
     pub fn new(title: impl Into<String>, icon: impl Into<Icon<'static>>) -> Self {
-        Self { title: title.into(), icon: icon.into(), pods: Vec::new() }
+        Self {
+            title: title.into(),
+            icon: icon.into(),
+            pods: Vec::new(),
+        }
     }
 
     pub fn pods(mut self, pods: impl IntoIterator<Item = Pod>) -> Self {

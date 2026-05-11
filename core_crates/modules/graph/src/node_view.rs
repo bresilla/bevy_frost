@@ -189,11 +189,7 @@ impl NodeViewState {
     /// (Re)allocate the wgpu render target if the requested pixel
     /// size doesn't match the cached one. Returns `true` when a
     /// new target was created (= caller should reupload).
-    fn ensure_target(
-        &mut self,
-        backend: &mut dyn NodeViewBackend,
-        size_pixels: [u32; 2],
-    ) -> bool {
+    fn ensure_target(&mut self, backend: &mut dyn NodeViewBackend, size_pixels: [u32; 2]) -> bool {
         let need_new = match &self.target {
             None => true,
             Some(t) => t.size_pixels != size_pixels,
@@ -233,14 +229,9 @@ impl NodeViewState {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view =
-            texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let parent_tex_id = backend.register_native(
-            &texture,
-            &view,
-            size_pixels,
-            wgpu::FilterMode::Linear,
-        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let parent_tex_id =
+            backend.register_native(&texture, &view, size_pixels, wgpu::FilterMode::Linear);
         self.target = Some(NodeViewTarget {
             texture,
             view,
@@ -359,10 +350,9 @@ fn render_into_target(
         size_in_pixels: size_pixels,
         pixels_per_point,
     };
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("frost_node_view_encoder"),
-        });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("frost_node_view_encoder"),
+    });
     let _cmd_buffers = renderer.update_buffers(
         &device,
         &queue,
@@ -374,17 +364,15 @@ fn render_into_target(
         let mut rpass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frost_node_view_pass"),
-                color_attachments: &[Some(
-                    wgpu::RenderPassColorAttachment {
-                        view: &target.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
                     },
-                )],
+                    depth_slice: None,
+                })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -496,9 +484,7 @@ pub fn show_with_anchor<R>(
     // works only on the exact frame the user wiggles the mouse and
     // node hover/click never registers on a static cursor).
     let parent_hover = parent_ui.ctx().input(|i| i.pointer.hover_pos());
-    let pointer_over_sub = parent_hover
-        .map(|p| rect.contains(p))
-        .unwrap_or(false);
+    let pointer_over_sub = parent_hover.map(|p| rect.contains(p)).unwrap_or(false);
 
     // ── Wheel → zoom_target & smooth animation ──
     //
@@ -570,13 +556,9 @@ pub fn show_with_anchor<R>(
 
     let zoom = state.zoom.max(0.1);
     let sub_ppp = (parent_ppp * zoom).max(0.05);
-    let sub_screen_pixels =
-        Vec2::new(size_pixels[0] as f32, size_pixels[1] as f32);
+    let sub_screen_pixels = Vec2::new(size_pixels[0] as f32, size_pixels[1] as f32);
     let sub_screen_points = sub_screen_pixels / sub_ppp;
-    let sub_screen_rect = Rect::from_min_size(
-        egui::pos2(0.0, 0.0),
-        sub_screen_points,
-    );
+    let sub_screen_rect = Rect::from_min_size(egui::pos2(0.0, 0.0), sub_screen_points);
 
     // Coordinate scale: a pointer at parent point `p` lies at
     // pixel `(p - rect.min) × parent_ppp` inside the rect, and
@@ -625,9 +607,8 @@ pub fn show_with_anchor<R>(
         if !parent_had_motion {
             if let Some(p) = parent_hover {
                 let local = (p - rect.min.to_vec2()) * pos_scale;
-                raw.events.push(egui::Event::PointerMoved(egui::pos2(
-                    local.x, local.y,
-                )));
+                raw.events
+                    .push(egui::Event::PointerMoved(egui::pos2(local.x, local.y)));
             }
         }
     } else {
@@ -650,8 +631,7 @@ pub fn show_with_anchor<R>(
             body(ui);
         });
     let full = sub_ctx.end_pass();
-    let primitives =
-        sub_ctx.tessellate(full.shapes, sub_ppp);
+    let primitives = sub_ctx.tessellate(full.shapes, sub_ppp);
     render_into_target(
         state,
         backend,
@@ -667,10 +647,7 @@ pub fn show_with_anchor<R>(
             parent_ui.painter().image(
                 tex_id,
                 rect,
-                Rect::from_min_max(
-                    egui::pos2(0.0, 0.0),
-                    egui::pos2(1.0, 1.0),
-                ),
+                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
             // Per-frame backend hook — Bevy queues the

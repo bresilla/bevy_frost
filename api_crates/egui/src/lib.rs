@@ -49,9 +49,9 @@ pub fn apply_theme_now(
 /// between Bevy and eframe hosts get the same module surface
 /// from `<facade>::prelude::*` and only the `main` differs.
 pub mod prelude {
-    pub use frost_core::*;
-    pub use super::apply_theme_now;
     pub use super::EframeNodeViewBackend;
+    pub use super::apply_theme_now;
+    pub use frost_core::*;
 }
 
 /// `NodeViewBackend` impl backed by eframe's `egui_wgpu::RenderState`.
@@ -91,7 +91,10 @@ impl<'a> frost_core::extras::node_view::NodeViewBackend for EframeNodeViewBacken
         // `wgpu::Device` / `Queue` are cheap to clone in wgpu 27 —
         // internally Arc-counted handles to the same backend
         // resources.
-        (self.render_state.device.clone(), self.render_state.queue.clone())
+        (
+            self.render_state.device.clone(),
+            self.render_state.queue.clone(),
+        )
     }
 
     fn target_format(&self) -> wgpu::TextureFormat {
@@ -116,11 +119,7 @@ impl<'a> frost_core::extras::node_view::NodeViewBackend for EframeNodeViewBacken
         // can't sample arbitrary `wgpu::TextureView`s and need to
         // mirror into their own asset system.
         let mut renderer = self.render_state.renderer.write();
-        renderer.register_native_texture(
-            &self.render_state.device,
-            view,
-            filter,
-        )
+        renderer.register_native_texture(&self.render_state.device, view, filter)
     }
 
     fn unregister_native(&mut self, id: egui::TextureId) {

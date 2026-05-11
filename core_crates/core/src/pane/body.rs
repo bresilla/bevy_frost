@@ -20,12 +20,10 @@ use std::collections::HashMap;
 
 use egui::{Color32, Id, Ui};
 
-use crate::container::{container_flow, set_container_flow, Normal, SeparatorOrient, Tab};
+use crate::container::{Normal, SeparatorOrient, Tab, container_flow, set_container_flow};
 use crate::pod::{Pod, PodResponse};
 
-use super::{
-    active_drag, paint_container_dots, section_order_for, PaneAnchor,
-};
+use super::{PaneAnchor, active_drag, paint_container_dots, section_order_for};
 
 /// One container, ready to render inside a pane.
 ///
@@ -138,12 +136,7 @@ pub struct PaneBody<'ui, 'spec> {
 }
 
 impl<'ui, 'spec> PaneBody<'ui, 'spec> {
-    pub(crate) fn new(
-        ui: &'ui mut Ui,
-        pane_id: Id,
-        anchor: PaneAnchor,
-        accent: Color32,
-    ) -> Self {
+    pub(crate) fn new(ui: &'ui mut Ui, pane_id: Id, anchor: PaneAnchor, accent: Color32) -> Self {
         Self {
             ui,
             pane_id,
@@ -188,7 +181,8 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
         icon: &'static str,
         pods: Vec<Pod>,
     ) -> &mut Self {
-        self.pending.push(ContainerSpec::normal(id, title, icon, pods));
+        self.pending
+            .push(ContainerSpec::normal(id, title, icon, pods));
         self
     }
 
@@ -200,7 +194,8 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
         icon: &'static str,
         tabs: Vec<Tab>,
     ) -> &mut Self {
-        self.pending.push(ContainerSpec::tabbed(id, title, icon, tabs));
+        self.pending
+            .push(ContainerSpec::tabbed(id, title, icon, tabs));
         self
     }
 
@@ -225,9 +220,7 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
     /// painted automatically.
     pub fn render(&mut self) -> HashMap<Id, Vec<PodResponse>> {
         let specs = std::mem::take(&mut self.pending);
-        render_containers(
-            self.ui, self.pane_id, self.anchor, self.accent, specs,
-        )
+        render_containers(self.ui, self.pane_id, self.anchor, self.accent, specs)
     }
 
     /// Crate-internal: drain any remaining containers and return
@@ -255,8 +248,7 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
         title: impl Into<String>,
         icon: &'static str,
         body: F,
-    )
-    where
+    ) where
         F: FnOnce(&mut Ui),
     {
         let _ = self.render();
@@ -271,8 +263,7 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
         // path `render_containers` uses for queued containers — so
         // the user can drag-resize this container's flow extent the
         // same way they would for `add_normal` / `add_tabbed`.
-        let containers_stack_horizontally =
-            !self.anchor.title_side().is_horizontal_strip();
+        let containers_stack_horizontally = !self.anchor.title_side().is_horizontal_strip();
         let dots_orient = if containers_stack_horizontally {
             SeparatorOrient::Vertical
         } else {
@@ -282,7 +273,8 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
         let pane_horizontal_strip = self.anchor.title_side().is_horizontal_strip();
         let dot_resp = paint_container_dots(self.ui, dots_orient, cid, accent);
         let body_open: bool = self.ui.ctx().data_mut(|d| {
-            d.get_persisted::<bool>(cid.with("body_open")).unwrap_or(true)
+            d.get_persisted::<bool>(cid.with("body_open"))
+                .unwrap_or(true)
         });
         if dot_resp.dragged() && body_open {
             let cur = container_flow(self.ui.ctx(), cid, pane_horizontal_strip);
@@ -292,9 +284,7 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
                 dot_resp.drag_delta().y
             };
             let delta = if title_at_end { -raw } else { raw };
-            set_container_flow(
-                self.ui.ctx(), cid, cur + delta, pane_horizontal_strip,
-            );
+            set_container_flow(self.ui.ctx(), cid, cur + delta, pane_horizontal_strip);
         }
     }
 }
@@ -333,9 +323,10 @@ pub(crate) fn render_containers<'a>(
 
     let mut responses: HashMap<Id, Vec<PodResponse>> = HashMap::new();
     for cid in order.into_iter() {
-        let Some(spec) = by_id.remove(&cid) else { continue };
-        let normal = Normal::new(spec.title.as_str(), anchor, accent, cid)
-            .icon(spec.icon);
+        let Some(spec) = by_id.remove(&cid) else {
+            continue;
+        };
+        let normal = Normal::new(spec.title.as_str(), anchor, accent, cid).icon(spec.icon);
         let resp = match spec.body {
             SpecBody::Pods(pods) => normal.show(body_ui, pods),
             SpecBody::Tabs(tabs) => normal.show_tabs(body_ui, tabs),
@@ -361,7 +352,8 @@ pub(crate) fn render_containers<'a>(
 
         let dot_resp = paint_container_dots(body_ui, dots_orient, cid, accent);
         let body_open: bool = body_ui.ctx().data_mut(|d| {
-            d.get_persisted::<bool>(cid.with("body_open")).unwrap_or(true)
+            d.get_persisted::<bool>(cid.with("body_open"))
+                .unwrap_or(true)
         });
         if dot_resp.dragged() && body_open {
             let cur = container_flow(body_ui.ctx(), cid, pane_horizontal_strip);

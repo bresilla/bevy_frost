@@ -47,10 +47,10 @@ pub const UNIT: f32 = BODY_FONT_SIZE * 1.5;
 // down on Dark, hierarchy now comes from the surface tier alone,
 // which needs the colour delta to do the work.
 pub const BG_0_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x06, 0x08, 0x0E);
-pub const BG_1_PANEL:  egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1D);
+pub const BG_1_PANEL: egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1D);
 pub const BG_2_RAISED: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x30, 0x3D);
-pub const BG_3_HOVER:  egui::Color32 = egui::Color32::from_rgb(0x40, 0x46, 0x55);
-pub const BG_4_INPUT:  egui::Color32 = egui::Color32::from_rgb(0x06, 0x08, 0x0C);
+pub const BG_3_HOVER: egui::Color32 = egui::Color32::from_rgb(0x40, 0x46, 0x55);
+pub const BG_4_INPUT: egui::Color32 = egui::Color32::from_rgb(0x06, 0x08, 0x0C);
 
 // ─── Glass opacity (slider-driven) ──────────────────────────────────
 //
@@ -78,7 +78,9 @@ static GLASS_OPACITY: AtomicU8 = AtomicU8::new(100);
 pub struct GlassOpacity(pub u8);
 
 impl Default for GlassOpacity {
-    fn default() -> Self { Self(100) }
+    fn default() -> Self {
+        Self(100)
+    }
 }
 
 /// Push a new opacity value into the shared atomic. Call every
@@ -119,11 +121,11 @@ pub fn glass_alpha_window() -> u8 {
     (opacity_frac() * 255.0).round().clamp(0.0, 255.0) as u8
 }
 pub fn glass_alpha_card() -> u8 {
-    let f = theme().glass_card_factor;
+    let f = theme().glass.card_factor;
     (opacity_frac() * f * 255.0).round().clamp(0.0, 255.0) as u8
 }
 pub fn glass_alpha_group() -> u8 {
-    let f = theme().glass_group_factor;
+    let f = theme().glass.group_factor;
     (opacity_frac() * f * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
@@ -147,7 +149,7 @@ pub fn glass_alpha_group() -> u8 {
 /// `theme().glass_accent_tint` is the active value; this constant
 /// matches the PRO profile's value so older code paths keep working
 /// when the theme is PRO.
-pub const GLASS_ACCENT_TINT:  f32 = 0.03;
+pub const GLASS_ACCENT_TINT: f32 = 0.03;
 
 /// Produce a glass-style fill: base RGB lightly tinted toward
 /// `accent`, with the given alpha. Use with any `egui::Frame::fill`.
@@ -156,7 +158,7 @@ pub const GLASS_ACCENT_TINT:  f32 = 0.03;
 /// read from the active [`Theme`] — GAME-style themes can set it to
 /// `0.0` to flatten the fill into a pure neutral tone.
 pub fn glass_fill(base: egui::Color32, accent: egui::Color32, alpha: u8) -> egui::Color32 {
-    let f = theme().glass_accent_tint;
+    let f = theme().glass.accent_tint;
     let blend = |a: u8, b: u8| ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u8;
     egui::Color32::from_rgba_unmultiplied(
         blend(base.r(), accent.r()),
@@ -167,7 +169,7 @@ pub fn glass_fill(base: egui::Color32, accent: egui::Color32, alpha: u8) -> egui
 }
 
 pub const BORDER_SUBTLE: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x0E, 0x10);
-pub const BORDER_INNER:  egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x42);
+pub const BORDER_INNER: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x42);
 
 /// Single shared base colour for **every** outline + separator in the
 /// kit (widget borders, row hairlines, dividers, palette rules). The
@@ -191,9 +193,9 @@ pub fn outline_base() -> egui::Color32 {
     };
     let blend = |a: u8, b: u8| ((a as f32) * 0.5 + (b as f32) * 0.5).round() as u8;
     egui::Color32::from_rgb(
-        blend(th.border_subtle.r(), target.r()),
-        blend(th.border_subtle.g(), target.g()),
-        blend(th.border_subtle.b(), target.b()),
+        blend(th.palette.border_subtle.r(), target.r()),
+        blend(th.palette.border_subtle.g(), target.g()),
+        blend(th.palette.border_subtle.b(), target.b()),
     )
 }
 
@@ -206,13 +208,13 @@ pub fn outline_base() -> egui::Color32 {
 pub fn widget_border(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     let base = outline_base();
-    let t = th.border_accent_tint;
+    let t = th.stroke.border_accent_tint;
     let blend = |b: u8, a: u8| ((b as f32) * (1.0 - t) + (a as f32) * t).round() as u8;
     egui::Color32::from_rgba_unmultiplied(
         blend(base.r(), accent.r()),
         blend(base.g(), accent.g()),
         blend(base.b(), accent.b()),
-        th.border_alpha,
+        th.stroke.border_alpha,
     )
 }
 
@@ -230,22 +232,22 @@ pub fn widget_border(accent: egui::Color32) -> egui::Color32 {
 // `#4A4D54` at luma 0.31 lifts the contrast without shouting.
 
 /// Primary body text for **Dark variants** (paint on dark panels).
-pub const TEXT_PRIMARY:   egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE6, 0xE8);
+pub const TEXT_PRIMARY: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE6, 0xE8);
 /// Secondary / dim body text for Dark variants.
 pub const TEXT_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0xA2);
 /// Disabled-state text for Dark variants.
-pub const TEXT_DISABLED:  egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A, 0x62);
+pub const TEXT_DISABLED: egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A, 0x62);
 
 /// Primary body text for **Light variants** (paint on light panels).
 /// Slightly darker than Primer's `#1F2328` so it still reads as
 /// "ink-on-paper" rather than a soft grey.
-pub const TEXT_PRIMARY_LIGHT:   egui::Color32 = egui::Color32::from_rgb(0x18, 0x18, 0x1C);
+pub const TEXT_PRIMARY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x18, 0x18, 0x1C);
 /// Secondary / dim body text for Light variants. Bumped from the
 /// originally-shipping `#6B7078` to give body labels and captions
 /// real contrast on white panels.
 pub const TEXT_SECONDARY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x4D, 0x54);
 /// Disabled-state text for Light variants.
-pub const TEXT_DISABLED_LIGHT:  egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8E, 0x96);
+pub const TEXT_DISABLED_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8E, 0x96);
 
 // ─── Accent (selection / focus) — violet / purple ──────────────────
 //
@@ -254,13 +256,13 @@ pub const TEXT_DISABLED_LIGHT:  egui::Color32 = egui::Color32::from_rgb(0x8A, 0x
 // panels (Δ ≈ 0.55 vs `#FFFFFF`) and bright enough to pop on dark
 // panels (Δ ≈ 0.30 vs `#0E0E10`). The previous default `#A78BFA`
 // (luma 0.60) was a pastel that disappeared on white panels.
-pub const ACCENT:         egui::Color32 = egui::Color32::from_rgb(0x7C, 0x5C, 0xFF);
-pub const ACCENT_HOVER:   egui::Color32 = egui::Color32::from_rgb(0x9D, 0x84, 0xFF);
+pub const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x7C, 0x5C, 0xFF);
+pub const ACCENT_HOVER: egui::Color32 = egui::Color32::from_rgb(0x9D, 0x84, 0xFF);
 pub const ACCENT_PRESSED: egui::Color32 = egui::Color32::from_rgb(0x62, 0x42, 0xE6);
 /// Subtle purple-tinted surface for the active side button and the
 /// selected outliner row. 18 % of `ACCENT` over `BG_2_RAISED`.
-pub const ACCENT_TINT:    egui::Color32 = egui::Color32::from_rgb(0x42, 0x3A, 0x5A);
-pub const SELECTION_ROW:  egui::Color32 = egui::Color32::from_rgb(0x4A, 0x3C, 0x72);
+pub const ACCENT_TINT: egui::Color32 = egui::Color32::from_rgb(0x42, 0x3A, 0x5A);
+pub const SELECTION_ROW: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x3C, 0x72);
 
 // ─── Axes (vivid: gizmos + inspector labels) ────────────────────────
 pub const AXIS_X: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x43, 0x3B);
@@ -270,7 +272,7 @@ pub const AXIS_Z: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x83, 0xE6);
 // ─── Status ─────────────────────────────────────────────────────────
 pub const SUCCESS: egui::Color32 = egui::Color32::from_rgb(0x34, 0xC7, 0x59);
 pub const WARNING: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xA5, 0x24);
-pub const DANGER:  egui::Color32 = egui::Color32::from_rgb(0xEF, 0x44, 0x44);
+pub const DANGER: egui::Color32 = egui::Color32::from_rgb(0xEF, 0x44, 0x44);
 
 /// Plain-data accent colour. With the `bevy` crate feature
 /// enabled, this derives `Resource` so it can be used directly as
@@ -283,7 +285,9 @@ pub struct AccentColor(pub egui::Color32);
 pub const ACCENT_NEUTRAL: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE6, 0xE8);
 
 impl Default for AccentColor {
-    fn default() -> Self { Self(ACCENT_NEUTRAL) }
+    fn default() -> Self {
+        Self(ACCENT_NEUTRAL)
+    }
 }
 
 // ─── Embedded UI font ───────────────────────────────────────────────
@@ -304,15 +308,15 @@ impl Default for AccentColor {
 // epaint, so we give up per-text weight selection and use size +
 // colour + `.strong()` for hierarchy instead.
 
-const IOSEVKA_THIN_TTF:       &[u8] = include_bytes!("fonts/iosevka-thin.ttf");
+const IOSEVKA_THIN_TTF: &[u8] = include_bytes!("fonts/iosevka-thin.ttf");
 const IOSEVKA_EXTRALIGHT_TTF: &[u8] = include_bytes!("fonts/iosevka-extralight.ttf");
-const IOSEVKA_LIGHT_TTF:      &[u8] = include_bytes!("fonts/iosevka-light.ttf");
-const IOSEVKA_REGULAR_TTF:    &[u8] = include_bytes!("fonts/iosevka-regular.ttf");
-const IOSEVKA_MEDIUM_TTF:     &[u8] = include_bytes!("fonts/iosevka-medium.ttf");
-const IOSEVKA_SEMIBOLD_TTF:   &[u8] = include_bytes!("fonts/iosevka-semibold.ttf");
-const IOSEVKA_BOLD_TTF:       &[u8] = include_bytes!("fonts/iosevka-bold.ttf");
-const IOSEVKA_EXTRABOLD_TTF:  &[u8] = include_bytes!("fonts/iosevka-extrabold.ttf");
-const IOSEVKA_HEAVY_TTF:      &[u8] = include_bytes!("fonts/iosevka-heavy.ttf");
+const IOSEVKA_LIGHT_TTF: &[u8] = include_bytes!("fonts/iosevka-light.ttf");
+const IOSEVKA_REGULAR_TTF: &[u8] = include_bytes!("fonts/iosevka-regular.ttf");
+const IOSEVKA_MEDIUM_TTF: &[u8] = include_bytes!("fonts/iosevka-medium.ttf");
+const IOSEVKA_SEMIBOLD_TTF: &[u8] = include_bytes!("fonts/iosevka-semibold.ttf");
+const IOSEVKA_BOLD_TTF: &[u8] = include_bytes!("fonts/iosevka-bold.ttf");
+const IOSEVKA_EXTRABOLD_TTF: &[u8] = include_bytes!("fonts/iosevka-extrabold.ttf");
+const IOSEVKA_HEAVY_TTF: &[u8] = include_bytes!("fonts/iosevka-heavy.ttf");
 
 /// Selected Iosevka weight for the body font. Nine weights, ordered
 /// thinnest → heaviest exactly as upstream ships them
@@ -337,15 +341,15 @@ pub enum FontWeight {
 impl FontWeight {
     fn as_u8(self) -> u8 {
         match self {
-            FontWeight::Thin       => 0,
+            FontWeight::Thin => 0,
             FontWeight::ExtraLight => 1,
-            FontWeight::Light      => 2,
-            FontWeight::Regular    => 3,
-            FontWeight::Medium     => 4,
-            FontWeight::SemiBold   => 5,
-            FontWeight::Bold       => 6,
-            FontWeight::ExtraBold  => 7,
-            FontWeight::Heavy      => 8,
+            FontWeight::Light => 2,
+            FontWeight::Regular => 3,
+            FontWeight::Medium => 4,
+            FontWeight::SemiBold => 5,
+            FontWeight::Bold => 6,
+            FontWeight::ExtraBold => 7,
+            FontWeight::Heavy => 8,
         }
     }
 
@@ -365,29 +369,29 @@ impl FontWeight {
 
     fn ttf(self) -> &'static [u8] {
         match self {
-            FontWeight::Thin       => IOSEVKA_THIN_TTF,
+            FontWeight::Thin => IOSEVKA_THIN_TTF,
             FontWeight::ExtraLight => IOSEVKA_EXTRALIGHT_TTF,
-            FontWeight::Light      => IOSEVKA_LIGHT_TTF,
-            FontWeight::Regular    => IOSEVKA_REGULAR_TTF,
-            FontWeight::Medium     => IOSEVKA_MEDIUM_TTF,
-            FontWeight::SemiBold   => IOSEVKA_SEMIBOLD_TTF,
-            FontWeight::Bold       => IOSEVKA_BOLD_TTF,
-            FontWeight::ExtraBold  => IOSEVKA_EXTRABOLD_TTF,
-            FontWeight::Heavy      => IOSEVKA_HEAVY_TTF,
+            FontWeight::Light => IOSEVKA_LIGHT_TTF,
+            FontWeight::Regular => IOSEVKA_REGULAR_TTF,
+            FontWeight::Medium => IOSEVKA_MEDIUM_TTF,
+            FontWeight::SemiBold => IOSEVKA_SEMIBOLD_TTF,
+            FontWeight::Bold => IOSEVKA_BOLD_TTF,
+            FontWeight::ExtraBold => IOSEVKA_EXTRABOLD_TTF,
+            FontWeight::Heavy => IOSEVKA_HEAVY_TTF,
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            FontWeight::Thin       => "iosevka-thin",
+            FontWeight::Thin => "iosevka-thin",
             FontWeight::ExtraLight => "iosevka-extralight",
-            FontWeight::Light      => "iosevka-light",
-            FontWeight::Regular    => "iosevka-regular",
-            FontWeight::Medium     => "iosevka-medium",
-            FontWeight::SemiBold   => "iosevka-semibold",
-            FontWeight::Bold       => "iosevka-bold",
-            FontWeight::ExtraBold  => "iosevka-extrabold",
-            FontWeight::Heavy      => "iosevka-heavy",
+            FontWeight::Light => "iosevka-light",
+            FontWeight::Regular => "iosevka-regular",
+            FontWeight::Medium => "iosevka-medium",
+            FontWeight::SemiBold => "iosevka-semibold",
+            FontWeight::Bold => "iosevka-bold",
+            FontWeight::ExtraBold => "iosevka-extrabold",
+            FontWeight::Heavy => "iosevka-heavy",
         }
     }
 }
@@ -415,7 +419,11 @@ pub fn set_font_weight(w: FontWeight) {
 /// `apply_theme` call.
 pub fn font_weight() -> FontWeight {
     let v = ACTIVE_FONT_WEIGHT.load(Ordering::Relaxed);
-    if v == u8::MAX { FontWeight::default() } else { FontWeight::from_u8(v) }
+    if v == u8::MAX {
+        FontWeight::default()
+    } else {
+        FontWeight::from_u8(v)
+    }
 }
 
 /// Replace the active title-font weight (pane title + section
@@ -428,7 +436,11 @@ pub fn set_title_weight(w: FontWeight) {
 /// [`FontWeight::Heavy`].
 pub fn title_weight() -> FontWeight {
     let v = ACTIVE_TITLE_WEIGHT.load(Ordering::Relaxed);
-    if v == u8::MAX { FontWeight::Heavy } else { FontWeight::from_u8(v) }
+    if v == u8::MAX {
+        FontWeight::Heavy
+    } else {
+        FontWeight::from_u8(v)
+    }
 }
 
 /// Named font family the title-paint sites (`floating::pane_title`,
@@ -539,7 +551,7 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
     // `apply_theme` call always installs fonts, and any later
     // `set_font_weight` / `set_title_weight` change is detected by
     // comparing these against the live atomics.
-    static LAST_BODY_WEIGHT:  AtomicU8 = AtomicU8::new(u8::MAX);
+    static LAST_BODY_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
     static LAST_TITLE_WEIGHT: AtomicU8 = AtomicU8::new(u8::MAX);
 
     let th = theme();
@@ -560,9 +572,9 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
         accent_raw
     };
     set_raw_accent(accent_raw);
-    let body_w  = font_weight();
+    let body_w = font_weight();
     let title_w = title_weight();
-    let body_u8  = body_w.as_u8();
+    let body_u8 = body_w.as_u8();
     let title_u8 = title_w.as_u8();
     if LAST_BODY_WEIGHT.load(Ordering::Relaxed) != body_u8
         || LAST_TITLE_WEIGHT.load(Ordering::Relaxed) != title_u8
@@ -658,11 +670,11 @@ pub fn apply_theme_to(
     // resolve the panel/section ColorMode so the GAME profile's
     // accent-derived panel actually flows into Visuals.panel_fill.
     let glass_panel = glass_fill(pane_fill(accent_col), accent_col, glass_alpha_window());
-    let glass_card  = glass_fill(section_fill(accent_col), accent_col, glass_alpha_card());
+    let glass_card = glass_fill(section_fill(accent_col), accent_col, glass_alpha_card());
     let glass_hover = glass_fill(th.bg_hover, accent_col, glass_alpha_card());
 
     let unified_border = widget_border(accent_col);
-    let stroke_w = th.border_width;
+    let stroke_w = th.stroke.border_width;
 
     // Pick the egui visual base matching the active theme's
     // brightness mode. Light variants need `Visuals::light()` so
@@ -673,17 +685,17 @@ pub fn apply_theme_to(
     } else {
         egui::Visuals::dark()
     };
-    visuals.panel_fill          = glass_panel;
-    visuals.window_fill         = glass_panel;
-    visuals.window_stroke       = egui::Stroke::new(stroke_w, unified_border);
+    visuals.panel_fill = glass_panel;
+    visuals.window_fill = glass_panel;
+    visuals.window_stroke = egui::Stroke::new(stroke_w, unified_border);
     // `extreme_bg_color` is the egui visual every native input
     // (DragValue, TextEdit, ScrollArea track, …) pulls from. Route
     // it through `track_fill` so PRO keeps the dark sunken look and
     // GAME blends into the accent panel.
-    visuals.extreme_bg_color    = track_fill(accent_col);
-    visuals.faint_bg_color      = glass_card;
-    visuals.code_bg_color       = glass_card;
-    visuals.override_text_color = Some(th.text_primary);
+    visuals.extreme_bg_color = track_fill(accent_col);
+    visuals.faint_bg_color = glass_card;
+    visuals.code_bg_color = glass_card;
+    visuals.override_text_color = Some(th.palette.text_primary);
     // Force the gamma-correct (linear) coverage→alpha curve for text in
     // both modes. egui's dark-mode default is `TwoCoverageMinusCoverageSq`,
     // which deliberately fattens glyph edges to make light text on dark
@@ -693,11 +705,11 @@ pub fn apply_theme_to(
     // the accent is applied. `Linear` blends the coverage straight, so
     // the AA edge is a single 1-px transition between text and bg.
     visuals.text_alpha_from_coverage = egui::epaint::AlphaFromCoverage::Linear;
-    visuals.selection.bg_fill   = tinted_surface(accent_col);
-    visuals.selection.stroke    = egui::Stroke::new(stroke_w.max(1.0), accent_col);
-    visuals.hyperlink_color     = accent_col;
+    visuals.selection.bg_fill = tinted_surface(accent_col);
+    visuals.selection.stroke = egui::Stroke::new(stroke_w.max(1.0), accent_col);
+    visuals.hyperlink_color = accent_col;
 
-    let r = egui::CornerRadius::same(th.radius_widget);
+    let r = egui::CornerRadius::same(th.shape.radius_widget);
     let widget = |bg: egui::Color32, fg_stroke: egui::Color32, bg_stroke: egui::Color32| {
         egui::style::WidgetVisuals {
             bg_fill: bg,
@@ -718,11 +730,19 @@ pub fn apply_theme_to(
     // `bg_input`); GAME now lifts inputs to `panel + 10 % white`.
     let input_bg = track_fill(accent_col);
     let glass_input = glass_fill(input_bg, accent_col, glass_alpha_card());
-    visuals.widgets.noninteractive = widget(glass_panel, th.text_secondary, unified_border);
-    visuals.widgets.inactive       = widget(glass_input, th.text_primary,   unified_border);
-    visuals.widgets.hovered        = widget(glass_hover, th.text_primary,   th.border_inner);
-    visuals.widgets.active         = widget(accent_col,  th.text_primary,   accent_col);
-    visuals.widgets.open           = widget(glass_hover, th.text_primary,   th.border_inner);
+    visuals.widgets.noninteractive = widget(glass_panel, th.palette.text_secondary, unified_border);
+    visuals.widgets.inactive = widget(glass_input, th.palette.text_primary, unified_border);
+    visuals.widgets.hovered = widget(
+        glass_hover,
+        th.palette.text_primary,
+        th.palette.border_inner,
+    );
+    visuals.widgets.active = widget(accent_col, th.palette.text_primary, accent_col);
+    visuals.widgets.open = widget(
+        glass_hover,
+        th.palette.text_primary,
+        th.palette.border_inner,
+    );
 
     let mut style = (*ctx.style()).clone();
     style.visuals = visuals;
@@ -730,18 +750,18 @@ pub fn apply_theme_to(
     // Slightly roomier controls — interacts at 20 px (was 18) and
     // buttons get 8×4 padding (was 6×2) so rows don't feel cramped
     // against each other.
-    style.spacing.item_spacing      = egui::vec2(6.0, 3.0);
-    style.spacing.button_padding    = egui::vec2(8.0, 4.0);
-    style.spacing.indent            = 14.0;
-    style.spacing.window_margin     = egui::Margin::ZERO;
-    style.spacing.interact_size.y   = 20.0;
+    style.spacing.item_spacing = egui::vec2(6.0, 3.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.indent = 14.0;
+    style.spacing.window_margin = egui::Margin::ZERO;
+    style.spacing.interact_size.y = 20.0;
     // Tight slider track. Combined with no inline `.text(...)` label
     // and no `.show_value()` suffix, this leaves enough right-cell
     // space for the slider PLUS the current value without pushing
     // the section card wider than its pinned inner width.
-    style.spacing.slider_width      = 90.0;
-    style.spacing.icon_width        = 14.0;
-    style.spacing.icon_spacing      = 6.0;
+    style.spacing.slider_width = 90.0;
+    style.spacing.icon_width = 14.0;
+    style.spacing.icon_spacing = 6.0;
 
     // Scrollbar — always a thin line. The bar barely thickens on
     // hover (2 → 3 px); the visible cue is the handle's opacity
@@ -766,11 +786,11 @@ pub fn apply_theme_to(
         bar_inner_margin: 2.0,
         bar_outer_margin: 0.0,
         foreground_color: true,
-        dormant_background_opacity:  0.0,
-        active_background_opacity:   0.0,
+        dormant_background_opacity: 0.0,
+        active_background_opacity: 0.0,
         interact_background_opacity: 0.0,
-        dormant_handle_opacity:  0.55,
-        active_handle_opacity:   0.85,
+        dormant_handle_opacity: 0.55,
+        active_handle_opacity: 0.85,
         interact_handle_opacity: 1.00,
     };
     // Rest: a dimmed-accent track handle that still belongs to the
@@ -778,21 +798,32 @@ pub fn apply_theme_to(
     // `fg_stroke` is also used for fine foreground elements
     // (checkmarks, focus rings) — re-tinting them to accent reads as
     // an improvement, not a regression.
-    let accent_dim = egui::Color32::from_rgba_unmultiplied(
-        accent_col.r(),
-        accent_col.g(),
-        accent_col.b(),
-        160,
-    );
+    let accent_dim =
+        egui::Color32::from_rgba_unmultiplied(accent_col.r(), accent_col.g(), accent_col.b(), 160);
     style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, accent_dim);
     style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, accent_hover());
     style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, accent_pressed());
     style.text_styles = [
-        (egui::TextStyle::Heading,   egui::FontId::new(16.0, egui::FontFamily::Proportional)),
-        (egui::TextStyle::Body,      egui::FontId::new(13.0, egui::FontFamily::Proportional)),
-        (egui::TextStyle::Monospace, egui::FontId::new(13.0, egui::FontFamily::Monospace)),
-        (egui::TextStyle::Button,    egui::FontId::new(13.0, egui::FontFamily::Proportional)),
-        (egui::TextStyle::Small,     egui::FontId::new(12.0, egui::FontFamily::Proportional)),
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Body,
+            egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Monospace,
+            egui::FontId::new(13.0, egui::FontFamily::Monospace),
+        ),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Small,
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        ),
     ]
     .into();
 
@@ -800,7 +831,7 @@ pub fn apply_theme_to(
     // every `animate_bool` consumer (foldable chevron + banner,
     // hover lifts, accordion height, etc.). PRO ships a snappy
     // 0.15 s; GAME a deliberate 0.35 s for the cinematic feel.
-    style.animation_time = th.section_animation_time;
+    style.animation_time = th.container.animation_time;
 
     // Performance — parallel tessellation. egui's painter→mesh
     // pass runs on rayon when this is on, splitting large shape
@@ -850,9 +881,9 @@ pub fn section_caps(label: &str, accent: egui::Color32) -> egui::RichText {
     let th = theme();
     let mut t = egui::RichText::new(label.to_uppercase())
         .strong()
-        .size(th.section_title_size)
+        .size(th.container.title_size)
         .color(accent);
-    let spacing = th.section_title_letter_spacing;
+    let spacing = th.container.title_letter_spacing;
     if spacing > 0.0 {
         t = t.extra_letter_spacing(spacing);
     }
@@ -866,7 +897,7 @@ pub fn section_caps(label: &str, accent: egui::Color32) -> egui::RichText {
 /// widgets get a darkened variant (lerp toward black by
 /// [`Theme.body_accent_darken`]) so they don't match the banner.
 pub fn body_accent(accent: egui::Color32) -> egui::Color32 {
-    let t = theme().body_accent_darken;
+    let t = theme().text.body_accent_darken;
     if t <= 0.0 {
         accent
     } else {
@@ -894,10 +925,7 @@ pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
     static CACHE: std::sync::OnceLock<std::sync::RwLock<Option<((u32, bool), u32)>>> =
         std::sync::OnceLock::new();
     fn pack(c: egui::Color32) -> u32 {
-        ((c.r() as u32) << 24)
-            | ((c.g() as u32) << 16)
-            | ((c.b() as u32) << 8)
-            | (c.a() as u32)
+        ((c.r() as u32) << 24) | ((c.g() as u32) << 16) | ((c.b() as u32) << 8) | (c.a() as u32)
     }
     fn unpack(p: u32) -> egui::Color32 {
         egui::Color32::from_rgba_premultiplied(
@@ -929,7 +957,9 @@ pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
     out
 }
 
-pub fn fg_dim() -> egui::Color32 { TEXT_SECONDARY }
+pub fn fg_dim() -> egui::Color32 {
+    TEXT_SECONDARY
+}
 
 /// Tracks how many "appearance sessions" an `id` has had — the
 /// counter increments every time the id is missing from a frame
@@ -979,12 +1009,7 @@ const SCRAMBLE_CHARS: &[char] = &[
 ///
 /// Calls `request_repaint` while any character is still scrambling
 /// (or while gated, so the random glyphs keep cycling).
-pub fn scramble_text(
-    ctx: &egui::Context,
-    id: egui::Id,
-    current: &str,
-    active: bool,
-) -> String {
+pub fn scramble_text(ctx: &egui::Context, id: egui::Id, current: &str, active: bool) -> String {
     /// Staggered delay between adjacent characters' lock times.
     /// `0.07` was the frostcore default, but with `Pane2`'s
     /// per-section staggered fade-in landing the last container at
@@ -1027,9 +1052,7 @@ pub fn scramble_text(
     let key_start = id.with("frost_scramble_start");
     let key_prev = id.with("frost_scramble_prev");
     let prev: Option<String> = ctx.data(|d| d.get_temp(key_prev));
-    let mut start: f64 = ctx
-        .data(|d| d.get_temp(key_start))
-        .unwrap_or(now);
+    let mut start: f64 = ctx.data(|d| d.get_temp(key_start)).unwrap_or(now);
     // Restart scramble whenever the text changes (or on first sight,
     // including the frame `active` first flips to true).
     if prev.as_deref() != Some(current) {
@@ -1077,11 +1100,7 @@ pub fn scramble_text(
 /// Returns `true` when the stored prev text differs from `current`
 /// (the scramble is about to start) or when elapsed is below the
 /// last-character lock time.
-pub fn scramble_active(
-    ctx: &egui::Context,
-    scramble_id: egui::Id,
-    current: &str,
-) -> bool {
+pub fn scramble_active(ctx: &egui::Context, scramble_id: egui::Id, current: &str) -> bool {
     // Keep these in sync with `scramble_text`.
     const STAGGER: f64 = 0.10;
     const MIN_DUR: f64 = 0.65;
@@ -1092,9 +1111,7 @@ pub fn scramble_active(
         return true;
     }
     let now = ctx.input(|i| i.time);
-    let start: f64 = ctx
-        .data(|d| d.get_temp(key_start))
-        .unwrap_or(now);
+    let start: f64 = ctx.data(|d| d.get_temp(key_start)).unwrap_or(now);
     let elapsed = now - start;
     let total = MIN_DUR + (current.chars().count() as f64) * STAGGER;
     elapsed < total
@@ -1287,6 +1304,16 @@ impl Mode {
     }
 }
 
+/// Stable theme identity split from the display/cache name. Rendering
+/// code should not branch on this either; it exists for diagnostics,
+/// selectors, and future theme registries where a structured id is
+/// safer than parsing `Theme::name`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ThemeId {
+    pub family: &'static str,
+    pub variant: &'static str,
+}
+
 /// How a surface fill is computed. Either pulled straight out of
 /// the theme palette ([`ColorMode::FromBg`] — the PRO behaviour) or
 /// derived from the runtime accent colour by lerping toward a
@@ -1325,6 +1352,428 @@ pub enum TextColorMode {
     ContrastWithSection,
 }
 
+/// Which tab renderer a theme wants for `Normal::show_tabs`.
+/// Rendering code must switch on this typed layout, not on
+/// `Theme::name`, so a third theme can reuse either existing tab
+/// dialect without another hardcoded family branch.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TabLayout {
+    /// Folder-style tabs project from the title-facing edge of the
+    /// container. This is the PRO default.
+    FolderSideStrip,
+    /// The container title row becomes a segmented tab strip. This
+    /// is the GAME default.
+    TitleRowSegmented,
+}
+
+/// How much outside padding the folder-tab strip reserves on its
+/// outer edge.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TabOuterInset {
+    /// No extra inset; the strip sits flush against the pane edge.
+    None,
+    /// Mirror the container body's cross-axis inset so tab content
+    /// aligns visually with body content on the opposite edge.
+    MirrorBodyInset,
+}
+
+/// Base colour rule for inactive folder-tab glyphs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TabInactiveGlyphColor {
+    /// Use `Theme::text_secondary`.
+    TextSecondary,
+    /// Pick black on light themes and white on dark themes.
+    HighContrast,
+}
+
+/// Theme-owned tab geometry and paint dialect. The first migration
+/// target is intentionally small: it captures the existing PRO and
+/// GAME tab differences without forcing a wider theme-struct rewrite.
+#[derive(Copy, Clone, Debug)]
+pub struct TabTheme {
+    pub layout: TabLayout,
+    pub outer_inset: TabOuterInset,
+    pub strip_thickness: f32,
+    pub tab_len: f32,
+    pub tab_gap: f32,
+    pub tab_overlap: f32,
+    pub title_row_height_multiplier: f32,
+    pub folder_icon_size: f32,
+    pub folder_active_radius: u8,
+    pub inactive_glyph_color: TabInactiveGlyphColor,
+}
+
+/// Theme-owned pane geometry and pane chrome. This mirrors the
+/// current flat pane-related fields and constants so call sites can
+/// migrate incrementally.
+#[derive(Copy, Clone, Debug)]
+pub struct PaneTheme {
+    pub inner_margin: f32,
+    pub outer_span_default: f32,
+    pub title_strip_thickness: f32,
+    pub body_animation_time: f32,
+    pub default_flow_open: f32,
+    pub resize_handle_thickness: f32,
+    pub min_user_flow: f32,
+    pub max_user_flow: f32,
+    pub min_user_span: f32,
+    pub max_user_span: f32,
+    pub rail_panel_gap: f32,
+    pub fill_visible: bool,
+    pub shadow_blur: u8,
+    pub shadow_y: i8,
+    pub show_title_divider: bool,
+    pub title_stripes: bool,
+    pub title_chromatic_aberration: bool,
+    pub title_brackets: bool,
+}
+
+/// Theme-owned ribbon geometry and ribbon button chrome.
+#[derive(Copy, Clone, Debug)]
+pub struct RibbonTheme {
+    pub side_button_size: f32,
+    pub side_button_gap: f32,
+    pub edge_gap: f32,
+    pub panel_gap: f32,
+    pub button_accent_fill: bool,
+    pub ghost_fill_alpha: u8,
+    pub ghost_stroke_width: f32,
+}
+
+/// Theme-owned container and section chrome. This mirrors the
+/// current flat section fields during the migration.
+#[derive(Copy, Clone, Debug)]
+pub struct ContainerTheme {
+    pub title_zone_thickness: f32,
+    pub title_inset: f32,
+    pub divider_inset: f32,
+    pub title_body_gap_half: f32,
+    pub default_width: f32,
+    pub default_height: f32,
+    pub default_min_width: f32,
+    pub pod_pad_x: i8,
+    pub pod_pad_y: i8,
+    pub fill_mode: ColorMode,
+    pub show_frame: bool,
+    pub show_title_divider: bool,
+    pub pad_x: i8,
+    pub pad_y: i8,
+    pub body_indent: f32,
+    pub outer_margin_flow_title: i8,
+    pub outer_margin_flow_body: i8,
+    pub outer_margin_span: i8,
+    pub body_inner_top_pad: f32,
+    pub animation_time: f32,
+    pub gap: f32,
+    pub corner_ticks_inset: f32,
+    pub title_brackets: bool,
+    pub title_prefix: Option<&'static str>,
+    pub title_letter_spacing: f32,
+    pub bottom_rule: bool,
+    pub show_chevron: bool,
+    pub title_strip_filled: bool,
+    pub title_size: f32,
+    pub icon_at_end: bool,
+    pub icon_size: f32,
+    pub body_top_pad: f32,
+    pub title_trailing_rule: bool,
+    pub corner_ticks: f32,
+    pub separator_strip_h: f32,
+    pub separator_alpha: u8,
+    pub body_inner_end_pad: f32,
+}
+
+/// Theme-owned pod rhythm. Pods remain the required container body
+/// unit; this only moves their visual spacing and resize bounds out
+/// of renderer-local constants.
+#[derive(Copy, Clone, Debug)]
+pub struct PodTheme {
+    pub widget_spacing: f32,
+    pub min_widget_h: f32,
+    pub max_widget_h: f32,
+    pub tag_row_pitch: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ButtonTheme {
+    pub row_h: f32,
+    pub subtitle_row_h: f32,
+    pub label_font: f32,
+    pub subtitle_font: f32,
+    pub glyph_font: f32,
+    pub edge_pad: f32,
+    pub glyph_w: f32,
+    pub glyph_gap: f32,
+    pub full_accent_on_press: bool,
+    pub tint_rest: f32,
+    pub tint_hover: f32,
+    pub tint_press: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ProgressTheme {
+    pub row_h: f32,
+    pub value_font: f32,
+    pub segmented: bool,
+    pub segments: usize,
+    pub segment_gap: f32,
+    pub segment_inset: f32,
+    pub dim_alpha: u8,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct TreeTheme {
+    pub row_h: f32,
+    pub indent: f32,
+    pub guide_width: f32,
+    pub label_font: f32,
+    pub chevron_w: f32,
+    pub icon_w: f32,
+    pub label_pad_l: f32,
+    pub slot_w: f32,
+    pub slot_gap: f32,
+    pub right_pad_r: f32,
+    pub row_pad_l: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SelectTheme {
+    pub row_h: f32,
+    pub label_pad_l: f32,
+    pub trailing_pad_r: f32,
+    pub label_font: f32,
+    pub trailing_font: f32,
+    pub radio_outer_r: f32,
+    pub radio_slot_w: f32,
+    pub radio_pad_r: f32,
+    pub radio_stroke_w: f32,
+    pub radio_dot_inset: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct DropdownTheme {
+    pub row_h: f32,
+    pub item_h: f32,
+    pub chevron_w: f32,
+    pub pad_x: f32,
+    pub text_font: f32,
+    pub icon_size: f32,
+    pub popup_gap: f32,
+    pub popup_inner_margin: i8,
+    pub item_spacing_y: f32,
+    pub tint_rest: f32,
+    pub tint_hover: f32,
+    pub tint_press: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SliderTheme {
+    pub row_h: f32,
+    pub value_font: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ToggleTheme {
+    pub row_h: f32,
+    pub track_w: f32,
+    pub label_track_gap: f32,
+    pub knob_pad: f32,
+    pub track_accent_hint: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ReadoutTheme {
+    pub row_h: f32,
+    pub label_font: f32,
+    pub value_font: f32,
+    pub edge_pad: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ColorTheme {
+    pub row_h: f32,
+    pub swatch_w: f32,
+    pub label_font: f32,
+    pub label_pad_l: f32,
+    pub picker_gap: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ChipTheme {
+    pub height: f32,
+    pub pad_x: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct KeybindingTheme {
+    pub row_h: f32,
+    pub key_font: f32,
+    pub action_font: f32,
+    pub key_pad_x: f32,
+    pub key_pad_y: f32,
+    pub key_action_gap: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct BadgeTheme {
+    pub row_h: f32,
+    pub label_col_w: f32,
+    pub label_font: f32,
+    pub label_pad_x: f32,
+    pub label_chips_gap: f32,
+    pub chip_gap_x: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct DragValueTheme {
+    pub row_h: f32,
+    pub input_w: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct WidgetTheme {
+    pub button: ButtonTheme,
+    pub progress: ProgressTheme,
+    pub tree: TreeTheme,
+    pub select: SelectTheme,
+    pub dropdown: DropdownTheme,
+    pub slider: SliderTheme,
+    pub toggle: ToggleTheme,
+    pub readout: ReadoutTheme,
+    pub color: ColorTheme,
+    pub chip: ChipTheme,
+    pub keybinding: KeybindingTheme,
+    pub badge: BadgeTheme,
+    pub drag_value: DragValueTheme,
+}
+
+/// Theme-owned chrome icon treatment. Domain/content icon names
+/// still come from callers; this group controls the recurring
+/// structural icons frost itself paints.
+#[derive(Copy, Clone, Debug)]
+pub struct IconTheme {
+    pub section_inline_scale: f32,
+    pub section_icon_title_gap: f32,
+    pub section_chevron_w: f32,
+    pub section_chevron_gap: f32,
+    pub overlay_icon_scale: f32,
+    pub overlay_arrow_stroke_w: f32,
+    pub overlay_arrow_shrink: f32,
+    pub overlay_arrow_tip_t: f32,
+    pub overlay_arrow_head_len: f32,
+    pub overlay_arrow_head_half_w: f32,
+    pub tree_type_icon_size: f32,
+    pub tree_glyph_icon_size: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PaletteTheme {
+    pub bg_window: egui::Color32,
+    pub bg_panel: egui::Color32,
+    pub bg_raised: egui::Color32,
+    pub bg_hover: egui::Color32,
+    pub bg_input: egui::Color32,
+    pub text_primary: egui::Color32,
+    pub text_secondary: egui::Color32,
+    pub text_disabled: egui::Color32,
+    pub border_subtle: egui::Color32,
+    pub border_inner: egui::Color32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct StrokeTheme {
+    pub border_alpha: u8,
+    pub border_accent_tint: f32,
+    pub border_width: f32,
+    pub row_separator_alpha: u8,
+    pub row_separator_dash: Option<(f32, f32)>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GlassTheme {
+    pub card_factor: f32,
+    pub group_factor: f32,
+    pub accent_tint: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ShapeTheme {
+    pub radius_widget: u8,
+    pub radius_compact: u8,
+    pub radius_sm: u8,
+    pub radius_md: u8,
+    pub radius_lg: u8,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct TextTheme {
+    pub title_color_mode: TextColorMode,
+    pub title_softness: f32,
+    pub body_accent_darken: f32,
+    pub subcaption_prefix: Option<&'static str>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct MotionTheme {
+    pub animations_enabled: bool,
+    pub button_anim_scale: f32,
+    pub pane_fade_scale: f32,
+    pub scramble_titles: bool,
+}
+
+/// Theme-owned graph canvas and node chrome. This keeps the
+/// `extras::graph` adapter generic: it translates these tokens to
+/// `frost_graph::GraphStyle` without knowing which theme family is
+/// active.
+#[derive(Copy, Clone, Debug)]
+pub struct GraphTheme {
+    pub node_pad_x: i8,
+    pub node_pad_y: i8,
+    pub bg_inner_margin: i8,
+    pub canvas_pattern: GraphCanvasPattern,
+    pub grid_alpha: u8,
+    pub pin_stroke_width: f32,
+    pub pin_stroke_alpha: u8,
+    pub wire_width: f32,
+    pub wire_glow: f32,
+    pub pin_glow: f32,
+    pub node_halo_gap: f32,
+    pub node_halo_width: f32,
+    pub node_halo_radius_outset: u8,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum GraphCanvasPattern {
+    Dots { spacing: f32, radius: f32 },
+    Hex { radius: f32 },
+}
+
+/// Theme-owned code editor adapter tokens.
+#[derive(Copy, Clone, Debug)]
+pub struct CodeTheme {
+    pub font_size: f32,
+    pub line_height_factor: f32,
+    pub min_rows: usize,
+    pub force_dark: bool,
+    pub functions: egui::Color32,
+    pub literals: egui::Color32,
+    pub numerics: egui::Color32,
+    pub strings: egui::Color32,
+    pub types: egui::Color32,
+}
+
+/// Theme-owned fullscreen/maximize overlay chrome.
+#[derive(Copy, Clone, Debug)]
+pub struct OverlayTheme {
+    pub inline_chip_size: f32,
+    pub inline_chip_pad: f32,
+    pub fullscreen_button_size: f32,
+    pub fullscreen_edge_gap: f32,
+    pub placeholder_text: &'static str,
+    pub ghost_fill_alpha: u8,
+    pub ghost_stroke_width: f32,
+}
+
 /// A complete visual profile for the frost UI kit. Built-in
 /// profiles: [`theme_pro`] (the default — soft glass, rounded
 /// corners, accent-tinted titles on a dark panel) and [`theme_game`]
@@ -1332,6 +1781,10 @@ pub enum TextColorMode {
 /// with contrasting dark titles, full-accent click fills).
 #[derive(Copy, Clone, Debug)]
 pub struct Theme {
+    /// Structured identity for selectors and diagnostics. Do not use
+    /// this to special-case rendering; add a typed theme field for the
+    /// visual decision instead.
+    pub id: ThemeId,
     /// Identifier used by the de-dup cache in [`apply_theme`] — pick
     /// distinct names for distinct themes or the egui style won't
     /// re-apply on switch.
@@ -1342,19 +1795,28 @@ pub struct Theme {
     /// to know "am I in a light or dark context" branch cheaply
     /// without reading luma.
     pub is_light: bool,
+    pub palette: PaletteTheme,
+    pub stroke: StrokeTheme,
+    pub glass: GlassTheme,
+    pub shape: ShapeTheme,
+    pub text: TextTheme,
+    pub motion: MotionTheme,
+    pub graph: GraphTheme,
+    pub code: CodeTheme,
+    pub overlay: OverlayTheme,
 
     // ── Surfaces — palette ──
-    pub bg_window:  egui::Color32,
-    pub bg_panel:   egui::Color32,
-    pub bg_raised:  egui::Color32,
-    pub bg_hover:   egui::Color32,
-    pub bg_input:   egui::Color32,
+    pub bg_window: egui::Color32,
+    pub bg_panel: egui::Color32,
+    pub bg_raised: egui::Color32,
+    pub bg_hover: egui::Color32,
+    pub bg_input: egui::Color32,
 
     // ── Surfaces — fill mode ──
     /// How [`pane_fill`] resolves. PRO uses `FromBg` (dark panel);
     /// GAME uses `FromAccent` so the entire pane takes the user's
     /// accent colour.
-    pub panel_fill_mode:   ColorMode,
+    pub panel_fill_mode: ColorMode,
     /// How [`section_fill`] resolves. Only consulted when
     /// `section_show_frame` is true.
     pub section_fill_mode: ColorMode,
@@ -1449,9 +1911,9 @@ pub struct Theme {
     pub pane_fade_scale: f32,
 
     // ── Text ──
-    pub text_primary:   egui::Color32,
+    pub text_primary: egui::Color32,
     pub text_secondary: egui::Color32,
-    pub text_disabled:  egui::Color32,
+    pub text_disabled: egui::Color32,
     /// How the section / pane title colour is resolved.
     pub title_color_mode: TextColorMode,
     /// Lerp fraction toward the title's surface applied AFTER
@@ -1584,19 +2046,36 @@ pub struct Theme {
     /// strokes of that length flush at each corner. GAME `7.0`.
     pub section_corner_ticks: f32,
 
+    // ── Tabs ──
+    /// Tabbed container visual/layout dialect. This replaces
+    /// renderer-side checks like `theme.name.starts_with("GAME")`.
+    pub tabs: TabTheme,
+    pub pod: PodTheme,
+    pub widgets: WidgetTheme,
+    pub icons: IconTheme,
+    /// Pane geometry/chrome group. Flat fields remain during the
+    /// migration; new code should prefer this nested contract.
+    pub pane: PaneTheme,
+    /// Ribbon geometry/chrome group. Flat fields remain during the
+    /// migration; new code should prefer this nested contract.
+    pub ribbon: RibbonTheme,
+    /// Container/section chrome group. Flat fields remain during the
+    /// migration; new code should prefer this nested contract.
+    pub container: ContainerTheme,
+
     // ── Borders / strokes ──
     /// Base border colour (before the accent tint blend).
-    pub border_subtle:      egui::Color32,
+    pub border_subtle: egui::Color32,
     /// Inner-frame stroke colour for hover / active states.
-    pub border_inner:       egui::Color32,
+    pub border_inner: egui::Color32,
     /// Alpha applied to [`widget_border`] strokes.
-    pub border_alpha:       u8,
+    pub border_alpha: u8,
     /// Fraction of the accent colour blended into [`widget_border`].
     pub border_accent_tint: f32,
     /// Stroke width used for every frost surface (sections,
     /// subsections, group frames, inputs, …). `0.0` paints no border
     /// at all — handy for the GAME profile.
-    pub border_width:       f32,
+    pub border_width: f32,
     /// Alpha applied to the hairline row-separator painted between
     /// row widgets in a section body. Decoupled from
     /// [`border_alpha`] so a theme can hide panel borders while
@@ -1609,20 +2088,20 @@ pub struct Theme {
     // ── Glass ──
     /// Card alpha as a fraction of window alpha. PRO ≈ 0.76; GAME
     /// can flatten this to 1.0 + a flat fill to drop the glass effect.
-    pub glass_card_factor:  f32,
+    pub glass_card_factor: f32,
     /// Group alpha as a fraction of window alpha.
     pub glass_group_factor: f32,
     /// Fraction of the accent colour blended into glass surfaces.
     /// `0.0` produces a pure neutral fill — matches the flat,
     /// posterised look of game UIs.
-    pub glass_accent_tint:  f32,
+    pub glass_accent_tint: f32,
 
     // ── Shape ──
-    pub radius_widget:  u8,
+    pub radius_widget: u8,
     pub radius_compact: u8,
-    pub radius_sm:      u8,
-    pub radius_md:      u8,
-    pub radius_lg:      u8,
+    pub radius_sm: u8,
+    pub radius_md: u8,
+    pub radius_lg: u8,
 
     // ── Body row visuals ──
     /// PRO: false. GAME: true → row-level widgets paint an alternating
@@ -1647,7 +2126,7 @@ pub struct Theme {
     pub button_full_accent_on_press: bool,
     /// Accent-blend fraction for buttons at rest. PRO `0.08`, GAME
     /// `0.0` (flat panel under the button).
-    pub button_tint_rest:  f32,
+    pub button_tint_rest: f32,
     /// Accent-blend fraction for buttons on hover. PRO `0.16`, GAME
     /// `0.18` (a touch more pop on the bright accent panel).
     pub button_tint_hover: f32,
@@ -1658,9 +2137,9 @@ pub struct Theme {
     // ── Pane chrome ──
     /// Shadow blur radius for the floating pane window. PRO `24`,
     /// GAME `0` (hard-edge no-shadow look).
-    pub pane_shadow_blur:  u8,
+    pub pane_shadow_blur: u8,
     /// Shadow vertical offset. PRO `8`, GAME `0`.
-    pub pane_shadow_y:     i8,
+    pub pane_shadow_y: i8,
     /// Whether the pane title strip paints a 1 px hairline divider
     /// under the title. PRO true, GAME false.
     pub pane_show_title_divider: bool,
@@ -1680,16 +2159,16 @@ pub struct Theme {
     /// of a tree. PRO `1.0`, GAME `0.0` (guides off — flat list).
     pub tree_guide_width: f32,
     /// Graph graph pin stroke width. PRO `1.0`, GAME `0.0`.
-    pub graph_pin_width:  f32,
+    pub graph_pin_width: f32,
     /// Bloom intensity for graph wires (`0.0` = no glow, `1.0+`
     /// = strong neon halo). Read by `frost_node_graph_style` and
     /// passed straight through to `GraphStyle::wire_glow`. PRO
     /// 0.6 (vibrant but tasteful), GAME 1.0 (full neon).
-    pub graph_wire_glow:  f32,
+    pub graph_wire_glow: f32,
     /// Bloom intensity for graph pin glyphs — same scale and
     /// semantics as `graph_wire_glow`, applied to the pin
     /// shape's halo passes. PRO 0.5, GAME 0.85.
-    pub graph_pin_glow:   f32,
+    pub graph_pin_glow: f32,
     /// Use a pointy-top hex tessellation as the graph canvas
     /// background instead of the Blender-style dot grid. PRO
     /// false (dots), GAME true (hex — sci-fi HUD motif).
@@ -1731,10 +2210,10 @@ pub struct Theme {
     /// Alpha applied to the accent fill of the section/ribbon-button
     /// drag-ghost rect. PRO `28` (faint), GAME `90` (visible against
     /// the accent panel).
-    pub ghost_fill_alpha:    u8,
+    pub ghost_fill_alpha: u8,
     /// Stroke width on the drag-ghost rect's accent border. PRO
     /// `1.5`, GAME `0.0` (no stroke — fill alone reads).
-    pub ghost_stroke_width:  f32,
+    pub ghost_stroke_width: f32,
 
     // ── Accent adaptation ──
     /// `true` → run [`adapt_accent_to_mode`] on the user's raw accent
@@ -1750,6 +2229,72 @@ pub struct Theme {
     pub pastel_accent: bool,
 }
 
+impl Theme {
+    pub fn palette(&self) -> &PaletteTheme {
+        &self.palette
+    }
+
+    pub fn stroke(&self) -> &StrokeTheme {
+        &self.stroke
+    }
+
+    pub fn glass(&self) -> &GlassTheme {
+        &self.glass
+    }
+
+    pub fn shape(&self) -> &ShapeTheme {
+        &self.shape
+    }
+
+    pub fn text(&self) -> &TextTheme {
+        &self.text
+    }
+
+    pub fn motion(&self) -> &MotionTheme {
+        &self.motion
+    }
+
+    pub fn graph(&self) -> &GraphTheme {
+        &self.graph
+    }
+
+    pub fn code(&self) -> &CodeTheme {
+        &self.code
+    }
+
+    pub fn overlay(&self) -> &OverlayTheme {
+        &self.overlay
+    }
+
+    pub fn tabs(&self) -> &TabTheme {
+        &self.tabs
+    }
+
+    pub fn pod(&self) -> &PodTheme {
+        &self.pod
+    }
+
+    pub fn widgets(&self) -> &WidgetTheme {
+        &self.widgets
+    }
+
+    pub fn icons(&self) -> &IconTheme {
+        &self.icons
+    }
+
+    pub fn pane(&self) -> &PaneTheme {
+        &self.pane
+    }
+
+    pub fn ribbon(&self) -> &RibbonTheme {
+        &self.ribbon
+    }
+
+    pub fn container(&self) -> &ContainerTheme {
+        &self.container
+    }
+}
+
 // ── Built-in themes ──
 //
 // `Theme` (the struct), the global `set_theme` / `theme()` state, and
@@ -1759,14 +2304,13 @@ pub struct Theme {
 // under `core_crates/core/src/themes/` and register it in
 // `themes/mod.rs`; see that module's docs for the full template.
 pub use crate::themes::{
-    theme_pro, theme_game,
-    PRO_LIGHT_BG_HOVER, PRO_LIGHT_BG_INPUT, PRO_LIGHT_BG_PANEL,
-    PRO_LIGHT_BG_RAISED, PRO_LIGHT_BG_WINDOW, PRO_LIGHT_BORDER_INNER,
-    PRO_LIGHT_BORDER_SUBTLE,
-    GAME_LIGHT_BG_HOVER, GAME_LIGHT_BG_INPUT, GAME_LIGHT_BG_PANEL,
-    GAME_LIGHT_BG_RAISED, GAME_LIGHT_BG_WINDOW,
+    FLAT_DARK_BG_HOVER, FLAT_DARK_BG_INPUT, FLAT_DARK_BG_PANEL, FLAT_DARK_BG_RAISED,
+    FLAT_DARK_BG_WINDOW, FLAT_LIGHT_BG_HOVER, FLAT_LIGHT_BG_INPUT, FLAT_LIGHT_BG_PANEL,
+    FLAT_LIGHT_BG_RAISED, FLAT_LIGHT_BG_WINDOW, GAME_LIGHT_BG_HOVER, GAME_LIGHT_BG_INPUT,
+    GAME_LIGHT_BG_PANEL, GAME_LIGHT_BG_RAISED, GAME_LIGHT_BG_WINDOW, PRO_LIGHT_BG_HOVER,
+    PRO_LIGHT_BG_INPUT, PRO_LIGHT_BG_PANEL, PRO_LIGHT_BG_RAISED, PRO_LIGHT_BG_WINDOW,
+    PRO_LIGHT_BORDER_INNER, PRO_LIGHT_BORDER_SUBTLE, theme_flat, theme_game, theme_pro,
 };
-
 
 /// Packed `(r, g, b, a)` snapshot of the active accent colour.
 /// `apply_theme` writes this so widget paints can call
@@ -1778,22 +2322,17 @@ static ACTIVE_ACCENT: core::sync::atomic::AtomicU32 =
 /// `apply_theme` before any pastel pull. Read by text helpers
 /// (e.g. `section_title_color`) so titles always paint the colour
 /// the user actually picked, regardless of `Theme::pastel_accent`.
-static RAW_ACCENT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0xE6E6E8FF);
+static RAW_ACCENT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0xE6E6E8FF);
 
 fn set_active_accent(c: egui::Color32) {
-    let p = ((c.r() as u32) << 24)
-        | ((c.g() as u32) << 16)
-        | ((c.b() as u32) << 8)
-        | (c.a() as u32);
+    let p =
+        ((c.r() as u32) << 24) | ((c.g() as u32) << 16) | ((c.b() as u32) << 8) | (c.a() as u32);
     ACTIVE_ACCENT.store(p, Ordering::Relaxed);
 }
 
 fn set_raw_accent(c: egui::Color32) {
-    let p = ((c.r() as u32) << 24)
-        | ((c.g() as u32) << 16)
-        | ((c.b() as u32) << 8)
-        | (c.a() as u32);
+    let p =
+        ((c.r() as u32) << 24) | ((c.g() as u32) << 16) | ((c.b() as u32) << 8) | (c.a() as u32);
     RAW_ACCENT.store(p, Ordering::Relaxed);
 }
 
@@ -1827,8 +2366,7 @@ pub fn raw_accent() -> egui::Color32 {
 
 /// Lazily-initialised storage for the active theme. Single-process
 /// singleton, read on every widget paint.
-static ACTIVE_THEME: std::sync::OnceLock<std::sync::RwLock<Theme>> =
-    std::sync::OnceLock::new();
+static ACTIVE_THEME: std::sync::OnceLock<std::sync::RwLock<Theme>> = std::sync::OnceLock::new();
 
 fn theme_lock() -> &'static std::sync::RwLock<Theme> {
     ACTIVE_THEME.get_or_init(|| std::sync::RwLock::new(theme_pro(Mode::Dark)))
@@ -1859,11 +2397,7 @@ pub fn theme() -> Theme {
 /// The painter's clip-rect is set to `rect` so the slanted
 /// parallelograms can extend past the rect edges without overflowing
 /// the strip — the GPU clips them to the strip's exact bounds.
-pub fn paint_caution_stripes(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    accent: egui::Color32,
-) {
+pub fn paint_caution_stripes(painter: &egui::Painter, rect: egui::Rect, accent: egui::Color32) {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
@@ -1874,12 +2408,7 @@ pub fn paint_caution_stripes(
     // "accent-tinted band / pane band", same colour family on both
     // sides, no harsh second colour.
     let solid = accent;
-    let translucent = egui::Color32::from_rgba_unmultiplied(
-        accent.r(),
-        accent.g(),
-        accent.b(),
-        51,
-    );
+    let translucent = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 51);
 
     // Width of a single diagonal slab. Pattern period = STRIPE_W*2
     // (one solid + one translucent).
@@ -1931,11 +2460,12 @@ pub fn paint_caution_stripes(
 fn resolve_color(mode: ColorMode, fallback: egui::Color32, accent: egui::Color32) -> egui::Color32 {
     match mode {
         ColorMode::FromBg => fallback,
-        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+        ColorMode::FromAccent {
+            lerp_factor,
+            lerp_target,
+        } => {
             let f = lerp_factor.clamp(0.0, 1.0);
-            let lerp = |a: u8, b: u8| {
-                ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u8
-            };
+            let lerp = |a: u8, b: u8| ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u8;
             egui::Color32::from_rgb(
                 lerp(lerp_target.r(), accent.r()),
                 lerp(lerp_target.g(), accent.g()),
@@ -1960,7 +2490,7 @@ pub fn pane_fill(accent: egui::Color32) -> egui::Color32 {
 /// frame paint is enabled at all.
 pub fn section_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
-    resolve_color(th.section_fill_mode, th.bg_raised, accent)
+    resolve_color(th.container.fill_mode, th.bg_raised, accent)
 }
 
 /// Resolve the active theme's title colour against the runtime
@@ -1974,13 +2504,13 @@ pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
     // raw pick. The pastel toggle is for chrome (fills, borders,
     // ribbon paint), not for what the user reads.
     let title_accent = raw_accent();
-    let (resolved, surface) = match th.title_color_mode {
+    let (resolved, surface) = match th.text.title_color_mode {
         // No luma guard, no contrast check: title literally tints
         // with the user's raw accent. Trust the user; if they pick
         // a low-contrast accent they accept the visual.
         TextColorMode::Accent => (title_accent, pane_fill(accent)),
-        TextColorMode::Primary => (th.text_primary, pane_fill(accent)),
-        TextColorMode::Secondary => (th.text_secondary, pane_fill(accent)),
+        TextColorMode::Primary => (th.palette.text_primary, pane_fill(accent)),
+        TextColorMode::Secondary => (th.palette.text_secondary, pane_fill(accent)),
         TextColorMode::ContrastWithPanel => {
             let surface = pane_fill(accent);
             (contrast_text_for(surface), surface)
@@ -1990,8 +2520,8 @@ pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
             (contrast_text_for(surface), surface)
         }
     };
-    if th.title_softness > 0.0 {
-        lerp_rgb(resolved, surface, th.title_softness.clamp(0.0, 1.0))
+    if th.text.title_softness > 0.0 {
+        lerp_rgb(resolved, surface, th.text.title_softness.clamp(0.0, 1.0))
     } else {
         resolved
     }
@@ -2001,13 +2531,13 @@ pub fn section_title_color(accent: egui::Color32) -> egui::Color32 {
 /// driven by the theme's `section_pad_x/y`. GAME → `Margin::ZERO`.
 pub fn section_padding() -> egui::Margin {
     let th = theme();
-    egui::Margin::symmetric(th.section_pad_x, th.section_pad_y)
+    egui::Margin::symmetric(th.container.pad_x, th.container.pad_y)
 }
 
 /// Whether the section header should paint a 1 px hairline divider
 /// between its title and body. Mirrors `theme().section_show_title_divider`.
 pub fn section_show_title_divider() -> bool {
-    theme().section_show_title_divider
+    theme().container.show_title_divider
 }
 
 /// Whether sections should paint their own frame (fill + border +
@@ -2015,7 +2545,124 @@ pub fn section_show_title_divider() -> bool {
 /// is skipped entirely and the body content renders directly on the
 /// pane background — the GAME "no card" look.
 pub fn section_show_frame() -> bool {
-    theme().section_show_frame
+    theme().container.show_frame
+}
+
+/// Semantic fill roles for common frost surfaces. Use these in
+/// modules before constructing a custom `Color32` recipe directly.
+#[derive(Copy, Clone, Debug)]
+pub enum FillRole {
+    Pane,
+    Section,
+    Subsection,
+    Track,
+    Popup,
+    DragGhost,
+}
+
+/// Semantic stroke roles for common frost outlines and separators.
+#[derive(Copy, Clone, Debug)]
+pub enum StrokeRole {
+    WidgetBorder,
+    SectionBorder,
+    PopupBorder,
+    Separator,
+    DragGhost,
+}
+
+/// Semantic corner-radius roles.
+#[derive(Copy, Clone, Debug)]
+pub enum RadiusRole {
+    Widget,
+    Compact,
+    Section,
+    Pane,
+    Popup,
+}
+
+/// Semantic frame roles used by helpers that can be expressed as an
+/// `egui::Frame`.
+#[derive(Copy, Clone, Debug)]
+pub enum FrameRole {
+    Section,
+    Popup,
+    KeyChip,
+}
+
+pub fn fill_for(role: FillRole, accent: egui::Color32) -> egui::Color32 {
+    match role {
+        FillRole::Pane => glass_fill(pane_fill(accent), accent, glass_alpha_window()),
+        FillRole::Section => glass_fill(section_fill(accent), accent, glass_alpha_card()),
+        FillRole::Subsection => glass_fill(subsection_fill(accent), accent, glass_alpha_group()),
+        FillRole::Track => track_fill(accent),
+        FillRole::Popup => glass_fill(popup_fill(accent), accent, glass_alpha_window()),
+        FillRole::DragGhost => {
+            let th = theme();
+            egui::Color32::from_rgba_unmultiplied(
+                accent.r(),
+                accent.g(),
+                accent.b(),
+                th.ribbon.ghost_fill_alpha,
+            )
+        }
+    }
+}
+
+pub fn stroke_for(role: StrokeRole, accent: egui::Color32) -> egui::Stroke {
+    let th = theme();
+    match role {
+        StrokeRole::WidgetBorder | StrokeRole::SectionBorder | StrokeRole::PopupBorder => {
+            egui::Stroke::new(th.stroke.border_width, widget_border(accent))
+        }
+        StrokeRole::Separator => {
+            let base = th.palette.border_subtle;
+            egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(
+                    base.r(),
+                    base.g(),
+                    base.b(),
+                    th.container.separator_alpha,
+                ),
+            )
+        }
+        StrokeRole::DragGhost => egui::Stroke::new(th.ribbon.ghost_stroke_width, accent),
+    }
+}
+
+pub fn radius_for(role: RadiusRole) -> egui::CornerRadius {
+    let th = theme();
+    match role {
+        RadiusRole::Widget => egui::CornerRadius::same(th.shape.radius_widget),
+        RadiusRole::Compact => egui::CornerRadius::same(th.shape.radius_compact),
+        RadiusRole::Section | RadiusRole::Popup => egui::CornerRadius::same(th.shape.radius_md),
+        RadiusRole::Pane => egui::CornerRadius::same(th.shape.radius_lg),
+    }
+}
+
+pub fn frame_for(role: FrameRole, accent: egui::Color32) -> egui::Frame {
+    match role {
+        FrameRole::Section => egui::Frame::new()
+            .fill(fill_for(FillRole::Section, accent))
+            .stroke(stroke_for(StrokeRole::SectionBorder, accent))
+            .corner_radius(radius_for(RadiusRole::Section))
+            .inner_margin(section_padding()),
+        FrameRole::Popup => egui::Frame::new()
+            .fill(fill_for(FillRole::Popup, accent))
+            .stroke(stroke_for(StrokeRole::PopupBorder, accent))
+            .corner_radius(radius_for(RadiusRole::Popup))
+            .inner_margin(egui::Margin::symmetric(4, 4))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 4],
+                blur: 16,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(120),
+            }),
+        FrameRole::KeyChip => egui::Frame::new()
+            .fill(fill_for(FillRole::Track, accent))
+            .inner_margin(egui::Margin::symmetric(5, 1))
+            .corner_radius(radius_for(RadiusRole::Widget)),
+    }
 }
 
 /// Pull an accent into the readable lightness band using a smooth
@@ -2092,11 +2739,7 @@ pub fn adapt_accent_to_mode(accent: egui::Color32, is_light: bool) -> egui::Colo
 pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let f = t.clamp(0.0, 1.0);
     let lerp = |x: u8, y: u8| ((x as f32) * (1.0 - f) + (y as f32) * f).round() as u8;
-    egui::Color32::from_rgb(
-        lerp(a.r(), b.r()),
-        lerp(a.g(), b.g()),
-        lerp(a.b(), b.b()),
-    )
+    egui::Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
 }
 
 /// The neutral fill used for "track" surfaces — slider / progress
@@ -2152,7 +2795,10 @@ pub fn paint_dashed_line(
 pub fn subsection_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+        ColorMode::FromAccent {
+            lerp_factor,
+            lerp_target,
+        } => {
             let base = lerp_rgb(lerp_target, accent, lerp_factor);
             lerp_rgb(base, raise_target(lerp_target), 0.06)
         }
@@ -2216,7 +2862,10 @@ pub fn row_alt_fill(accent: egui::Color32, row_index: u32) -> Option<egui::Color
 pub fn track_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+        ColorMode::FromAccent {
+            lerp_factor,
+            lerp_target,
+        } => {
             // Track sits one tier ABOVE the panel — raise toward
             // the opposite of the panel's `lerp_target` so dark
             // panels raise toward white and light panels raise
@@ -2239,7 +2888,10 @@ pub fn track_fill(accent: egui::Color32) -> egui::Color32 {
 pub fn popup_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
     match th.panel_fill_mode {
-        ColorMode::FromAccent { lerp_factor, lerp_target } => {
+        ColorMode::FromAccent {
+            lerp_factor,
+            lerp_target,
+        } => {
             // Popup sits one tier ABOVE the panel — raises toward
             // the opposite of the panel's `lerp_target` so it works
             // identically in dark and light modes.
@@ -2282,33 +2934,33 @@ fn dim_against(text: egui::Color32, surface: egui::Color32) -> egui::Color32 {
 /// Light always return dark text, which is what callers actually
 /// want.)
 pub fn on_panel() -> egui::Color32 {
-    theme().text_primary
+    theme().palette.text_primary
 }
 /// Secondary-weight (~`TEXT_SECONDARY` role) version of [`on_panel`].
 pub fn on_panel_dim() -> egui::Color32 {
-    theme().text_secondary
+    theme().palette.text_secondary
 }
 
 /// Primary-weight text colour for paint inside a section frame.
 /// Same direct-from-theme rule as [`on_panel`] — sections share the
 /// brightness mode of their parent pane.
 pub fn on_section() -> egui::Color32 {
-    theme().text_primary
+    theme().palette.text_primary
 }
 /// Secondary-weight version of [`on_section`].
 pub fn on_section_dim() -> egui::Color32 {
-    theme().text_secondary
+    theme().palette.text_secondary
 }
 
 /// Primary-weight text colour for paint on a track surface — search
 /// field input, dropdown trigger label, slider/progress-bar readout
 /// over the unfilled portion. Same direct-from-theme rule.
 pub fn on_track() -> egui::Color32 {
-    theme().text_primary
+    theme().palette.text_primary
 }
 /// Secondary-weight version of [`on_track`].
 pub fn on_track_dim() -> egui::Color32 {
-    theme().text_secondary
+    theme().palette.text_secondary
 }
 
 /// Derived "hover" variant of the runtime accent — used by the
@@ -2337,7 +2989,7 @@ pub fn accent_pressed() -> egui::Color32 {
 /// recognisable on PRO's dark panel.
 pub fn row_hover_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
-    let surface = if th.section_show_frame {
+    let surface = if th.container.show_frame {
         section_fill(accent)
     } else {
         pane_fill(accent)
@@ -2354,7 +3006,7 @@ pub fn row_hover_fill(accent: egui::Color32) -> egui::Color32 {
 /// without strokes / glass.
 pub fn row_selected_fill(accent: egui::Color32) -> egui::Color32 {
     let th = theme();
-    let surface = if th.section_show_frame {
+    let surface = if th.container.show_frame {
         section_fill(accent)
     } else {
         pane_fill(accent)
@@ -2376,20 +3028,16 @@ pub mod font {
 /// separate the section header from its body and to split in-section
 /// blocks (e.g. vehicle info vs controls).
 pub fn divider(ui: &mut egui::Ui) {
-    let bw = theme().border_width;
+    let bw = theme().stroke.border_width;
     if bw <= 0.0 {
         return;
     }
     let full_width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(full_width, 1.0),
-        egui::Sense::empty(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(full_width, 1.0), egui::Sense::empty());
     let th = theme();
     let base = outline_base();
-    let color = egui::Color32::from_rgba_unmultiplied(
-        base.r(), base.g(), base.b(), th.border_alpha,
-    );
+    let color =
+        egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), th.stroke.border_alpha);
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],
         egui::Stroke::new(bw, color),
@@ -2402,20 +3050,16 @@ pub fn divider(ui: &mut egui::Ui) {
 /// matches every other border / outline in the kit (was hardcoded
 /// to α 220, far stronger than the kit's actual border weight).
 pub fn thin_divider(ui: &mut egui::Ui) {
-    let bw = theme().border_width;
+    let bw = theme().stroke.border_width;
     if bw <= 0.0 {
         return;
     }
     let full_width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(full_width, 1.0),
-        egui::Sense::empty(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(full_width, 1.0), egui::Sense::empty());
     let th = theme();
     let base = outline_base();
-    let color = egui::Color32::from_rgba_unmultiplied(
-        base.r(), base.g(), base.b(), th.border_alpha,
-    );
+    let color =
+        egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), th.stroke.border_alpha);
     ui.painter().line_segment(
         [rect.left_center(), rect.right_center()],
         egui::Stroke::new(bw, color),
@@ -2446,7 +3090,10 @@ pub fn body_label(label: &str) -> egui::RichText {
 /// dim-against-section helper so it never decays into "grey on
 /// bright accent" under GAME.
 pub fn caption(label: &str) -> egui::RichText {
-    egui::RichText::new(label).small().italics().color(on_section_dim())
+    egui::RichText::new(label)
+        .small()
+        .italics()
+        .color(on_section_dim())
 }
 
 /// Text colour for paint on top of any fill. **Mode-driven** —
@@ -2456,6 +3103,5 @@ pub fn caption(label: &str) -> egui::RichText {
 /// accents into a darker band in Dark mode so white-on-accent has
 /// real contrast.
 pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
-    theme().text_primary
+    theme().palette.text_primary
 }
-

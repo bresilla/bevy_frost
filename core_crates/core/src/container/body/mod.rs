@@ -122,9 +122,7 @@ impl Body {
                     .id_salt("frost_body_scroll_v")
                     .auto_shrink([false, false])
                     .min_scrolled_height(0.0)
-                    .scroll_bar_visibility(
-                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                    )
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
                         let r = body(ui);
                         if end_pad > 0.0 {

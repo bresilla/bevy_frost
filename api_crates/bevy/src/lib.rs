@@ -45,13 +45,13 @@ pub use frost_core::extras;
 pub use frost_core::*;
 
 use bevy::ecs::message::{MessageReader, Messages};
+use bevy::input::ButtonState;
 use bevy::input::mouse::{
     AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButtonInput, MouseWheel,
 };
-use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass, egui};
 use std::collections::HashSet;
 
 // ─── Theme ──────────────────────────────────────────────────────────
@@ -187,8 +187,12 @@ fn consume_egui_input_system(
     mut accumulated_motion: ResMut<AccumulatedMouseMotion>,
     mut pressed_over_pane: Local<HashSet<MouseButton>>,
 ) {
-    let Ok(window) = primary_window.single() else { return };
-    let Some(cursor) = window.cursor_position() else { return };
+    let Ok(window) = primary_window.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let pos = egui::pos2(cursor.x, cursor.y);
     let pane_rects = frost_core::pane::published_pane_rects(ctx);

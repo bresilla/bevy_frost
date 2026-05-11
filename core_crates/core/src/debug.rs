@@ -129,7 +129,12 @@ pub fn paint(ctx: &egui::Context) {
     };
     let p = ctx.debug_painter();
     let outline = Color32::from_rgb(255, 80, 80);
-    p.rect_stroke(best.rect, 0.0, Stroke::new(2.0, outline), StrokeKind::Inside);
+    p.rect_stroke(
+        best.rect,
+        0.0,
+        Stroke::new(2.0, outline),
+        StrokeKind::Inside,
+    );
 
     // Label chip — placed OUTSIDE the highlighted rect so it
     // doesn't cover the widget's actual content (text input,
@@ -156,6 +161,11 @@ pub fn paint(ctx: &egui::Context) {
         2.0,
         Color32::from_rgba_unmultiplied(0, 0, 0, 220),
     );
-    p.rect_stroke(chip_rect, 2.0, Stroke::new(1.0, outline), StrokeKind::Inside);
+    p.rect_stroke(
+        chip_rect,
+        2.0,
+        Stroke::new(1.0, outline),
+        StrokeKind::Inside,
+    );
     p.galley(chip_origin + pad, galley, Color32::WHITE);
 }

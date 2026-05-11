@@ -6,7 +6,8 @@
 use egui;
 
 use crate::style::{
-    glass_alpha_card, glass_alpha_window, glass_fill, BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE,
+    BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE, RadiusRole, StrokeRole, glass_alpha_card,
+    glass_alpha_window, glass_fill, radius_for, stroke_for,
 };
 
 /// sRGB lerp on RGB channels, alpha left at 255. Local copy so the
@@ -73,7 +74,7 @@ pub(crate) fn ribbon_button_fg(
     hovered: bool,
     glyph: super::assembly::RibbonGlyph,
 ) -> egui::Color32 {
-    if crate::style::theme().ribbon_button_accent_fill {
+    if crate::style::theme().ribbon.button_accent_fill {
         // GAME ladder — pick contrast text against the EXACT fill
         // `paint_ribbon_button` produced, so the glyph sits cleanly
         // against the active / hover / idle tier. Mirrors the same
@@ -141,9 +142,9 @@ pub(crate) fn paint_ribbon_button(
     hovered: bool,
 ) {
     let theme = crate::style::theme();
-    let radius = egui::CornerRadius::same(theme.radius_md);
+    let radius = radius_for(RadiusRole::Section);
 
-    if theme.ribbon_button_accent_fill {
+    if theme.ribbon.button_accent_fill {
         // Three filled tiers, no stroke / halo / border. Active uses
         // FULL accent so the selected ribbon button reads as the same
         // colour family as the open pane's container-title banner —
@@ -202,13 +203,21 @@ pub(crate) fn paint_ribbon_button(
     } else {
         glass_fill(bg_idle, accent, glass_alpha_window())
     };
-    let stroke = if is_active { accent } else { crate::style::widget_border(accent) };
+    let stroke = if is_active {
+        accent
+    } else {
+        crate::style::widget_border(accent)
+    };
     let _ = (BG_1_PANEL, BG_2_RAISED, BORDER_SUBTLE);
     painter.rect(
         rect,
         radius,
         bg,
-        egui::Stroke::new(theme.border_width, stroke),
+        if is_active {
+            egui::Stroke::new(theme.border_width, stroke)
+        } else {
+            stroke_for(StrokeRole::WidgetBorder, accent)
+        },
         egui::StrokeKind::Inside,
     );
     let _ = glass_alpha_card();

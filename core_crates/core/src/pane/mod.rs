@@ -27,13 +27,12 @@ pub use dots::paint_container_dots;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
 pub use drag::{
-    active_drag, begin_frame as begin_drag_frame, clear_drag, compute_target,
-    current_cache, dragged_size, finalize_snapshot, paint_drag_preview,
-    paint_ghost_gap_inline, push_rect, section_order_for, set_drag,
-    set_section_order, snapshot, state as drag_state, DragState, RectEntry,
+    DragState, RectEntry, active_drag, begin_frame as begin_drag_frame, clear_drag, compute_target,
+    current_cache, dragged_size, finalize_snapshot, paint_drag_preview, paint_ghost_gap_inline,
+    push_rect, section_order_for, set_drag, set_section_order, snapshot, state as drag_state,
 };
 
-use egui::{vec2, Color32, Id, Sense, Stroke};
+use egui::{Color32, Id, Sense, vec2};
 
 use crate::style;
 
@@ -95,9 +94,13 @@ const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
 /// `Pane2` and `Normal` call this with the same id so they lerp in
 /// lockstep and the pane size is known in-frame (no anchor drift).
 pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
-    let open: bool = ctx
-        .data_mut(|d| *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true));
-    ctx.animate_bool_with_time(pane_id.with("body_open").with("anim"), open, BODY_ANIMATION_TIME)
+    let open: bool =
+        ctx.data_mut(|d| *d.get_persisted_mut_or_insert_with(pane_id.with("body_open"), || true));
+    ctx.animate_bool_with_time(
+        pane_id.with("body_open").with("anim"),
+        open,
+        BODY_ANIMATION_TIME,
+    )
 }
 
 /// User-controlled body main extent for `pane_id`, persisted across
@@ -165,10 +168,22 @@ pub struct PaneResize {
 }
 
 impl PaneResize {
-    pub const NONE: PaneResize = PaneResize { flow: false, span: false };
-    pub const FLOW: PaneResize = PaneResize { flow: true,  span: false };
-    pub const SPAN: PaneResize = PaneResize { flow: false, span: true  };
-    pub const BOTH: PaneResize = PaneResize { flow: true,  span: true  };
+    pub const NONE: PaneResize = PaneResize {
+        flow: false,
+        span: false,
+    };
+    pub const FLOW: PaneResize = PaneResize {
+        flow: true,
+        span: false,
+    };
+    pub const SPAN: PaneResize = PaneResize {
+        flow: false,
+        span: true,
+    };
+    pub const BOTH: PaneResize = PaneResize {
+        flow: true,
+        span: true,
+    };
 }
 
 /// Shared ctx-data key that points to the **currently active**
@@ -210,10 +225,8 @@ pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
 /// never toggled. Used by [`Pane2::show`]'s auto-fold-tail walk to
 /// preserve the user's most recent unfold over older opens.
 pub fn body_open_touched_at(ctx: &egui::Context, pane_id: Id) -> f64 {
-    ctx.data_mut(|d| {
-        d.get_persisted::<f64>(pane_id.with("body_open_touched_at"))
-    })
-    .unwrap_or(0.0)
+    ctx.data_mut(|d| d.get_persisted::<f64>(pane_id.with("body_open_touched_at")))
+        .unwrap_or(0.0)
 }
 
 /// Read the per-pane fold-version counter. Bumped by
@@ -399,9 +412,7 @@ fn maybe_reset_published_pane_rects(ctx: &egui::Context) {
 /// strip on top/left edges; bottom/right add a wider `far` inset
 /// for anchors whose far edge meets a perpendicular rail's button
 /// (see [`anchor::far_flags`]).
-pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP
-    + crate::ribbon::SIDE_BTN_SIZE
-    + RAIL_PANEL_GAP;
+pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP + crate::ribbon::SIDE_BTN_SIZE + RAIL_PANEL_GAP;
 
 /// Read which screen edges currently host an active ribbon, as
 /// `[left, right, top, bottom]`. Published every frame by
@@ -409,10 +420,8 @@ pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP
 /// ribbons have been drawn yet (conservative default — reserve
 /// space for ribbons on every side until we know better).
 pub fn published_ribbon_edges(ctx: &egui::Context) -> [bool; 4] {
-    ctx.data(|d| {
-        d.get_temp::<[bool; 4]>(egui::Id::new("frost_published_ribbon_edges"))
-    })
-    .unwrap_or([true; 4])
+    ctx.data(|d| d.get_temp::<[bool; 4]>(egui::Id::new("frost_published_ribbon_edges")))
+        .unwrap_or([true; 4])
 }
 
 /// Visual gap between the ribbon's button strip and the pane edge.
@@ -584,9 +593,8 @@ impl Pane2 {
         };
         let container_outer_main_total = (theme_now.section_outer_margin_flow_title as f32)
             + (theme_now.section_outer_margin_flow_body as f32);
-        let body_flow_collapsed = CONTAINER_TITLE_THICKNESS
-            + container_pad_flow
-            + container_outer_main_total;
+        let body_flow_collapsed =
+            CONTAINER_TITLE_THICKNESS + container_pad_flow + container_outer_main_total;
         // Extra space `lay_out_flex` allocates between the pane
         // title strip and the first container — keeps that gap in
         // sync between the layout pass and the size computation.
@@ -624,12 +632,9 @@ impl Pane2 {
                 + chrome_per_container * (prev_cids_snapshot.len() as f32)
                 + prev_extra_flow_snapshot
         };
-        let expanded_flow = TITLE_STRIP_THICKNESS
-            + pane_title_to_body_pad
-            + body_flow_open
-            + PANE_FRAME_CHROME;
-        let mut pane_flow =
-            collapsed_flow + (expanded_flow - collapsed_flow) * openness;
+        let expanded_flow =
+            TITLE_STRIP_THICKNESS + pane_title_to_body_pad + body_flow_open + PANE_FRAME_CHROME;
+        let mut pane_flow = collapsed_flow + (expanded_flow - collapsed_flow) * openness;
 
         // ── Auto-fold-tail when the pane would overflow the screen ──
         //
@@ -655,9 +660,9 @@ impl Pane2 {
         let [has_left, has_right, has_top, has_bottom] = edges;
         let title_side = self.anchor.title_side();
         let (own_present, opposite_present) = match title_side {
-            anchor::TitleSide::Left   => (has_left,   has_right),
-            anchor::TitleSide::Right  => (has_right,  has_left),
-            anchor::TitleSide::Top    => (has_top,    has_bottom),
+            anchor::TitleSide::Left => (has_left, has_right),
+            anchor::TitleSide::Right => (has_right, has_left),
+            anchor::TitleSide::Top => (has_top, has_bottom),
             anchor::TitleSide::Bottom => (has_bottom, has_top),
         };
         // Reserve TWICE `RAIL_INSET` on each side that has a ribbon —
@@ -667,19 +672,18 @@ impl Pane2 {
         // the ribbon visually. Single-inset was leaving the pane
         // flush against the ribbon edge.
         let own_inset = if own_present { RAIL_INSET * 2.0 } else { 0.0 };
-        let opp_inset = if opposite_present { RAIL_INSET * 2.0 } else { 0.0 };
+        let opp_inset = if opposite_present {
+            RAIL_INSET * 2.0
+        } else {
+            0.0
+        };
         let screen_flow_avail = if horizontal_strip {
             (screen.height() - own_inset - opp_inset).max(MIN_USER_FLOW)
         } else {
             (screen.width() - own_inset - opp_inset).max(MIN_USER_FLOW)
         };
-        if !self.resize.flow
-            && !prev_cids_snapshot.is_empty()
-            && pane_flow > screen_flow_avail
-        {
-            let title_chrome = TITLE_STRIP_THICKNESS
-                + pane_title_to_body_pad
-                + PANE_FRAME_CHROME;
+        if !self.resize.flow && !prev_cids_snapshot.is_empty() && pane_flow > screen_flow_avail {
+            let title_chrome = TITLE_STRIP_THICKNESS + pane_title_to_body_pad + PANE_FRAME_CHROME;
             let chrome_per_container = body_flow_collapsed;
             let mut budget = (screen_flow_avail
                 - title_chrome
@@ -698,23 +702,17 @@ impl Pane2 {
                 .iter()
                 .filter_map(|cid| {
                     let open: bool = ctx
-                        .data_mut(|d| {
-                            d.get_persisted::<bool>(cid.with("body_open"))
-                        })
+                        .data_mut(|d| d.get_persisted::<bool>(cid.with("body_open")))
                         .unwrap_or(true);
                     if !open {
                         return None;
                     }
                     let touched_at = body_open_touched_at(ctx, *cid);
-                    let cf = crate::container::container_flow(
-                        ctx, *cid, horizontal_strip,
-                    );
+                    let cf = crate::container::container_flow(ctx, *cid, horizontal_strip);
                     Some((*cid, touched_at, cf))
                 })
                 .collect();
-            opens.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            opens.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             for (cid, _, cf) in opens.iter() {
                 if budget >= *cf {
                     budget -= cf;
@@ -722,9 +720,7 @@ impl Pane2 {
                     // Older-toggled (or never-toggled) open
                     // container — fold to free space for the
                     // newer-toggled ones above.
-                    ctx.data_mut(|d| {
-                        d.insert_persisted(cid.with("body_open"), false)
-                    });
+                    ctx.data_mut(|d| d.insert_persisted(cid.with("body_open"), false));
                 }
             }
             // Recompute pane_flow with the folds applied. After the
@@ -736,9 +732,7 @@ impl Pane2 {
                 .iter()
                 .map(|cid| {
                     let open: bool = ctx
-                        .data_mut(|d| {
-                            d.get_persisted::<bool>(cid.with("body_open"))
-                        })
+                        .data_mut(|d| d.get_persisted::<bool>(cid.with("body_open")))
                         .unwrap_or(true);
                     if open {
                         crate::container::container_flow(ctx, *cid, horizontal_strip)
@@ -753,8 +747,7 @@ impl Pane2 {
                 + chrome_per_container * prev_cids_snapshot.len() as f32
                 + prev_extra_flow_snapshot
                 + PANE_FRAME_CHROME;
-            pane_flow = collapsed_flow
-                + (new_expanded - collapsed_flow) * openness;
+            pane_flow = collapsed_flow + (new_expanded - collapsed_flow) * openness;
         }
         // Final safety clamp — even with auto-folds we never let the
         // pane outgrow the screen. Clip is a no-op when the auto-fold
@@ -774,10 +767,18 @@ impl Pane2 {
         } else {
             (has_top, has_bottom)
         };
-        let span_lead_inset  = if span_lead_present  { RAIL_INSET * 2.0 } else { 0.0 };
-        let span_trail_inset = if span_trail_present { RAIL_INSET * 2.0 } else { 0.0 };
+        let span_lead_inset = if span_lead_present {
+            RAIL_INSET * 2.0
+        } else {
+            0.0
+        };
+        let span_trail_inset = if span_trail_present {
+            RAIL_INSET * 2.0
+        } else {
+            0.0
+        };
         let screen_span_avail = if horizontal_strip {
-            (screen.width()  - span_lead_inset - span_trail_inset).max(MIN_USER_SPAN)
+            (screen.width() - span_lead_inset - span_trail_inset).max(MIN_USER_SPAN)
         } else {
             (screen.height() - span_lead_inset - span_trail_inset).max(MIN_USER_SPAN)
         };
@@ -792,10 +793,7 @@ impl Pane2 {
         // symptom. We keep `user_span` unmodified so the user's
         // drag intent survives a window-shrink + re-enlarge cycle.
         ctx.data_mut(|d| {
-            d.insert_temp::<f32>(
-                self.id.with("frost_pane_effective_span"),
-                span_outer,
-            );
+            d.insert_temp::<f32>(self.id.with("frost_pane_effective_span"), span_outer);
         });
 
         let outer_size = if horizontal_strip {
@@ -888,10 +886,7 @@ impl Pane2 {
                 // Same rect as the outer `pane_rect`; recompute here
                 // from `outer_ui.cursor()` so the inside of the
                 // closure doesn't depend on the outer capture order.
-                let pane_rect = egui::Rect::from_min_size(
-                    outer_ui.cursor().min,
-                    outer_size,
-                );
+                let pane_rect = egui::Rect::from_min_size(outer_ui.cursor().min, outer_size);
                 // Use the title-at-end layout DIRECTLY on the outer
                 // child_ui — not via a `with_layout(bottom_up)` inside
                 // a top_down parent. egui tracks `min_rect` by union
@@ -920,11 +915,8 @@ impl Pane2 {
                         egui::Layout::left_to_right(egui::Align::Min)
                     }
                 };
-                let mut child_ui = outer_ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(pane_rect)
-                        .layout(layout),
-                );
+                let mut child_ui =
+                    outer_ui.new_child(egui::UiBuilder::new().max_rect(pane_rect).layout(layout));
                 // ── Hierarchical clip invariant (root) ──
                 //
                 // The pane Area is created at `Order::Background` with
@@ -943,52 +935,45 @@ impl Pane2 {
                 // footgunny per egui docs.
                 child_ui.shrink_clip_rect(pane_clip_rect);
                 {
-                let ui = &mut child_ui;
-                let theme = style::theme();
-                let fill = if theme.pane_fill_visible {
-                    style::glass_fill(
-                        style::pane_fill(self.accent),
-                        self.accent,
-                        style::glass_alpha_window(),
-                    )
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let shadow = egui::epaint::Shadow {
-                    offset: [0, theme.pane_shadow_y],
-                    blur: theme.pane_shadow_blur,
-                    spread: 0,
-                    color: Color32::from_black_alpha(115),
-                };
-                let frame_response = egui::Frame {
-                    inner_margin: egui::Margin::same(PANE_INNER_MARGIN as i8),
-                    outer_margin: egui::Margin::ZERO,
-                    fill,
-                    stroke: Stroke::new(
-                        theme.border_width,
-                        style::widget_border(self.accent),
-                    ),
-                    corner_radius: egui::CornerRadius::same(theme.radius_lg),
-                    shadow,
-                }
-                .show(ui, |ui| {
-                    self.lay_out_flex(ui, body);
-                });
-                // The Frame's response.rect IS the painted outer
-                // rect (= content_min_rect + frame margins). Use it
-                // to position the resize handles below — they sit
-                // exactly on the painted edge, even when fold
-                // animation has shrunk the frame.
-                painted_rect.set(frame_response.response.rect);
-                // Persist this frame's actual painted rect so next
-                // frame's `pane_clip_rect` (= pane_rect ∪
-                // last_painted_rect) accurately bounds the body —
-                // critical for the first frame after content grows,
-                // where `pane_rect` lags by one frame and would
-                // otherwise slice the body's far edge.
-                outer_ui.ctx().data_mut(|d| {
-                    d.insert_temp(clip_key, frame_response.response.rect);
-                });
+                    let ui = &mut child_ui;
+                    let theme = style::theme();
+                    let fill = if theme.pane.fill_visible {
+                        style::fill_for(style::FillRole::Pane, self.accent)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let shadow = egui::epaint::Shadow {
+                        offset: [0, theme.pane.shadow_y],
+                        blur: theme.pane.shadow_blur,
+                        spread: 0,
+                        color: Color32::from_black_alpha(115),
+                    };
+                    let frame_response = egui::Frame {
+                        inner_margin: egui::Margin::same(PANE_INNER_MARGIN as i8),
+                        outer_margin: egui::Margin::ZERO,
+                        fill,
+                        stroke: style::stroke_for(style::StrokeRole::WidgetBorder, self.accent),
+                        corner_radius: style::radius_for(style::RadiusRole::Pane),
+                        shadow,
+                    }
+                    .show(ui, |ui| {
+                        self.lay_out_flex(ui, body);
+                    });
+                    // The Frame's response.rect IS the painted outer
+                    // rect (= content_min_rect + frame margins). Use it
+                    // to position the resize handles below — they sit
+                    // exactly on the painted edge, even when fold
+                    // animation has shrunk the frame.
+                    painted_rect.set(frame_response.response.rect);
+                    // Persist this frame's actual painted rect so next
+                    // frame's `pane_clip_rect` (= pane_rect ∪
+                    // last_painted_rect) accurately bounds the body —
+                    // critical for the first frame after content grows,
+                    // where `pane_rect` lags by one frame and would
+                    // otherwise slice the body's far edge.
+                    outer_ui.ctx().data_mut(|d| {
+                        d.insert_temp(clip_key, frame_response.response.rect);
+                    });
                 }
                 // Publish this pane's painted rect to the global
                 // ctx-data list so host integrations (e.g.
@@ -1091,8 +1076,7 @@ impl Pane2 {
         // building the outer child_ui's layout).
         let title_text = title.clone();
         let paint_title_strip = |ui: &mut egui::Ui| {
-            let (alloc_rect, _) =
-                ui.allocate_exact_size(title_size, Sense::hover());
+            let (alloc_rect, _) = ui.allocate_exact_size(title_size, Sense::hover());
             title::paint_pane_title(ui, alloc_rect, id, &title_text, anchor, accent);
         };
 
@@ -1126,8 +1110,7 @@ impl Pane2 {
         // strip and the body callback, hits exactly the first container
         // (no other paint runs between title and body) and leaves
         // every subsequent container's stacking gap unchanged.
-        let pane_title_to_body_pad =
-            style::theme().section_outer_margin_flow_title as f32;
+        let pane_title_to_body_pad = style::theme().section_outer_margin_flow_title as f32;
         if pane_title_to_body_pad > 0.0 {
             ui.add_space(pane_title_to_body_pad);
         }
@@ -1139,9 +1122,7 @@ impl Pane2 {
         // Update cursor BEFORE body runs so `Normal::show`'s
         // target_idx computation sees this frame's cursor.
         let pre_body_drag = drag::state(ui.ctx(), id);
-        if let (Some(item), Some(pos)) =
-            (pre_body_drag.item, ui.ctx().pointer_interact_pos())
-        {
+        if let (Some(item), Some(pos)) = (pre_body_drag.item, ui.ctx().pointer_interact_pos()) {
             drag::set_drag(
                 ui.ctx(),
                 id,
@@ -1175,28 +1156,14 @@ impl Pane2 {
         if let Some(dragged_id) = drag_state.item {
             let snap = drag::snapshot(ui.ctx(), id);
             let total = drag::current_cache(ui.ctx(), id).len();
-            let cursor = ui
-                .ctx()
-                .pointer_interact_pos()
-                .or(drag_state.cursor);
+            let cursor = ui.ctx().pointer_interact_pos().or(drag_state.cursor);
             if let Some(c) = cursor {
                 let cursor_axis = if horizontal_stack { c.x } else { c.y };
-                let target_idx = drag::compute_target(
-                    &snap,
-                    dragged_id,
-                    cursor_axis,
-                    horizontal_stack,
-                );
+                let target_idx =
+                    drag::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
                 if target_idx >= total {
-                    if let Some(size) =
-                        drag::dragged_size(&snap, dragged_id)
-                    {
-                        drag::paint_ghost_gap_inline(
-                            ui,
-                            size,
-                            accent,
-                            horizontal_stack,
-                        );
+                    if let Some(size) = drag::dragged_size(&snap, dragged_id) {
+                        drag::paint_ghost_gap_inline(ui, size, accent, horizontal_stack);
                     }
                 }
             }
@@ -1211,40 +1178,19 @@ impl Pane2 {
         // ── Floating preview + cursor + release commit ──
         if let Some(dragged_id) = drag_state.item {
             let snap = drag::snapshot(ui.ctx(), id);
-            let cursor = ui
-                .ctx()
-                .pointer_interact_pos()
-                .or(drag_state.cursor);
+            let cursor = ui.ctx().pointer_interact_pos().or(drag_state.cursor);
             if let Some(c) = cursor {
-                drag::paint_drag_preview(
-                    ui.ctx(),
-                    id,
-                    &snap,
-                    dragged_id,
-                    c,
-                    accent,
-                );
-                ui.ctx()
-                    .set_cursor_icon(egui::CursorIcon::Grabbing);
+                drag::paint_drag_preview(ui.ctx(), id, &snap, dragged_id, c, accent);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
 
             if ui.ctx().input(|i| i.pointer.any_released()) {
                 if let Some(c) = cursor {
-                    let cursor_axis =
-                        if horizontal_stack { c.x } else { c.y };
-                    let target_idx = drag::compute_target(
-                        &snap,
-                        dragged_id,
-                        cursor_axis,
-                        horizontal_stack,
-                    );
-                    let defaults: Vec<Id> =
-                        snap.iter().map(|e| e.id).collect();
-                    let mut order = drag::section_order_for(
-                        ui.ctx(),
-                        id,
-                        &defaults,
-                    );
+                    let cursor_axis = if horizontal_stack { c.x } else { c.y };
+                    let target_idx =
+                        drag::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
+                    let defaults: Vec<Id> = snap.iter().map(|e| e.id).collect();
+                    let mut order = drag::section_order_for(ui.ctx(), id, &defaults);
                     order.retain(|cid| *cid != dragged_id);
                     let clamped = target_idx.min(order.len());
                     order.insert(clamped, dragged_id);
@@ -1379,10 +1325,7 @@ fn paint_resize_handles_inner(
     //     keeps the global [`MIN_USER_SPAN`] floor.
     let container_mins = container_min_widths(ui.ctx(), pane_id);
     let container_min_flows_v = container_min_flows(ui.ctx(), pane_id);
-    let max_min = container_mins
-        .iter()
-        .copied()
-        .fold(0.0_f32, f32::max);
+    let max_min = container_mins.iter().copied().fold(0.0_f32, f32::max);
     let sum_min: f32 = container_mins.iter().sum();
     let sum_min_flow: f32 = container_min_flows_v.iter().sum();
     let min_flow_bound = if horizontal_strip {
@@ -1405,9 +1348,8 @@ fn paint_resize_handles_inner(
     } else {
         MIN_USER_SPAN
     };
-    let strip_color = |alpha: u8| {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha)
-    };
+    let strip_color =
+        |alpha: u8| Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), alpha);
     let paint_indicator = |ui: &egui::Ui, rect: egui::Rect, hovered: bool, dragged: bool| {
         let alpha: u8 = if dragged {
             180
@@ -1416,11 +1358,8 @@ fn paint_resize_handles_inner(
         } else {
             return; // fully invisible at rest
         };
-        ui.painter().rect_filled(
-            rect,
-            egui::CornerRadius::ZERO,
-            strip_color(alpha),
-        );
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, strip_color(alpha));
     };
 
     // ── Main-axis handle (inner edge) ──
@@ -1554,7 +1493,11 @@ fn paint_resize_handles_inner(
         // rail — so the resizable side is the X-MAX (right edge),
         // even though the rail zone is `End`.
         let (align, _offset) = layout::anchor_align(anchor);
-        let span_align = if horizontal_strip { align.x() } else { align.y() };
+        let span_align = if horizontal_strip {
+            align.x()
+        } else {
+            align.y()
+        };
         match span_align {
             egui::Align::Min => {
                 // cross-min anchored → grow from cross-max edge.

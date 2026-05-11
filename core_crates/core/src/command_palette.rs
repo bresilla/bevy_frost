@@ -21,9 +21,7 @@
 
 use egui;
 
-use crate::style::{
-    font, glass_alpha_card, glass_alpha_window, glass_fill, widget_border,
-};
+use crate::style::{font, glass_alpha_card, glass_alpha_window, glass_fill, widget_border};
 
 /// One entry in the palette's action list.
 pub struct PaletteItem {
@@ -71,10 +69,7 @@ pub fn command_palette(
         items.iter().collect()
     } else {
         let q = state.query.to_lowercase();
-        items
-            .iter()
-            .filter(|it| matches(it.label, &q))
-            .collect()
+        items.iter().filter(|it| matches(it.label, &q)).collect()
     };
 
     // Clamp the selected index against the CURRENT filtered view
@@ -94,17 +89,13 @@ pub fn command_palette(
         if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
             state.open = false;
         }
-        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-            && !filtered.is_empty()
-        {
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) && !filtered.is_empty() {
             state.selected = (state.selected + 1).min(filtered.len() - 1);
         }
         if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
             state.selected = state.selected.saturating_sub(1);
         }
-        if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-            && !filtered.is_empty()
-        {
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) && !filtered.is_empty() {
             picked = Some(filtered[state.selected].id);
         }
     });
@@ -151,8 +142,15 @@ pub fn command_palette(
         .show(ctx, |ui| {
             ui.set_max_width(WIDTH);
             let frame = egui::Frame::new()
-                .fill(glass_fill(crate::style::popup_fill(accent), accent, glass_alpha_window()))
-                .stroke(egui::Stroke::new(crate::style::theme().border_width, widget_border(accent)))
+                .fill(glass_fill(
+                    crate::style::popup_fill(accent),
+                    accent,
+                    glass_alpha_window(),
+                ))
+                .stroke(egui::Stroke::new(
+                    crate::style::theme().border_width,
+                    widget_border(accent),
+                ))
                 .corner_radius(egui::CornerRadius::same(crate::style::theme().radius_lg))
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .shadow(egui::epaint::Shadow {
@@ -172,9 +170,8 @@ pub fn command_palette(
                 let (input_bg, input_text_col, hint_col) = if theme_now.title_strip_filled {
                     let bg = accent;
                     let text = crate::style::contrast_text_for(bg);
-                    let hint = egui::Color32::from_rgba_unmultiplied(
-                        text.r(), text.g(), text.b(), 160,
-                    );
+                    let hint =
+                        egui::Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), 160);
                     (bg, text, hint)
                 } else {
                     (
@@ -217,10 +214,8 @@ pub fn command_palette(
                 // None there).
                 if let Some((on, off)) = crate::style::theme().row_separator_dash {
                     let w = ui.available_width();
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(w, 1.0),
-                        egui::Sense::hover(),
-                    );
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
                     // Input-to-results divider — kit-shared
                     // `outline_base` + `row_separator_alpha`. Drops
                     // the previous `.max(60)` alpha floor and the
@@ -228,9 +223,8 @@ pub fn command_palette(
                     // pre-unification fallback path.
                     let alpha = crate::style::theme().row_separator_alpha;
                     let base = crate::style::outline_base();
-                    let col = egui::Color32::from_rgba_unmultiplied(
-                        base.r(), base.g(), base.b(), alpha,
-                    );
+                    let col =
+                        egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
                     crate::style::paint_dashed_line(
                         ui.painter(),
                         rect.left_center(),
@@ -316,9 +310,8 @@ pub fn command_palette(
                 let rx = snap_high(r.max.x);
                 let by = snap_high(r.max.y);
                 let len = tick_len;
-                let col = egui::Color32::from_rgba_unmultiplied(
-                    accent.r(), accent.g(), accent.b(), 220,
-                );
+                let col =
+                    egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220);
                 let s = egui::Stroke::new(1.0, col);
                 let p = ui.painter();
                 p.line_segment([egui::pos2(lx, ty), egui::pos2(lx + len, ty)], s);
@@ -352,8 +345,7 @@ fn paint_row(
 ) -> egui::Response {
     const ROW_H: f32 = 24.0;
     let w = ui.available_width();
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let bg = if selected {
             Some(crate::style::row_selected_fill(accent))
@@ -363,8 +355,11 @@ fn paint_row(
             None
         };
         if let Some(c) = bg {
-            ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(crate::style::theme().radius_md), c);
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius::same(crate::style::theme().radius_md),
+                c,
+            );
         }
         let mid_y = rect.center().y;
         // Palette rows sit on the palette frame (panel-style fill).

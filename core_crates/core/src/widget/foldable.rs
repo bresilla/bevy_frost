@@ -9,13 +9,7 @@
 
 use egui::collapsing_header::CollapsingState;
 
-use crate::style::{
-    glass_alpha_card, glass_fill, on_section, section_caps, section_fill, theme,
-    widget_border,
-};
-
-const PAD_X: i8 = 8;
-const PAD_Y: i8 = 4;
+use crate::style::{FrameRole, frame_for, on_section, section_caps};
 
 /// Render a frost-styled collapsible section. `id_salt` makes the
 /// section's open/closed state distinct from siblings; `title` is
@@ -32,12 +26,7 @@ pub fn section(
     let id = ui.id().with(("frost_section", id_salt));
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
 
-    let theme_now = theme();
-    let frame = egui::Frame::new()
-        .fill(glass_fill(section_fill(accent), accent, glass_alpha_card()))
-        .stroke(egui::Stroke::new(theme_now.border_width, widget_border(accent)))
-        .corner_radius(egui::CornerRadius::same(theme_now.radius_md))
-        .inner_margin(egui::Margin::symmetric(PAD_X, PAD_Y));
+    let frame = frame_for(FrameRole::Section, accent);
 
     frame.show(ui, |ui| {
         // Header — chevron + UPPERCASE title, click-toggles open.
@@ -46,17 +35,11 @@ pub fn section(
                 let openness = state.openness(ui.ctx());
                 let chevron = if openness > 0.5 { "▾" } else { "▸" };
                 let chevron_resp = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(chevron)
-                            .color(on_section())
-                            .size(11.0),
-                    )
-                    .sense(egui::Sense::click()),
-                );
-                let title_resp = ui.add(
-                    egui::Label::new(section_caps(title, accent))
+                    egui::Label::new(egui::RichText::new(chevron).color(on_section()).size(11.0))
                         .sense(egui::Sense::click()),
                 );
+                let title_resp = ui
+                    .add(egui::Label::new(section_caps(title, accent)).sense(egui::Sense::click()));
                 chevron_resp.union(title_resp)
             })
             .inner;

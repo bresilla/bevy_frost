@@ -21,13 +21,12 @@
 use egui::{Color32, Id, Ui};
 
 use crate::container::SeparatorStyle;
-use crate::style::UNIT;
+use crate::style::{UNIT, theme};
 use crate::widget::{
     badge::badge_row_colored,
     button::{Button, FillStyle},
     chip, chip_colored, color_rgb, color_rgba, drag_value, dropdown, hybrid_select_row,
     keybinding_row_h, progressbar, readout, select_row, slider, text_input, toggle,
-    CHIP_H, KEYBINDING_ROW_H,
 };
 
 // ─── Per-widget responses ─────────────────────────────────────────
@@ -286,10 +285,16 @@ pub struct TagItem {
 
 impl TagItem {
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into(), fill: None }
+        Self {
+            label: label.into(),
+            fill: None,
+        }
     }
     pub fn colored(label: impl Into<String>, fill: Color32) -> Self {
-        Self { label: label.into(), fill: Some(fill) }
+        Self {
+            label: label.into(),
+            fill: Some(fill),
+        }
     }
 }
 
@@ -315,7 +320,10 @@ pub struct BadgeRowSpec {
 
 impl BadgeRowSpec {
     pub fn new(label: impl Into<String>, badges: Vec<TagItem>) -> Self {
-        Self { label: label.into(), badges }
+        Self {
+            label: label.into(),
+            badges,
+        }
     }
 
     /// Convenience: build a row from plain strings — every chip uses
@@ -445,37 +453,33 @@ impl WidgetSpec {
             WidgetSpec::Search(_) => UNIT,
             WidgetSpec::Button(cfg) => {
                 if cfg.subtitle.is_some() {
-                    crate::widget::button::BUTTON_ROW_H_SUBTITLE
+                    theme().widgets.button.subtitle_row_h
                 } else {
-                    crate::widget::button::BUTTON_ROW_H
+                    theme().widgets.button.row_h
                 }
             }
-            WidgetSpec::Toggle(_) => crate::widget::toggle::TOGGLE_ROW_H,
-            WidgetSpec::Progress(_) => {
-                2.0 * crate::widget::progressbar::PROGRESSBAR_ROW_H
-            }
-            WidgetSpec::Slider(_) => 2.0 * crate::widget::slider::SLIDER_ROW_H,
-            WidgetSpec::DragValue(_) => crate::widget::drag_value::DRAG_VALUE_ROW_H,
-            WidgetSpec::Dropdown(_) => crate::widget::dropdown::DROPDOWN_ROW_H,
-            WidgetSpec::Select(_) => crate::widget::select::SELECT_ROW_H,
-            WidgetSpec::HybridSelect(_) => crate::widget::select::SELECT_ROW_H,
-            WidgetSpec::Color(_) => crate::widget::color::COLOR_SWATCH_H,
-            WidgetSpec::Readout(_) => crate::widget::readout::READOUT_ROW_H,
+            WidgetSpec::Toggle(_) => theme().widgets.toggle.row_h,
+            WidgetSpec::Progress(_) => 2.0 * theme().widgets.progress.row_h,
+            WidgetSpec::Slider(_) => 2.0 * theme().widgets.slider.row_h,
+            WidgetSpec::DragValue(_) => theme().widgets.drag_value.row_h,
+            WidgetSpec::Dropdown(_) => theme().widgets.dropdown.row_h,
+            WidgetSpec::Select(_) => theme().widgets.select.row_h,
+            WidgetSpec::HybridSelect(_) => theme().widgets.select.row_h,
+            WidgetSpec::Color(_) => theme().widgets.color.row_h,
+            WidgetSpec::Readout(_) => theme().widgets.readout.row_h,
             WidgetSpec::SelectList(cfg) => {
-                cfg.items.len().max(1) as f32 * crate::widget::select::SELECT_ROW_H
+                cfg.items.len().max(1) as f32 * theme().widgets.select.row_h
             }
             WidgetSpec::HybridSelectList(cfg) => {
-                cfg.items.len().max(1) as f32 * crate::widget::select::SELECT_ROW_H
+                cfg.items.len().max(1) as f32 * theme().widgets.select.row_h
             }
             WidgetSpec::Tags(cfg) => {
-                tags_estimated_rows(cfg.items.len()) as f32 * TAG_ROW_PITCH
+                tags_estimated_rows(cfg.items.len()) as f32 * theme().pod.tag_row_pitch
             }
             WidgetSpec::Keybindings(cfg) => {
-                cfg.rows.len().max(1) as f32 * KEYBINDING_ROW_H
+                cfg.rows.len().max(1) as f32 * theme().widgets.keybinding.row_h
             }
-            WidgetSpec::Badges(cfg) => {
-                cfg.rows.len().max(1) as f32 * crate::widget::badge::BADGE_ROW_H
-            }
+            WidgetSpec::Badges(cfg) => cfg.rows.len().max(1) as f32 * theme().widgets.badge.row_h,
             WidgetSpec::Custom { units, .. } => (*units as f32) * UNIT,
         }
     }
@@ -485,7 +489,7 @@ impl WidgetSpec {
 /// vertical spacing that `horizontal_wrapped` introduces between
 /// wrapped rows. Used by both `unit_count` (rounded up to whole U)
 /// and `natural_height_px`.
-const TAG_ROW_PITCH: f32 = CHIP_H + 4.0;
+pub const TAG_ROW_PITCH: f32 = crate::widget::CHIP_H + 4.0;
 
 /// Estimated row count for a wrapping chip cluster of `n` chips.
 /// Width-agnostic: assumes ~3 chips per row at typical pod widths
@@ -586,10 +590,9 @@ impl Pod {
     /// pod and push the bottom pod past the body's clip — so we
     /// need exact pixels here.
     pub fn natural_h(&self) -> f32 {
-        let widget_h: f32 =
-            self.widgets.iter().map(|w| w.natural_height_px()).sum();
+        let widget_h: f32 = self.widgets.iter().map(|w| w.natural_height_px()).sum();
         let spacing = if self.widgets.len() > 1 {
-            (self.widgets.len() - 1) as f32 * POD_WIDGET_SPACING
+            (self.widgets.len() - 1) as f32 * theme().pod.widget_spacing
         } else {
             0.0
         };
@@ -612,11 +615,7 @@ impl Pod {
     /// rendered this frame). `search_idx` is the 0-based index of
     /// the search slot within `pod_id` — `0` for the first
     /// `with_search`, `1` for the second, etc.
-    pub fn search_query(
-        ctx: &egui::Context,
-        pod_id: Id,
-        search_idx: usize,
-    ) -> String {
+    pub fn search_query(ctx: &egui::Context, pod_id: Id, search_idx: usize) -> String {
         let key = pod_id.with(("frost_pod_search_buf", search_idx));
         ctx.data(|d| d.get_temp::<String>(key)).unwrap_or_default()
     }
@@ -903,13 +902,14 @@ impl Pod {
         radio_initial: bool,
         accent: Color32,
     ) -> Self {
-        self.widgets.push(WidgetSpec::HybridSelect(HybridSelectConfig {
-            label: label.into(),
-            trailing: trailing.map(Into::into),
-            selected_initial,
-            radio_initial,
-            accent,
-        }));
+        self.widgets
+            .push(WidgetSpec::HybridSelect(HybridSelectConfig {
+                label: label.into(),
+                trailing: trailing.map(Into::into),
+                selected_initial,
+                radio_initial,
+                accent,
+            }));
         self
     }
 
@@ -954,11 +954,7 @@ impl Pod {
     /// tool, …). Result is reported in `PodResponse::readouts[i]`,
     /// though the response carries no state — re-render the pod with
     /// a new `value` to update what's shown.
-    pub fn with_readout(
-        mut self,
-        label: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
+    pub fn with_readout(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
         self.widgets.push(WidgetSpec::Readout(ReadoutConfig {
             label: label.into(),
             value: value.into(),
@@ -1024,9 +1020,9 @@ impl Pod {
         items: impl IntoIterator<Item = impl Into<String>>,
         accent: Color32,
     ) -> Self {
-        let items: Vec<TagItem> =
-            items.into_iter().map(|s| TagItem::new(s)).collect();
-        self.widgets.push(WidgetSpec::Tags(TagsConfig { items, accent }));
+        let items: Vec<TagItem> = items.into_iter().map(|s| TagItem::new(s)).collect();
+        self.widgets
+            .push(WidgetSpec::Tags(TagsConfig { items, accent }));
         self
     }
 
@@ -1034,7 +1030,8 @@ impl Pod {
     /// individual chips can override the fill colour for status /
     /// severity categorisation.
     pub fn with_tag_items(mut self, items: Vec<TagItem>, accent: Color32) -> Self {
-        self.widgets.push(WidgetSpec::Tags(TagsConfig { items, accent }));
+        self.widgets
+            .push(WidgetSpec::Tags(TagsConfig { items, accent }));
         self
     }
 
@@ -1097,12 +1094,9 @@ impl Pod {
     /// "one row per pod" layout — where each row carries its own
     /// separator and resize handle — call [`Pod::with_badge_row`]
     /// per pod instead.
-    pub fn with_badges(
-        mut self,
-        rows: Vec<BadgeRowSpec>,
-        accent: Color32,
-    ) -> Self {
-        self.widgets.push(WidgetSpec::Badges(BadgesConfig { rows, accent }));
+    pub fn with_badges(mut self, rows: Vec<BadgeRowSpec>, accent: Color32) -> Self {
+        self.widgets
+            .push(WidgetSpec::Badges(BadgesConfig { rows, accent }));
         self
     }
 
@@ -1189,7 +1183,7 @@ impl Pod {
                 ui.ctx()
                     .data(|d| d.get_temp::<f32>(key))
                     .unwrap_or_else(|| self.natural_h())
-                    .max(POD_MIN_WIDGET_H),
+                    .max(theme().pod.min_widget_h),
             )
         } else if self.resizable {
             let natural_h = self.natural_h();
@@ -1197,17 +1191,15 @@ impl Pod {
                 ui.ctx()
                     .data_mut(|d| d.get_persisted::<f32>(Self::widget_height_key(pod_id)))
                     .unwrap_or(natural_h)
-                    .clamp(POD_MIN_WIDGET_H, POD_MAX_WIDGET_H),
+                    .clamp(theme().pod.min_widget_h, theme().pod.max_widget_h),
             )
         } else {
             None
         };
         if let Some(viewport_h) = viewport_h {
             let avail_w = ui.available_width().max(1.0);
-            let (slot_rect, _) = ui.allocate_exact_size(
-                egui::vec2(avail_w, viewport_h),
-                egui::Sense::hover(),
-            );
+            let (slot_rect, _) =
+                ui.allocate_exact_size(egui::vec2(avail_w, viewport_h), egui::Sense::hover());
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(slot_rect)
@@ -1258,7 +1250,7 @@ impl Pod {
 /// Inter-widget vertical breathing space inside a pod. Used both
 /// when laying out widgets in [`paint_widgets`] and when computing a
 /// resizable pod's natural height in [`Pod::show`].
-const POD_WIDGET_SPACING: f32 = 4.0;
+pub const POD_WIDGET_SPACING: f32 = 4.0;
 
 /// Paint every widget in `widgets` into `ui`, accumulating responses
 /// into `response`. Shared between [`Pod::show`]'s plain (parent ui)
@@ -1270,519 +1262,458 @@ fn paint_widgets(
     response: &mut PodResponse,
     pod_id: Id,
 ) {
-        const WIDGET_SPACING: f32 = POD_WIDGET_SPACING;
-        // Per-kind stable indices: the Nth `with_search` keeps its
-        // own ctx-data key independent of any buttons / toggles /
-        // progress bars declared between them.
-        let mut search_idx = 0usize;
-        let mut button_idx = 0usize;
-        let mut card_button_idx = 0usize;
-        let mut toggle_idx = 0usize;
-        let mut progress_idx = 0usize;
-        let mut slider_idx = 0usize;
-        let mut drag_value_idx = 0usize;
-        let mut dropdown_idx = 0usize;
-        let mut select_idx = 0usize;
-        let mut hybrid_select_idx = 0usize;
-        let mut color_idx = 0usize;
-        let mut readout_idx = 0usize;
-        let mut select_list_idx = 0usize;
-        let mut hybrid_select_list_idx = 0usize;
-        let mut tags_idx = 0usize;
-        let mut keybindings_idx = 0usize;
-        for (slot_idx, spec) in widgets.into_iter().enumerate() {
-            if slot_idx > 0 {
-                ui.add_space(WIDGET_SPACING);
+    let widget_spacing = theme().pod.widget_spacing;
+    // Per-kind stable indices: the Nth `with_search` keeps its
+    // own ctx-data key independent of any buttons / toggles /
+    // progress bars declared between them.
+    let mut search_idx = 0usize;
+    let mut button_idx = 0usize;
+    let mut card_button_idx = 0usize;
+    let mut toggle_idx = 0usize;
+    let mut progress_idx = 0usize;
+    let mut slider_idx = 0usize;
+    let mut drag_value_idx = 0usize;
+    let mut dropdown_idx = 0usize;
+    let mut select_idx = 0usize;
+    let mut hybrid_select_idx = 0usize;
+    let mut color_idx = 0usize;
+    let mut readout_idx = 0usize;
+    let mut select_list_idx = 0usize;
+    let mut hybrid_select_list_idx = 0usize;
+    let mut tags_idx = 0usize;
+    let mut keybindings_idx = 0usize;
+    for (slot_idx, spec) in widgets.into_iter().enumerate() {
+        if slot_idx > 0 {
+            ui.add_space(widget_spacing);
+        }
+        // Each widget slot gets its own pushed id chain. This
+        // is what keeps an explicit id derivation like
+        // `ui.id().with(("frost_toggle", label))` from
+        // colliding across pods that happen to share the same
+        // label — the pushed id (= pod_id ⊕ slot_idx) is
+        // unique per (pod, widget slot), so every child id
+        // inherits uniqueness.
+        ui.push_id((pod_id, slot_idx), |ui| match spec {
+            WidgetSpec::Search(cfg) => {
+                let buf_key = pod_id.with(("frost_pod_search_buf", search_idx));
+                let mut buf: String = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<String>(buf_key))
+                    .unwrap_or_default();
+                let resp = text_input(ui, &mut buf, &cfg.placeholder, cfg.accent);
+                let changed = resp.changed();
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_temp(buf_key, buf.clone()));
+                }
+                crate::debug::tag(
+                    ui,
+                    resp.rect,
+                    format!("widget[text_input/search #{}]", search_idx),
+                );
+                response.searches.push(SearchResponse {
+                    query: buf,
+                    changed,
+                });
+                search_idx += 1;
             }
-            // Each widget slot gets its own pushed id chain. This
-            // is what keeps an explicit id derivation like
-            // `ui.id().with(("frost_toggle", label))` from
-            // colliding across pods that happen to share the same
-            // label — the pushed id (= pod_id ⊕ slot_idx) is
-            // unique per (pod, widget slot), so every child id
-            // inherits uniqueness.
-            ui.push_id((pod_id, slot_idx), |ui| match spec {
-                WidgetSpec::Search(cfg) => {
-                    let buf_key = pod_id.with(("frost_pod_search_buf", search_idx));
-                    let mut buf: String = ui
-                        .ctx()
-                        .data(|d| d.get_temp::<String>(buf_key))
-                        .unwrap_or_default();
-                    let resp =
-                        text_input(ui, &mut buf, &cfg.placeholder, cfg.accent);
-                    let changed = resp.changed();
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_temp(buf_key, buf.clone()));
-                    }
+            WidgetSpec::Button(cfg) => {
+                let has_subtitle = cfg.subtitle.is_some();
+                // Card-shaped button (subtitle and/or glyph) gets
+                // its own height + result wire so callers can
+                // index them independently of plain buttons.
+                let mut builder = Button::new(&cfg.label);
+                if let Some(s) = &cfg.subtitle {
+                    builder = builder.subtitle(s);
+                }
+                if let Some(g) = &cfg.glyph {
+                    builder = builder.glyph(g);
+                }
+                if let Some(a) = cfg.animation {
+                    builder = builder.animation(a);
+                }
+                // No `.height()` override — let the Button
+                // builder pick its natural default (24 px plain
+                // / 39 px with subtitle). The pod's resize
+                // handle is no longer allowed to scale the
+                // button; if the pod's viewport is smaller than
+                // the button's natural size, the button gets
+                // clipped instead.
+                let resp = builder.show(ui, cfg.accent);
+                if has_subtitle {
                     crate::debug::tag(
                         ui,
                         resp.rect,
-                        format!("widget[text_input/search #{}]", search_idx),
+                        format!("widget[card_button #{}]", card_button_idx),
                     );
-                    response.searches.push(SearchResponse {
-                        query: buf,
-                        changed,
+                    response.card_buttons.push(ButtonResponse {
+                        clicked: resp.clicked(),
                     });
-                    search_idx += 1;
+                    card_button_idx += 1;
+                } else {
+                    crate::debug::tag(ui, resp.rect, format!("widget[button #{}]", button_idx));
+                    response.buttons.push(ButtonResponse {
+                        clicked: resp.clicked(),
+                    });
+                    button_idx += 1;
                 }
-                WidgetSpec::Button(cfg) => {
-                    let has_subtitle = cfg.subtitle.is_some();
-                    // Card-shaped button (subtitle and/or glyph) gets
-                    // its own height + result wire so callers can
-                    // index them independently of plain buttons.
-                    let mut builder = Button::new(&cfg.label);
-                    if let Some(s) = &cfg.subtitle {
-                        builder = builder.subtitle(s);
-                    }
-                    if let Some(g) = &cfg.glyph {
-                        builder = builder.glyph(g);
-                    }
-                    if let Some(a) = cfg.animation {
-                        builder = builder.animation(a);
-                    }
-                    // No `.height()` override — let the Button
-                    // builder pick its natural default (24 px plain
-                    // / 39 px with subtitle). The pod's resize
-                    // handle is no longer allowed to scale the
-                    // button; if the pod's viewport is smaller than
-                    // the button's natural size, the button gets
-                    // clipped instead.
-                    let resp = builder.show(ui, cfg.accent);
-                    if has_subtitle {
-                        crate::debug::tag(
-                            ui,
-                            resp.rect,
-                            format!("widget[card_button #{}]", card_button_idx),
-                        );
-                        response.card_buttons.push(ButtonResponse {
-                            clicked: resp.clicked(),
-                        });
-                        card_button_idx += 1;
+            }
+            WidgetSpec::Toggle(cfg) => {
+                let state_key = pod_id.with(("frost_pod_toggle_state", toggle_idx));
+                let mut on: bool = ui.ctx().data_mut(|d| {
+                    if let Some(stored) = d.get_persisted::<bool>(state_key) {
+                        stored
                     } else {
-                        crate::debug::tag(
-                            ui,
-                            resp.rect,
-                            format!("widget[button #{}]", button_idx),
-                        );
-                        response.buttons.push(ButtonResponse {
-                            clicked: resp.clicked(),
-                        });
-                        button_idx += 1;
+                        let v = cfg.initial.unwrap_or(false);
+                        d.insert_persisted(state_key, v);
+                        v
                     }
+                });
+                let resp = toggle(ui, &cfg.label, &mut on, cfg.accent);
+                let changed = resp.changed();
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_persisted(state_key, on));
                 }
-                WidgetSpec::Toggle(cfg) => {
-                    let state_key = pod_id.with(("frost_pod_toggle_state", toggle_idx));
-                    let mut on: bool = ui.ctx().data_mut(|d| {
-                        if let Some(stored) = d.get_persisted::<bool>(state_key) {
-                            stored
+                crate::debug::tag(
+                    ui,
+                    resp.rect,
+                    format!(
+                        "widget[toggle #{}{}]",
+                        toggle_idx,
+                        if cfg.label.is_empty() {
+                            String::new()
                         } else {
-                            let v = cfg.initial.unwrap_or(false);
-                            d.insert_persisted(state_key, v);
-                            v
+                            format!(" \"{}\"", cfg.label)
                         }
-                    });
-                    let resp = toggle(ui, &cfg.label, &mut on, cfg.accent);
-                    let changed = resp.changed();
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_persisted(state_key, on));
-                    }
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!(
-                            "widget[toggle #{}{}]",
-                            toggle_idx,
-                            if cfg.label.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" \"{}\"", cfg.label)
-                            }
-                        ),
-                    );
-                    response.toggles.push(ToggleResponse { on, changed });
-                    toggle_idx += 1;
+                    ),
+                );
+                response.toggles.push(ToggleResponse { on, changed });
+                toggle_idx += 1;
+            }
+            WidgetSpec::Progress(cfg) => {
+                let resp = progressbar(ui, &cfg.label, cfg.fraction, &cfg.text, cfg.accent);
+                crate::debug::tag(ui, resp.rect, format!("widget[progress #{}]", progress_idx));
+                response.progress.push(ProgressResponse);
+                progress_idx += 1;
+            }
+            WidgetSpec::Slider(cfg) => {
+                // Persist the current value so user drags
+                // accumulate across frames without the caller
+                // having to thread state.
+                let val_key = pod_id.with(("frost_pod_slider_val", slider_idx));
+                let mut val: f64 = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<f64>(val_key))
+                    .unwrap_or(cfg.value);
+                let resp = slider(
+                    ui,
+                    &cfg.label,
+                    &mut val,
+                    cfg.range.clone(),
+                    cfg.decimals,
+                    &cfg.suffix,
+                    cfg.accent,
+                );
+                let changed = resp.changed();
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_persisted(val_key, val));
                 }
-                WidgetSpec::Progress(cfg) => {
-                    let resp = progressbar(
-                        ui,
-                        &cfg.label,
-                        cfg.fraction,
-                        &cfg.text,
-                        cfg.accent,
-                    );
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[progress #{}]", progress_idx),
-                    );
-                    response.progress.push(ProgressResponse);
-                    progress_idx += 1;
+                crate::debug::tag(ui, resp.rect, format!("widget[slider #{}]", slider_idx));
+                response.sliders.push(SliderResponse {
+                    value: val,
+                    changed,
+                });
+                slider_idx += 1;
+            }
+            WidgetSpec::DragValue(cfg) => {
+                let val_key = pod_id.with(("frost_pod_drag_value_val", drag_value_idx));
+                let mut val: f64 = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<f64>(val_key))
+                    .unwrap_or(cfg.value);
+                let resp = drag_value(
+                    ui,
+                    &cfg.label,
+                    &mut val,
+                    cfg.speed,
+                    cfg.range.clone(),
+                    cfg.decimals,
+                    &cfg.suffix,
+                );
+                let changed = resp.changed();
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_persisted(val_key, val));
                 }
-                WidgetSpec::Slider(cfg) => {
-                    // Persist the current value so user drags
-                    // accumulate across frames without the caller
-                    // having to thread state.
-                    let val_key = pod_id.with(("frost_pod_slider_val", slider_idx));
-                    let mut val: f64 = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<f64>(val_key))
-                        .unwrap_or(cfg.value);
-                    let resp = slider(
-                        ui,
-                        &cfg.label,
-                        &mut val,
-                        cfg.range.clone(),
-                        cfg.decimals,
-                        &cfg.suffix,
-                        cfg.accent,
-                    );
-                    let changed = resp.changed();
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, val));
-                    }
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[slider #{}]", slider_idx),
-                    );
-                    response.sliders.push(SliderResponse {
-                        value: val,
-                        changed,
-                    });
-                    slider_idx += 1;
+                crate::debug::tag(
+                    ui,
+                    resp.rect,
+                    format!("widget[drag_value #{}]", drag_value_idx),
+                );
+                response.drag_values.push(DragValueResponse {
+                    value: val,
+                    changed,
+                });
+                drag_value_idx += 1;
+            }
+            WidgetSpec::Dropdown(cfg) => {
+                let val_key = pod_id.with(("frost_pod_dropdown_idx", dropdown_idx));
+                let mut sel: usize = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<usize>(val_key))
+                    .unwrap_or(cfg.initial)
+                    .min(cfg.options.len().saturating_sub(1));
+                let opts: Vec<&str> = cfg.options.iter().map(String::as_str).collect();
+                let resp = dropdown(
+                    ui,
+                    ("frost_pod_dropdown", dropdown_idx),
+                    &mut sel,
+                    &opts,
+                    cfg.accent,
+                );
+                let changed = resp.changed();
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_persisted(val_key, sel));
                 }
-                WidgetSpec::DragValue(cfg) => {
-                    let val_key =
-                        pod_id.with(("frost_pod_drag_value_val", drag_value_idx));
-                    let mut val: f64 = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<f64>(val_key))
-                        .unwrap_or(cfg.value);
-                    let resp = drag_value(
-                        ui,
-                        &cfg.label,
-                        &mut val,
-                        cfg.speed,
-                        cfg.range.clone(),
-                        cfg.decimals,
-                        &cfg.suffix,
-                    );
-                    let changed = resp.changed();
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, val));
-                    }
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[drag_value #{}]", drag_value_idx),
-                    );
-                    response.drag_values.push(DragValueResponse {
-                        value: val,
-                        changed,
-                    });
-                    drag_value_idx += 1;
+                crate::debug::tag(ui, resp.rect, format!("widget[dropdown #{}]", dropdown_idx));
+                response.dropdowns.push(DropdownResponse {
+                    selected: sel,
+                    changed,
+                });
+                dropdown_idx += 1;
+            }
+            WidgetSpec::Select(cfg) => {
+                let sel_key = pod_id.with(("frost_pod_select_sel", select_idx));
+                let mut selected: bool = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<bool>(sel_key))
+                    .unwrap_or(cfg.selected_initial);
+                let resp = select_row(
+                    ui,
+                    ("frost_pod_select", select_idx),
+                    &cfg.label,
+                    cfg.trailing.as_deref(),
+                    selected,
+                    cfg.accent,
+                );
+                if resp.clicked() {
+                    selected = !selected;
+                    ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
                 }
-                WidgetSpec::Dropdown(cfg) => {
-                    let val_key =
-                        pod_id.with(("frost_pod_dropdown_idx", dropdown_idx));
-                    let mut sel: usize = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<usize>(val_key))
-                        .unwrap_or(cfg.initial)
-                        .min(cfg.options.len().saturating_sub(1));
-                    let opts: Vec<&str> =
-                        cfg.options.iter().map(String::as_str).collect();
-                    let resp = dropdown(
-                        ui,
-                        ("frost_pod_dropdown", dropdown_idx),
-                        &mut sel,
-                        &opts,
-                        cfg.accent,
-                    );
-                    let changed = resp.changed();
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, sel));
-                    }
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[dropdown #{}]", dropdown_idx),
-                    );
-                    response.dropdowns.push(DropdownResponse {
-                        selected: sel,
-                        changed,
-                    });
-                    dropdown_idx += 1;
+                crate::debug::tag(ui, resp.rect, format!("widget[select #{}]", select_idx));
+                response.selects.push(SelectResponse {
+                    clicked: resp.clicked(),
+                    double_clicked: resp.double_clicked(),
+                    selected,
+                });
+                select_idx += 1;
+            }
+            WidgetSpec::HybridSelect(cfg) => {
+                let sel_key = pod_id.with(("frost_pod_hybrid_sel", hybrid_select_idx));
+                let radio_key = pod_id.with(("frost_pod_hybrid_radio", hybrid_select_idx));
+                let mut selected: bool = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<bool>(sel_key))
+                    .unwrap_or(cfg.selected_initial);
+                let mut radio_on: bool = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<bool>(radio_key))
+                    .unwrap_or(cfg.radio_initial);
+                let resp = hybrid_select_row(
+                    ui,
+                    ("frost_pod_hybrid", hybrid_select_idx),
+                    &cfg.label,
+                    cfg.trailing.as_deref(),
+                    selected,
+                    radio_on,
+                    cfg.accent,
+                );
+                if resp.body.clicked() {
+                    selected = !selected;
+                    ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
                 }
-                WidgetSpec::Select(cfg) => {
-                    let sel_key =
-                        pod_id.with(("frost_pod_select_sel", select_idx));
-                    let mut selected: bool = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<bool>(sel_key))
-                        .unwrap_or(cfg.selected_initial);
+                if resp.radio.clicked() {
+                    radio_on = !radio_on;
+                    ui.ctx()
+                        .data_mut(|d| d.insert_persisted(radio_key, radio_on));
+                }
+                crate::debug::tag(
+                    ui,
+                    resp.body.rect,
+                    format!("widget[hybrid_select #{}]", hybrid_select_idx),
+                );
+                response.hybrid_selects.push(HybridSelectPodResponse {
+                    body_clicked: resp.body.clicked(),
+                    body_double_clicked: resp.body.double_clicked(),
+                    radio_clicked: resp.radio.clicked(),
+                    selected,
+                    radio_on,
+                });
+                hybrid_select_idx += 1;
+            }
+            WidgetSpec::Color(cfg) => {
+                let val_key = pod_id.with(("frost_pod_color_val", color_idx));
+                let mut rgba: [f32; 4] = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<[f32; 4]>(val_key))
+                    .unwrap_or(cfg.initial);
+                let changed = if cfg.alpha {
+                    let resp = color_rgba(ui, &cfg.label, &mut rgba, cfg.accent);
+                    crate::debug::tag(ui, resp.rect, format!("widget[color_rgba #{}]", color_idx));
+                    resp.changed()
+                } else {
+                    let mut rgb = [rgba[0], rgba[1], rgba[2]];
+                    let resp = color_rgb(ui, &cfg.label, &mut rgb, cfg.accent);
+                    rgba[0] = rgb[0];
+                    rgba[1] = rgb[1];
+                    rgba[2] = rgb[2];
+                    rgba[3] = 1.0;
+                    crate::debug::tag(ui, resp.rect, format!("widget[color_rgb #{}]", color_idx));
+                    resp.changed()
+                };
+                if changed {
+                    ui.ctx().data_mut(|d| d.insert_persisted(val_key, rgba));
+                }
+                response.colors.push(ColorResponse { rgba, changed });
+                color_idx += 1;
+            }
+            WidgetSpec::Readout(cfg) => {
+                let resp = readout(ui, &cfg.label, &cfg.value);
+                crate::debug::tag(ui, resp.rect, format!("widget[readout #{}]", readout_idx));
+                response.readouts.push(ReadoutResponse);
+                readout_idx += 1;
+            }
+            WidgetSpec::SelectList(cfg) => {
+                let sel_key = pod_id.with(("frost_pod_select_list_sel", select_list_idx));
+                let mut selected: Option<usize> = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
+                    .unwrap_or(None);
+                let mut clicked: Option<usize> = None;
+                let mut double_clicked: Option<usize> = None;
+                for (i, label) in cfg.items.iter().enumerate() {
+                    let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
                     let resp = select_row(
                         ui,
-                        ("frost_pod_select", select_idx),
-                        &cfg.label,
-                        cfg.trailing.as_deref(),
-                        selected,
+                        ("frost_pod_select_list", select_list_idx, i),
+                        label,
+                        trailing,
+                        selected == Some(i),
                         cfg.accent,
                     );
                     if resp.clicked() {
-                        selected = !selected;
-                        ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
+                        clicked = Some(i);
+                        selected = Some(i);
                     }
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[select #{}]", select_idx),
-                    );
-                    response.selects.push(SelectResponse {
-                        clicked: resp.clicked(),
-                        double_clicked: resp.double_clicked(),
-                        selected,
-                    });
-                    select_idx += 1;
+                    if resp.double_clicked() {
+                        double_clicked = Some(i);
+                    }
                 }
-                WidgetSpec::HybridSelect(cfg) => {
-                    let sel_key = pod_id
-                        .with(("frost_pod_hybrid_sel", hybrid_select_idx));
-                    let radio_key = pod_id
-                        .with(("frost_pod_hybrid_radio", hybrid_select_idx));
-                    let mut selected: bool = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<bool>(sel_key))
-                        .unwrap_or(cfg.selected_initial);
-                    let mut radio_on: bool = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<bool>(radio_key))
-                        .unwrap_or(cfg.radio_initial);
+                if clicked.is_some() {
+                    ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
+                }
+                response.select_lists.push(SelectListResponse {
+                    clicked,
+                    double_clicked,
+                    selected,
+                });
+                select_list_idx += 1;
+            }
+            WidgetSpec::HybridSelectList(cfg) => {
+                let sel_key =
+                    pod_id.with(("frost_pod_hybrid_select_list_sel", hybrid_select_list_idx));
+                let pin_key =
+                    pod_id.with(("frost_pod_hybrid_select_list_pin", hybrid_select_list_idx));
+                let mut selected: Option<usize> = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
+                    .unwrap_or(None);
+                let mut pinned: Option<usize> = ui
+                    .ctx()
+                    .data_mut(|d| d.get_persisted::<Option<usize>>(pin_key))
+                    .unwrap_or(None);
+                let mut body_clicked: Option<usize> = None;
+                let mut body_double_clicked: Option<usize> = None;
+                let mut radio_clicked: Option<usize> = None;
+                for (i, label) in cfg.items.iter().enumerate() {
+                    let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
                     let resp = hybrid_select_row(
                         ui,
-                        ("frost_pod_hybrid", hybrid_select_idx),
-                        &cfg.label,
-                        cfg.trailing.as_deref(),
-                        selected,
-                        radio_on,
+                        ("frost_pod_hybrid_select_list", hybrid_select_list_idx, i),
+                        label,
+                        trailing,
+                        selected == Some(i),
+                        pinned == Some(i),
                         cfg.accent,
                     );
                     if resp.body.clicked() {
-                        selected = !selected;
-                        ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
+                        body_clicked = Some(i);
+                        selected = Some(i);
+                    }
+                    if resp.body.double_clicked() {
+                        body_double_clicked = Some(i);
                     }
                     if resp.radio.clicked() {
-                        radio_on = !radio_on;
-                        ui.ctx().data_mut(|d| d.insert_persisted(radio_key, radio_on));
+                        radio_clicked = Some(i);
+                        // Single-select radio: clicking an
+                        // unpinned row pins it; clicking the
+                        // currently-pinned row unpins.
+                        pinned = if pinned == Some(i) { None } else { Some(i) };
                     }
-                    crate::debug::tag(
-                        ui,
-                        resp.body.rect,
-                        format!("widget[hybrid_select #{}]", hybrid_select_idx),
-                    );
-                    response.hybrid_selects.push(HybridSelectPodResponse {
-                        body_clicked: resp.body.clicked(),
-                        body_double_clicked: resp.body.double_clicked(),
-                        radio_clicked: resp.radio.clicked(),
-                        selected,
-                        radio_on,
-                    });
-                    hybrid_select_idx += 1;
                 }
-                WidgetSpec::Color(cfg) => {
-                    let val_key = pod_id.with(("frost_pod_color_val", color_idx));
-                    let mut rgba: [f32; 4] = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<[f32; 4]>(val_key))
-                        .unwrap_or(cfg.initial);
-                    let changed = if cfg.alpha {
-                        let resp =
-                            color_rgba(ui, &cfg.label, &mut rgba, cfg.accent);
-                        crate::debug::tag(
-                            ui,
-                            resp.rect,
-                            format!("widget[color_rgba #{}]", color_idx),
-                        );
-                        resp.changed()
-                    } else {
-                        let mut rgb = [rgba[0], rgba[1], rgba[2]];
-                        let resp = color_rgb(ui, &cfg.label, &mut rgb, cfg.accent);
-                        rgba[0] = rgb[0];
-                        rgba[1] = rgb[1];
-                        rgba[2] = rgb[2];
-                        rgba[3] = 1.0;
-                        crate::debug::tag(
-                            ui,
-                            resp.rect,
-                            format!("widget[color_rgb #{}]", color_idx),
-                        );
-                        resp.changed()
-                    };
-                    if changed {
-                        ui.ctx().data_mut(|d| d.insert_persisted(val_key, rgba));
-                    }
-                    response.colors.push(ColorResponse { rgba, changed });
-                    color_idx += 1;
+                if body_clicked.is_some() {
+                    ui.ctx().data_mut(|d| d.insert_persisted(sel_key, selected));
                 }
-                WidgetSpec::Readout(cfg) => {
-                    let resp = readout(ui, &cfg.label, &cfg.value);
-                    crate::debug::tag(
-                        ui,
-                        resp.rect,
-                        format!("widget[readout #{}]", readout_idx),
-                    );
-                    response.readouts.push(ReadoutResponse);
-                    readout_idx += 1;
+                if radio_clicked.is_some() {
+                    ui.ctx().data_mut(|d| d.insert_persisted(pin_key, pinned));
                 }
-                WidgetSpec::SelectList(cfg) => {
-                    let sel_key = pod_id
-                        .with(("frost_pod_select_list_sel", select_list_idx));
-                    let mut selected: Option<usize> = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
-                        .unwrap_or(None);
-                    let mut clicked: Option<usize> = None;
-                    let mut double_clicked: Option<usize> = None;
-                    for (i, label) in cfg.items.iter().enumerate() {
-                        let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
-                        let resp = select_row(
-                            ui,
-                            ("frost_pod_select_list", select_list_idx, i),
-                            label,
-                            trailing,
-                            selected == Some(i),
-                            cfg.accent,
-                        );
+                response.hybrid_select_lists.push(HybridSelectListResponse {
+                    body_clicked,
+                    body_double_clicked,
+                    radio_clicked,
+                    selected,
+                    pinned,
+                });
+                hybrid_select_list_idx += 1;
+            }
+            WidgetSpec::Tags(cfg) => {
+                let mut clicked: Option<usize> = None;
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                    for (i, item) in cfg.items.iter().enumerate() {
+                        let resp = match item.fill {
+                            Some(fill) => chip_colored(ui, &item.label, fill, cfg.accent),
+                            None => chip(ui, &item.label, cfg.accent),
+                        };
                         if resp.clicked() {
                             clicked = Some(i);
-                            selected = Some(i);
-                        }
-                        if resp.double_clicked() {
-                            double_clicked = Some(i);
                         }
                     }
-                    if clicked.is_some() {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_persisted(sel_key, selected));
-                    }
-                    response.select_lists.push(SelectListResponse {
-                        clicked,
-                        double_clicked,
-                        selected,
-                    });
-                    select_list_idx += 1;
+                });
+                response.tags.push(TagsResponse { clicked });
+                tags_idx += 1;
+                let _ = tags_idx; // silence unused warning when no further widgets follow
+            }
+            WidgetSpec::Keybindings(cfg) => {
+                for (k, a) in cfg.rows.iter() {
+                    keybinding_row_h(ui, k, a, theme().widgets.keybinding.row_h);
                 }
-                WidgetSpec::HybridSelectList(cfg) => {
-                    let sel_key = pod_id.with((
-                        "frost_pod_hybrid_select_list_sel",
-                        hybrid_select_list_idx,
-                    ));
-                    let pin_key = pod_id.with((
-                        "frost_pod_hybrid_select_list_pin",
-                        hybrid_select_list_idx,
-                    ));
-                    let mut selected: Option<usize> = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<Option<usize>>(sel_key))
-                        .unwrap_or(None);
-                    let mut pinned: Option<usize> = ui
-                        .ctx()
-                        .data_mut(|d| d.get_persisted::<Option<usize>>(pin_key))
-                        .unwrap_or(None);
-                    let mut body_clicked: Option<usize> = None;
-                    let mut body_double_clicked: Option<usize> = None;
-                    let mut radio_clicked: Option<usize> = None;
-                    for (i, label) in cfg.items.iter().enumerate() {
-                        let trailing = cfg.trailing.as_ref().map(|t| t[i].as_str());
-                        let resp = hybrid_select_row(
-                            ui,
-                            (
-                                "frost_pod_hybrid_select_list",
-                                hybrid_select_list_idx,
-                                i,
-                            ),
-                            label,
-                            trailing,
-                            selected == Some(i),
-                            pinned == Some(i),
-                            cfg.accent,
-                        );
-                        if resp.body.clicked() {
-                            body_clicked = Some(i);
-                            selected = Some(i);
-                        }
-                        if resp.body.double_clicked() {
-                            body_double_clicked = Some(i);
-                        }
-                        if resp.radio.clicked() {
-                            radio_clicked = Some(i);
-                            // Single-select radio: clicking an
-                            // unpinned row pins it; clicking the
-                            // currently-pinned row unpins.
-                            pinned = if pinned == Some(i) { None } else { Some(i) };
-                        }
-                    }
-                    if body_clicked.is_some() {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_persisted(sel_key, selected));
-                    }
-                    if radio_clicked.is_some() {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_persisted(pin_key, pinned));
-                    }
-                    response
-                        .hybrid_select_lists
-                        .push(HybridSelectListResponse {
-                            body_clicked,
-                            body_double_clicked,
-                            radio_clicked,
-                            selected,
-                            pinned,
-                        });
-                    hybrid_select_list_idx += 1;
+                response.keybindings.push(KeybindingsResponse);
+                keybindings_idx += 1;
+                let _ = keybindings_idx;
+            }
+            WidgetSpec::Badges(cfg) => {
+                for row in cfg.rows.iter() {
+                    let pairs: Vec<(&str, Option<Color32>)> = row
+                        .badges
+                        .iter()
+                        .map(|t| (t.label.as_str(), t.fill))
+                        .collect();
+                    badge_row_colored(ui, &row.label, &pairs, cfg.accent);
                 }
-                WidgetSpec::Tags(cfg) => {
-                    let mut clicked: Option<usize> = None;
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                        for (i, item) in cfg.items.iter().enumerate() {
-                            let resp = match item.fill {
-                                Some(fill) => {
-                                    chip_colored(ui, &item.label, fill, cfg.accent)
-                                }
-                                None => chip(ui, &item.label, cfg.accent),
-                            };
-                            if resp.clicked() {
-                                clicked = Some(i);
-                            }
-                        }
-                    });
-                    response.tags.push(TagsResponse { clicked });
-                    tags_idx += 1;
-                    let _ = tags_idx; // silence unused warning when no further widgets follow
-                }
-                WidgetSpec::Keybindings(cfg) => {
-                    for (k, a) in cfg.rows.iter() {
-                        keybinding_row_h(ui, k, a, KEYBINDING_ROW_H);
-                    }
-                    response.keybindings.push(KeybindingsResponse);
-                    keybindings_idx += 1;
-                    let _ = keybindings_idx;
-                }
-                WidgetSpec::Badges(cfg) => {
-                    for row in cfg.rows.iter() {
-                        let pairs: Vec<(&str, Option<Color32>)> = row
-                            .badges
-                            .iter()
-                            .map(|t| (t.label.as_str(), t.fill))
-                            .collect();
-                        badge_row_colored(ui, &row.label, &pairs, cfg.accent);
-                    }
-                    response.badges.push(BadgesResponse);
-                }
-                WidgetSpec::Custom { paint, .. } => {
-                    paint(ui);
-                }
-            });
-        }
+                response.badges.push(BadgesResponse);
+            }
+            WidgetSpec::Custom { paint, .. } => {
+                paint(ui);
+            }
+        });
+    }
 }

@@ -59,7 +59,12 @@ pub fn frost_code_editor(
     min_size: egui::Vec2,
 ) {
     frost_code_editor_with_opts(
-        ui, id_salt, text, syntax, accent, min_size,
+        ui,
+        id_salt,
+        text,
+        syntax,
+        accent,
+        min_size,
         crate::embed::OverlayOpts::default(),
     )
 }
@@ -94,21 +99,20 @@ pub fn frost_code_editor_with_opts(
     min_size: egui::Vec2,
     fs_opts: crate::embed::OverlayOpts,
 ) {
-    crate::embed::maximizable_with_opts(
-        ui, id_salt, accent, min_size, fs_opts, |ui| {
-            let id = format!("frost_code_editor_{:?}", ui.id());
-            let font_size = 13.0;
-            let line_h = font_size * 1.2;
-            let rows = ((ui.available_height() / line_h).floor() as usize).max(6);
-            CodeEditor::default()
-                .id_source(id)
-                .with_syntax(syntax)
-                .with_theme(frost_code_theme(accent))
-                .with_fontsize(font_size)
-                .with_rows(rows)
-                .with_numlines(true)
-                .show(ui, text);
-        });
+    crate::embed::maximizable_with_opts(ui, id_salt, accent, min_size, fs_opts, |ui| {
+        let id = format!("frost_code_editor_{:?}", ui.id());
+        let code = crate::style::theme().code;
+        let line_h = code.font_size * code.line_height_factor;
+        let rows = ((ui.available_height() / line_h).floor() as usize).max(code.min_rows);
+        CodeEditor::default()
+            .id_source(id)
+            .with_syntax(syntax)
+            .with_theme(frost_code_theme(accent))
+            .with_fontsize(code.font_size)
+            .with_rows(rows)
+            .with_numlines(true)
+            .show(ui, text);
+    });
 }
 
 /// Build a [`ColorTheme`] whose background / text / selection
@@ -128,13 +132,11 @@ pub fn frost_code_editor_with_opts(
 /// colours (`SUCCESS`, `AXIS_X/Y/Z`) tint literals / types /
 /// punctuation for a readable hierarchy.
 fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
-    use crate::style::{
-        accent_pressed, glass_alpha_window, glass_fill, on_panel_dim, pane_fill, AXIS_X,
-        AXIS_Y, AXIS_Z, SUCCESS,
-    };
+    use crate::style::{accent_pressed, glass_alpha_window, glass_fill, on_panel_dim, pane_fill};
+    let code = crate::style::theme().code;
     ColorTheme {
         name: "Frost",
-        dark: true,
+        dark: code.force_dark,
         // `glass_fill(pane_fill(...), …)` flows through the active
         // theme so GAME's accent panel becomes the editor bg too,
         // not a hardcoded dark.
@@ -147,13 +149,13 @@ fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
         // pane fill, so they stay readable on PRO's dark and GAME's
         // accent-coloured panels alike.
         comments: on_panel_dim(),
-        functions: AXIS_Y,
+        functions: code.functions,
         keywords: accent,
-        literals: AXIS_X,
-        numerics: AXIS_X,
+        literals: code.literals,
+        numerics: code.numerics,
         punctuation: on_panel_dim(),
-        strs: SUCCESS,
-        types: AXIS_Z,
+        strs: code.strings,
+        types: code.types,
         special: accent,
     }
 }
@@ -193,7 +195,12 @@ impl crate::pod::Pod {
             let avail = ui.available_size_before_wrap();
             let accent = crate::style::active_accent();
             frost_code_editor_with_opts(
-                ui, text_id, &mut text, syntax.clone(), accent, avail,
+                ui,
+                text_id,
+                &mut text,
+                syntax.clone(),
+                accent,
+                avail,
                 OverlayOpts::default(),
             );
             ui.ctx().data_mut(|d| d.insert_temp(text_id, text));

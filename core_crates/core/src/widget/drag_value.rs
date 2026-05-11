@@ -8,7 +8,7 @@
 
 use std::ops::RangeInclusive;
 
-use crate::style::{on_panel, BODY_FONT_SIZE};
+use crate::style::{BODY_FONT_SIZE, on_panel, theme};
 
 /// Fixed width of the value box. Matches
 /// `frostcore::widgets::drag::INPUT_WIDTH` so multiple drag-value
@@ -28,7 +28,8 @@ pub fn drag_value(
     decimals: usize,
     suffix: &str,
 ) -> egui::Response {
-    drag_value_h(ui, label, value, speed, range, decimals, suffix, DRAG_VALUE_ROW_H)
+    let row_h = theme().widgets.drag_value.row_h;
+    drag_value_h(ui, label, value, speed, range, decimals, suffix, row_h)
 }
 
 /// Variable-height drag-value row — used by resizable pods.
@@ -42,13 +43,11 @@ pub fn drag_value_h(
     suffix: &str,
     height: f32,
 ) -> egui::Response {
-    let scale = height / DRAG_VALUE_ROW_H;
+    let drag = theme().widgets.drag_value;
+    let scale = height / drag.row_h;
     let total_w = ui.available_width();
-    let (row_rect, _) = ui.allocate_exact_size(
-        egui::vec2(total_w, height),
-        egui::Sense::hover(),
-    );
-    let input_w = (DRAG_VALUE_INPUT_WIDTH * scale).round();
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(total_w, height), egui::Sense::hover());
+    let input_w = (drag.input_w * scale).round();
     let input_rect = egui::Rect::from_min_size(
         egui::pos2(row_rect.right() - input_w, row_rect.top()),
         egui::vec2(input_w, height),
@@ -77,9 +76,8 @@ pub fn drag_value_h(
             .max_rect(input_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    child.style_mut().override_font_id = Some(egui::FontId::proportional(
-        (BODY_FONT_SIZE * scale).round(),
-    ));
+    child.style_mut().override_font_id =
+        Some(egui::FontId::proportional((BODY_FONT_SIZE * scale).round()));
     child.style_mut().spacing.button_padding.y = 0.0;
     child.put(
         input_rect,
@@ -102,6 +100,7 @@ pub fn axis_drag(
     suffix: &str,
     decimals: usize,
 ) -> egui::Response {
+    let row_h = theme().widgets.drag_value.row_h;
     axis_drag_h(
         ui,
         glyph,
@@ -110,7 +109,7 @@ pub fn axis_drag(
         speed,
         suffix,
         decimals,
-        DRAG_VALUE_ROW_H,
+        row_h,
     )
 }
 
@@ -124,13 +123,11 @@ pub fn axis_drag_h(
     decimals: usize,
     height: f32,
 ) -> egui::Response {
-    let scale = height / DRAG_VALUE_ROW_H;
+    let drag = theme().widgets.drag_value;
+    let scale = height / drag.row_h;
     let total_w = ui.available_width();
-    let (row_rect, _) = ui.allocate_exact_size(
-        egui::vec2(total_w, height),
-        egui::Sense::hover(),
-    );
-    let input_w = (DRAG_VALUE_INPUT_WIDTH * scale).round();
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(total_w, height), egui::Sense::hover());
+    let input_w = (drag.input_w * scale).round();
     let input_rect = egui::Rect::from_min_size(
         egui::pos2(row_rect.right() - input_w, row_rect.top()),
         egui::vec2(input_w, height),

@@ -221,12 +221,8 @@ impl PinInfo {
         if glow > 0.0 {
             // (expand_factor_of_width, alpha_factor) per layer,
             // outermost first.
-            const GLOW_LAYERS: [(f32, f32); 4] = [
-                (0.60, 0.08),
-                (0.45, 0.13),
-                (0.30, 0.20),
-                (0.15, 0.28),
-            ];
+            const GLOW_LAYERS: [(f32, f32); 4] =
+                [(0.60, 0.08), (0.45, 0.13), (0.30, 0.20), (0.15, 0.28)];
             let no_stroke = egui::Stroke::NONE;
             for (e_mul, a_mul) in GLOW_LAYERS {
                 let a = (fill.a() as f32 * a_mul * glow).round().clamp(0.0, 220.0) as u8;

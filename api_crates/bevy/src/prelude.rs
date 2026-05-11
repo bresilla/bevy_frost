@@ -14,9 +14,9 @@
 pub use frost_core::*;
 
 pub use crate::{
+    EguiInputAbsorbPlugin, FrostPlugin, RibbonGhostSet, RibbonPlugin, ThemePlugin,
     gizmo_material::GizmoMaterial,
     node_view_backend::{
         BevyNodeViewBackend, NodeViewCopy, NodeViewPlugin, NodeViewSlots, PendingNodeViewCopies,
     },
-    EguiInputAbsorbPlugin, FrostPlugin, RibbonGhostSet, RibbonPlugin, ThemePlugin,
 };

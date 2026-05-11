@@ -21,10 +21,10 @@
 //! the two standalone crates) are kept as re-exports under
 //! `#[doc(hidden)]` so existing imports keep compiling.
 
-#[cfg(feature = "graph")]
-pub mod graph;
 #[cfg(feature = "code")]
 pub mod code;
+#[cfg(feature = "graph")]
+pub mod graph;
 
 /// Legacy alias — `extras::maximize` was promoted to the
 /// crate-root [`embed`](crate::embed) module.

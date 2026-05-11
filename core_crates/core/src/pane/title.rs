@@ -2,7 +2,7 @@
 //! accent vs GAME caution stripes), with text alignment + blinking
 //! pip placement driven by the pane's [`PaneAnchor`].
 
-use egui::{pos2, Color32, Id, Rect};
+use egui::{Color32, Id, Rect, pos2};
 
 use super::anchor::{PaneAnchor, TitleSide};
 use crate::style;
@@ -32,10 +32,10 @@ pub(crate) fn paint_pane_title(
     const PIP_SIZE: f32 = 6.0;
     let title_size = 15.0 * 1.15;
     let theme = style::theme();
-    let stripes_on = theme.pane_title_stripes;
+    let stripes_on = theme.pane.title_stripes;
 
     // ── 1. Background ──
-    if !theme.pane_fill_visible && !stripes_on {
+    if !theme.pane.fill_visible && !stripes_on {
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::same(theme.radius_lg),
@@ -48,12 +48,16 @@ pub(crate) fn paint_pane_title(
 
     // ── 2. Title text colour + content ──
     let text_col = if stripes_on {
-        if theme.is_light { Color32::BLACK } else { Color32::WHITE }
+        if theme.is_light {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        }
     } else {
         style::section_title_color(accent)
     };
     let font = egui::FontId::new(title_size, style::title_font_family());
-    let title_uc = if theme.pane_title_brackets {
+    let title_uc = if theme.pane.title_brackets {
         format!("[ {} ]", title.to_uppercase())
     } else {
         title.to_uppercase()
@@ -93,21 +97,19 @@ pub(crate) fn paint_pane_title(
     //     CRT-misregistration shimmer.
     //
     // PRO leaves the flag false → both branches collapse to 0.0.
-    let aberration = if theme.pane_title_chromatic_aberration {
-        let periodic =
-            style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"));
-        let cipher_offset = if theme.scramble_titles
-            && style::scramble_active(ui.ctx(), scramble_id, &title_uc)
-        {
-            const CIPHER_PEAK: f32 = 6.0;
-            let now = ui.ctx().input(|i| i.time) as f32;
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(33));
-            let pulse = (now * 32.0).sin().abs();
-            CIPHER_PEAK * (0.55 + 0.45 * pulse)
-        } else {
-            0.0
-        };
+    let aberration = if theme.pane.title_chromatic_aberration {
+        let periodic = style::chromatic_aberration_offset(ui.ctx(), id.with("chrom_aberr"));
+        let cipher_offset =
+            if theme.scramble_titles && style::scramble_active(ui.ctx(), scramble_id, &title_uc) {
+                const CIPHER_PEAK: f32 = 6.0;
+                let now = ui.ctx().input(|i| i.time) as f32;
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(33));
+                let pulse = (now * 32.0).sin().abs();
+                CIPHER_PEAK * (0.55 + 0.45 * pulse)
+            } else {
+                0.0
+            };
         periodic.max(cipher_offset)
     } else {
         0.0
@@ -120,18 +122,12 @@ pub(crate) fn paint_pane_title(
             (rect.center(), egui::Align2::CENTER_CENTER)
         } else if reversed {
             (
-                pos2(
-                    (rect.max.x - TITLE_INSET).round(),
-                    rect.center().y.round(),
-                ),
+                pos2((rect.max.x - TITLE_INSET).round(), rect.center().y.round()),
                 egui::Align2::RIGHT_CENTER,
             )
         } else {
             (
-                pos2(
-                    (rect.min.x + TITLE_INSET).round(),
-                    rect.center().y.round(),
-                ),
+                pos2((rect.min.x + TITLE_INSET).round(), rect.center().y.round()),
                 egui::Align2::LEFT_CENTER,
             )
         };
@@ -163,8 +159,9 @@ pub(crate) fn paint_pane_title(
         // `TextShape`s tinted differently for the aberration ghosts
         // and the main text. Cheap clone (Arc bump) instead of
         // re-laying out three separate galleys.
-        let galley =
-            ui.painter().layout_no_wrap(displayed, font, Color32::PLACEHOLDER);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(displayed, font, Color32::PLACEHOLDER);
         let g = galley.size();
         let cx = rect.center().x;
         let on_right_side = title_side == TitleSide::Right;
@@ -189,18 +186,12 @@ pub(crate) fn paint_pane_title(
             }
         } else if top_to_bottom {
             (
-                pos2(
-                    (cx + g.y * 0.5).round(),
-                    (rect.min.y + TITLE_INSET).round(),
-                ),
+                pos2((cx + g.y * 0.5).round(), (rect.min.y + TITLE_INSET).round()),
                 std::f32::consts::FRAC_PI_2,
             )
         } else {
             (
-                pos2(
-                    (cx - g.y * 0.5).round(),
-                    (rect.max.y - TITLE_INSET).round(),
-                ),
+                pos2((cx - g.y * 0.5).round(), (rect.max.y - TITLE_INSET).round()),
                 -std::f32::consts::FRAC_PI_2,
             )
         };
@@ -237,12 +228,8 @@ pub(crate) fn paint_pane_title(
         const ON_FRAC: f32 = 0.16;
         let on = time.fract() < ON_FRAC;
         let alpha = if on { 255 } else { 76 };
-        let pip_color = Color32::from_rgba_unmultiplied(
-            text_col.r(),
-            text_col.g(),
-            text_col.b(),
-            alpha,
-        );
+        let pip_color =
+            Color32::from_rgba_unmultiplied(text_col.r(), text_col.g(), text_col.b(), alpha);
         // Every 3rd "ON" pulse, split the pip into red + cyan ghosts
         // for a CRT-misregistration flash. Phase aligns with the
         // 1 Hz blink (time.floor() ticks once per cycle).
@@ -254,15 +241,18 @@ pub(crate) fn paint_pane_title(
                 let chrom_red = Color32::from_rgba_unmultiplied(220, 60, 70, 200);
                 let chrom_cyan = Color32::from_rgba_unmultiplied(60, 220, 230, 200);
                 let (off_red, off_cyan) = if is_horizontal_strip {
-                    (egui::vec2(-CHROM_OFFSET, 0.0), egui::vec2(CHROM_OFFSET, 0.0))
+                    (
+                        egui::vec2(-CHROM_OFFSET, 0.0),
+                        egui::vec2(CHROM_OFFSET, 0.0),
+                    )
                 } else {
-                    (egui::vec2(0.0, -CHROM_OFFSET), egui::vec2(0.0, CHROM_OFFSET))
+                    (
+                        egui::vec2(0.0, -CHROM_OFFSET),
+                        egui::vec2(0.0, CHROM_OFFSET),
+                    )
                 };
-                ui.painter().rect_filled(
-                    r.translate(off_red),
-                    egui::CornerRadius::ZERO,
-                    chrom_red,
-                );
+                ui.painter()
+                    .rect_filled(r.translate(off_red), egui::CornerRadius::ZERO, chrom_red);
                 ui.painter().rect_filled(
                     r.translate(off_cyan),
                     egui::CornerRadius::ZERO,
@@ -329,37 +319,24 @@ pub(crate) fn paint_pane_title(
     }
 
     // ── 5. Divider hairline on the body-facing edge ──
-    if theme.pane_show_title_divider {
-        let stroke =
-            egui::Stroke::new(theme.border_width, style::widget_border(accent));
+    if theme.pane.show_title_divider {
+        let stroke = style::stroke_for(style::StrokeRole::WidgetBorder, accent);
         match title_side {
             TitleSide::Top => {
-                ui.painter().hline(
-                    rect.min.x..=rect.max.x,
-                    rect.max.y - 0.5,
-                    stroke,
-                );
+                ui.painter()
+                    .hline(rect.min.x..=rect.max.x, rect.max.y - 0.5, stroke);
             }
             TitleSide::Bottom => {
-                ui.painter().hline(
-                    rect.min.x..=rect.max.x,
-                    rect.min.y + 0.5,
-                    stroke,
-                );
+                ui.painter()
+                    .hline(rect.min.x..=rect.max.x, rect.min.y + 0.5, stroke);
             }
             TitleSide::Left => {
-                ui.painter().vline(
-                    rect.max.x - 0.5,
-                    rect.min.y..=rect.max.y,
-                    stroke,
-                );
+                ui.painter()
+                    .vline(rect.max.x - 0.5, rect.min.y..=rect.max.y, stroke);
             }
             TitleSide::Right => {
-                ui.painter().vline(
-                    rect.min.x + 0.5,
-                    rect.min.y..=rect.max.y,
-                    stroke,
-                );
+                ui.painter()
+                    .vline(rect.min.x + 0.5, rect.min.y..=rect.max.y, stroke);
             }
         }
     }

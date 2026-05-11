@@ -33,7 +33,7 @@ mod paint;
 pub use paint::{EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
 
 pub use assembly::{
-    draw_assembly, find_item, find_ribbon, panel_anchor, panel_anchor_for_item,
-    RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph,
-    RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth,
+    RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem,
+    RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth, draw_assembly, find_item,
+    find_ribbon, panel_anchor, panel_anchor_for_item,
 };

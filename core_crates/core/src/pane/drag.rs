@@ -61,7 +61,8 @@ fn order_key(pane_id: Id) -> Id {
     pane_id.with("frost_pane_section_order")
 }
 pub fn state(ctx: &Context, pane_id: Id) -> DragState {
-    ctx.data(|d| d.get_temp(drag_key(pane_id))).unwrap_or_default()
+    ctx.data(|d| d.get_temp(drag_key(pane_id)))
+        .unwrap_or_default()
 }
 
 pub fn set_drag(ctx: &Context, pane_id: Id, state: DragState) {
@@ -83,8 +84,7 @@ pub fn begin_frame(ctx: &Context, pane_id: Id) {
 
 pub fn push_rect(ctx: &Context, pane_id: Id, id: Id, rect: Rect) {
     ctx.data_mut(|d| {
-        let mut cache: Vec<RectEntry> =
-            d.get_temp(current_key(pane_id)).unwrap_or_default();
+        let mut cache: Vec<RectEntry> = d.get_temp(current_key(pane_id)).unwrap_or_default();
         if let Some(slot) = cache.iter_mut().find(|e| e.id == id) {
             slot.rect = rect;
         } else {
@@ -95,11 +95,13 @@ pub fn push_rect(ctx: &Context, pane_id: Id, id: Id, rect: Rect) {
 }
 
 pub fn current_cache(ctx: &Context, pane_id: Id) -> Vec<RectEntry> {
-    ctx.data(|d| d.get_temp(current_key(pane_id))).unwrap_or_default()
+    ctx.data(|d| d.get_temp(current_key(pane_id)))
+        .unwrap_or_default()
 }
 
 pub fn snapshot(ctx: &Context, pane_id: Id) -> Vec<RectEntry> {
-    ctx.data(|d| d.get_temp(snapshot_key(pane_id))).unwrap_or_default()
+    ctx.data(|d| d.get_temp(snapshot_key(pane_id)))
+        .unwrap_or_default()
 }
 
 /// Build this frame's snapshot from `current_cache` + the dragged
@@ -134,8 +136,11 @@ pub fn section_order_for(ctx: &Context, pane_id: Id, defaults: &[Id]) -> Vec<Id>
     let stored: Vec<Id> = ctx
         .data_mut(|d| d.get_persisted(order_key(pane_id)))
         .unwrap_or_default();
-    let mut order: Vec<Id> =
-        stored.iter().copied().filter(|id| defaults.contains(id)).collect();
+    let mut order: Vec<Id> = stored
+        .iter()
+        .copied()
+        .filter(|id| defaults.contains(id))
+        .collect();
     for id in defaults {
         if !order.contains(id) {
             order.push(*id);
@@ -181,10 +186,13 @@ pub fn compute_target(
     horizontal_stack: bool,
 ) -> usize {
     let centre = |e: &RectEntry| -> f32 {
-        if horizontal_stack { e.rect.center().x } else { e.rect.center().y }
+        if horizontal_stack {
+            e.rect.center().x
+        } else {
+            e.rect.center().y
+        }
     };
-    let others: Vec<&RectEntry> =
-        cache.iter().filter(|e| e.id != dragged).collect();
+    let others: Vec<&RectEntry> = cache.iter().filter(|e| e.id != dragged).collect();
     let reversed = if others.len() >= 2 {
         centre(others[1]) < centre(others[0])
     } else {

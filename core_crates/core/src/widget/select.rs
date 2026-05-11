@@ -25,7 +25,8 @@
 //! click routing under it stays split.
 
 use crate::style::{
-    on_section, on_section_dim, row_hover_fill, row_selected_fill, theme, ColorMode,
+    ColorMode, RadiusRole, on_section, on_section_dim, radius_for, row_hover_fill,
+    row_selected_fill, theme,
 };
 
 /// Row height — matches the Blender 4 outliner / UE5 world-outliner
@@ -61,7 +62,15 @@ pub fn select_row(
     selected: bool,
     accent: egui::Color32,
 ) -> egui::Response {
-    select_row_h(ui, id_salt, label, trailing, selected, accent, SELECT_ROW_H)
+    select_row_h(
+        ui,
+        id_salt,
+        label,
+        trailing,
+        selected,
+        accent,
+        theme().widgets.select.row_h,
+    )
 }
 
 /// Variable-height plain select row — used by resizable pods.
@@ -74,18 +83,23 @@ pub fn select_row_h(
     accent: egui::Color32,
     height: f32,
 ) -> egui::Response {
-    const LABEL_PAD_L: f32 = 10.0;
-    const TRAILING_PAD_R: f32 = 6.0;
+    let select = theme().widgets.select;
     let w = ui.available_width();
     let resp = ui.interact(
         egui::Rect::from_min_size(ui.cursor().min, egui::vec2(w, height)),
         ui.id().with(("frost_select_body", &id_salt)),
         egui::Sense::click(),
     );
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
     paint_row_bg(ui, rect, selected, resp.hovered(), accent);
-    paint_row_text(ui, rect, label, trailing, LABEL_PAD_L, TRAILING_PAD_R);
+    paint_row_text(
+        ui,
+        rect,
+        label,
+        trailing,
+        select.label_pad_l,
+        select.trailing_pad_r,
+    );
     resp
 }
 
@@ -104,7 +118,14 @@ pub fn hybrid_select_row(
     accent: egui::Color32,
 ) -> HybridSelectResponse {
     hybrid_select_row_h(
-        ui, id_salt, label, trailing, selected, radio_on, accent, SELECT_ROW_H,
+        ui,
+        id_salt,
+        label,
+        trailing,
+        selected,
+        radio_on,
+        accent,
+        theme().widgets.select.row_h,
     )
 }
 
@@ -119,24 +140,19 @@ pub fn hybrid_select_row_h(
     accent: egui::Color32,
     height: f32,
 ) -> HybridSelectResponse {
-    const RADIO_OUTER_R: f32 = 4.5;
-    const RADIO_SLOT_W: f32 = 14.0;
-    const RADIO_PAD_R: f32 = 5.0;
-    const LABEL_PAD_L: f32 = 10.0;
-    const TRAILING_PAD_R: f32 = 6.0;
+    let select = theme().widgets.select;
 
     let w = ui.available_width();
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
 
     let radio_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.max.x - RADIO_SLOT_W - RADIO_PAD_R, rect.min.y),
-        egui::vec2(RADIO_SLOT_W, rect.height()),
+        egui::pos2(
+            rect.max.x - select.radio_slot_w - select.radio_pad_r,
+            rect.min.y,
+        ),
+        egui::vec2(select.radio_slot_w, rect.height()),
     );
-    let body_rect = egui::Rect::from_min_max(
-        rect.min,
-        egui::pos2(radio_rect.min.x, rect.max.y),
-    );
+    let body_rect = egui::Rect::from_min_max(rect.min, egui::pos2(radio_rect.min.x, rect.max.y));
 
     let body = ui.interact(
         body_rect,
@@ -151,7 +167,14 @@ pub fn hybrid_select_row_h(
 
     let any_hover = body.hovered() || radio.hovered();
     paint_row_bg(ui, rect, selected, any_hover, accent);
-    paint_row_text(ui, body_rect, label, trailing, LABEL_PAD_L, TRAILING_PAD_R);
+    paint_row_text(
+        ui,
+        body_rect,
+        label,
+        trailing,
+        select.label_pad_l,
+        select.trailing_pad_r,
+    );
 
     // Radio: outline ring + filled dot when on. Hover brightens the
     // ring to accent so the control reads as interactive.
@@ -165,8 +188,8 @@ pub fn hybrid_select_row_h(
     };
     painter.circle_stroke(
         radio_center,
-        RADIO_OUTER_R,
-        egui::Stroke::new(1.2, ring_color),
+        select.radio_outer_r,
+        egui::Stroke::new(select.radio_stroke_w, ring_color),
     );
     if radio_on {
         // Inner dot fills with `accent` UNLESS the row is also
@@ -178,7 +201,11 @@ pub fn hybrid_select_row_h(
         } else {
             accent
         };
-        painter.circle_filled(radio_center, RADIO_OUTER_R - 1.8, dot_col);
+        painter.circle_filled(
+            radio_center,
+            select.radio_outer_r - select.radio_dot_inset,
+            dot_col,
+        );
     }
 
     HybridSelectResponse { body, radio }
@@ -195,13 +222,13 @@ fn paint_row_bg(
     if selected {
         painter.rect_filled(
             rect,
-            egui::CornerRadius::same(theme().radius_compact),
+            radius_for(RadiusRole::Compact),
             row_selected_fill(accent),
         );
     } else if hovered {
         painter.rect_filled(
             rect,
-            egui::CornerRadius::same(theme().radius_compact),
+            radius_for(RadiusRole::Compact),
             row_hover_fill(accent),
         );
     }
@@ -221,7 +248,7 @@ fn paint_row_text(
         egui::pos2(rect.min.x + label_pad_l, mid_y),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(theme().widgets.select.label_font),
         on_section(),
     );
     if let Some(t) = trailing {
@@ -229,7 +256,7 @@ fn paint_row_text(
             egui::pos2(rect.max.x - trailing_pad_r, mid_y),
             egui::Align2::RIGHT_CENTER,
             t,
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(theme().widgets.select.trailing_font),
             on_section_dim(),
         );
     }

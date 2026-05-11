@@ -35,13 +35,13 @@ pub const TREE_ROW_H: f32 = 20.0;
 /// `depth * TREE_INDENT` from the row's left edge.
 pub const TREE_INDENT: f32 = 12.0;
 
-const CHEVRON_W: f32 = 12.0;
-const ICON_W: f32 = 14.0;
-const LABEL_PAD_L: f32 = 4.0;
-const SLOT_W: f32 = 16.0;
-const SLOT_GAP: f32 = 2.0;
-const RIGHT_PAD_R: f32 = 4.0;
-const ROW_PAD_L: f32 = 4.0;
+pub const TREE_CHEVRON_W: f32 = 12.0;
+pub const TREE_ICON_W: f32 = 14.0;
+pub const TREE_LABEL_PAD_L: f32 = 4.0;
+pub const TREE_SLOT_W: f32 = 16.0;
+pub const TREE_SLOT_GAP: f32 = 2.0;
+pub const TREE_RIGHT_PAD_R: f32 = 4.0;
+pub const TREE_ROW_PAD_L: f32 = 4.0;
 
 /// Which built-in icon to paint in a [`TreeIconSlot`]. Built-ins are
 /// drawn with painter shapes so they work identically regardless of
@@ -76,7 +76,11 @@ pub struct TreeIconSlot<'a> {
 
 impl<'a> TreeIconSlot<'a> {
     pub fn new(kind: TreeIconKind, state: &'a mut bool) -> Self {
-        Self { kind, state, tooltip: None }
+        Self {
+            kind,
+            state,
+            tooltip: None,
+        }
     }
 
     pub fn with_tooltip(mut self, text: &'static str) -> Self {
@@ -130,8 +134,14 @@ pub fn tree_row(
     let bg_anchor = ui.painter().add(egui::Shape::Noop);
     let guide_anchor = ui.painter().add(egui::Shape::Noop);
 
-    let (rect, body_rect, chevron_rect_opt, icon_rect_opt, slot_rects) =
-        compute_row_rects(ui, w, depth, expanded.is_some(), icon.is_some(), slots.len());
+    let (rect, body_rect, chevron_rect_opt, icon_rect_opt, slot_rects) = compute_row_rects(
+        ui,
+        w,
+        depth,
+        expanded.is_some(),
+        icon.is_some(),
+        slots.len(),
+    );
 
     let body = ui.interact(
         body_rect,
@@ -161,19 +171,18 @@ pub fn tree_row(
     // Background fill — paints under the inline widgets via the
     // reserved slot.
     let any_slot_hovered = icon_responses.iter().any(|r| r.hovered());
-    let hovered = body.hovered()
-        || chevron.as_ref().map_or(false, |c| c.hovered())
-        || any_slot_hovered;
+    let hovered =
+        body.hovered() || chevron.as_ref().map_or(false, |c| c.hovered()) || any_slot_hovered;
     let bg_shape = if selected {
         egui::Shape::rect_filled(
             rect,
-            egui::CornerRadius::same(style::theme().radius_compact),
+            style::radius_for(style::RadiusRole::Compact),
             style::row_selected_fill(accent),
         )
     } else if hovered {
         egui::Shape::rect_filled(
             rect,
-            egui::CornerRadius::same(style::theme().radius_compact),
+            style::radius_for(style::RadiusRole::Compact),
             style::row_hover_fill(accent),
         )
     } else {
@@ -183,18 +192,15 @@ pub fn tree_row(
 
     // Indent guides — faint vertical lines at each ancestor depth.
     let guide_base = style::theme().border_subtle;
-    let guide_color = egui::Color32::from_rgba_unmultiplied(
-        guide_base.r(),
-        guide_base.g(),
-        guide_base.b(),
-        90,
-    );
+    let guide_color =
+        egui::Color32::from_rgba_unmultiplied(guide_base.r(), guide_base.g(), guide_base.b(), 90);
     let mut guides = Vec::with_capacity(depth as usize);
     for d in 0..depth {
-        let x = rect.min.x + ROW_PAD_L + d as f32 * TREE_INDENT + CHEVRON_W * 0.5;
+        let tree = style::theme().widgets.tree;
+        let x = rect.min.x + tree.row_pad_l + d as f32 * tree.indent + tree.chevron_w * 0.5;
         guides.push(egui::Shape::line_segment(
             [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-            egui::Stroke::new(style::theme().tree_guide_width, guide_color),
+            egui::Stroke::new(tree.guide_width, guide_color),
         ));
     }
     ui.painter().set(
@@ -210,10 +216,9 @@ pub fn tree_row(
     let glyph_col = style::section_title_color(accent);
     let mut chevron_shift_clicked = false;
     if let (Some(exp), Some(cr)) = (expanded, chevron_rect_opt) {
-        let how_open = ui.ctx().animate_bool_responsive(
-            ui.id().with(("frost_tree_chev_anim", id_salt)),
-            *exp,
-        );
+        let how_open = ui
+            .ctx()
+            .animate_bool_responsive(ui.id().with(("frost_tree_chev_anim", id_salt)), *exp);
         paint_chevron(ui, cr, how_open, glyph_col);
         if let Some(ref cresp) = chevron {
             if cresp.clicked() {
@@ -235,7 +240,7 @@ pub fn tree_row(
                 ir.center(),
                 egui::Align2::CENTER_CENTER,
                 name,
-                12.0,
+                style::theme().icons.tree_type_icon_size,
                 glyph_col,
             );
         } else {
@@ -243,7 +248,7 @@ pub fn tree_row(
                 ir.center(),
                 egui::Align2::CENTER_CENTER,
                 name,
-                egui::FontId::proportional(12.0),
+                egui::FontId::proportional(style::theme().icons.tree_glyph_icon_size),
                 glyph_col,
             );
         }
@@ -253,17 +258,21 @@ pub fn tree_row(
     let parent_clip = ui.clip_rect();
     if parent_clip.intersects(rect) {
         let label_left = body_rect.min.x
-            + ROW_PAD_L
-            + depth as f32 * TREE_INDENT
-            + CHEVRON_W
-            + if icon.is_some() { ICON_W } else { 0.0 }
-            + LABEL_PAD_L;
+            + style::theme().widgets.tree.row_pad_l
+            + depth as f32 * style::theme().widgets.tree.indent
+            + style::theme().widgets.tree.chevron_w
+            + if icon.is_some() {
+                style::theme().widgets.tree.icon_w
+            } else {
+                0.0
+            }
+            + style::theme().widgets.tree.label_pad_l;
         let label_rect = egui::Rect::from_min_max(
             egui::pos2(label_left, rect.min.y),
             egui::pos2(body_rect.max.x, rect.max.y),
         );
         let label_color = style::on_section();
-        let font = egui::FontId::proportional(12.0);
+        let font = egui::FontId::proportional(style::theme().widgets.tree.label_font);
         let galley = {
             let mut job = egui::text::LayoutJob::single_section(
                 label.to_string(),
@@ -276,7 +285,10 @@ pub fn tree_row(
             ui.painter().layout_job(job)
         };
         ui.painter().galley(
-            egui::pos2(label_rect.min.x, label_rect.center().y - galley.size().y * 0.5),
+            egui::pos2(
+                label_rect.min.x,
+                label_rect.center().y - galley.size().y * 0.5,
+            ),
             galley,
             label_color,
         );
@@ -319,23 +331,21 @@ fn compute_row_rects(
     Option<egui::Rect>,
     Vec<egui::Rect>,
 ) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(w, TREE_ROW_H),
-        egui::Sense::hover(),
-    );
-    let left_start = rect.min.x + ROW_PAD_L + depth as f32 * TREE_INDENT;
+    let tree = style::theme().widgets.tree;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, tree.row_h), egui::Sense::hover());
+    let left_start = rect.min.x + tree.row_pad_l + depth as f32 * tree.indent;
     let chevron_rect = if has_chevron {
         Some(egui::Rect::from_min_size(
             egui::pos2(left_start, rect.min.y),
-            egui::vec2(CHEVRON_W, rect.height()),
+            egui::vec2(tree.chevron_w, rect.height()),
         ))
     } else {
         None
     };
     let icon_rect = if has_icon {
         Some(egui::Rect::from_min_size(
-            egui::pos2(left_start + CHEVRON_W, rect.min.y),
-            egui::vec2(ICON_W, rect.height()),
+            egui::pos2(left_start + tree.chevron_w, rect.min.y),
+            egui::vec2(tree.icon_w, rect.height()),
         ))
     } else {
         None
@@ -344,26 +354,26 @@ fn compute_row_rects(
     let gutter_w = if slot_count == 0 {
         0.0
     } else {
-        slot_count as f32 * SLOT_W + (slot_count as f32 - 1.0) * SLOT_GAP + RIGHT_PAD_R
+        slot_count as f32 * tree.slot_w
+            + (slot_count as f32 - 1.0) * tree.slot_gap
+            + tree.right_pad_r
     };
     let mut slot_rects = Vec::with_capacity(slot_count);
     if slot_count > 0 {
-        let mut x_max = rect.max.x - RIGHT_PAD_R;
+        let mut x_max = rect.max.x - tree.right_pad_r;
         for _ in 0..slot_count {
-            let x_min = x_max - SLOT_W;
+            let x_min = x_max - tree.slot_w;
             slot_rects.push(egui::Rect::from_min_max(
                 egui::pos2(x_min, rect.min.y),
                 egui::pos2(x_max, rect.max.y),
             ));
-            x_max = x_min - SLOT_GAP;
+            x_max = x_min - tree.slot_gap;
         }
         slot_rects.reverse();
     }
 
-    let body_rect = egui::Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.max.x - gutter_w, rect.max.y),
-    );
+    let body_rect =
+        egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - gutter_w, rect.max.y));
     (rect, body_rect, chevron_rect, icon_rect, slot_rects)
 }
 
@@ -411,7 +421,7 @@ fn paint_slot_icon(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 glyph,
-                egui::FontId::proportional(12.0),
+                egui::FontId::proportional(style::theme().icons.tree_glyph_icon_size),
                 color,
             );
         }
@@ -428,15 +438,15 @@ fn paint_color_chip(
 ) {
     let inner = rect.shrink(3.0);
     let border = if hovered {
-        accent
+        egui::Stroke::new(style::theme().stroke.border_width, accent)
     } else {
-        style::widget_border(accent)
+        style::stroke_for(style::StrokeRole::WidgetBorder, accent)
     };
     ui.painter().rect(
         inner,
-        egui::CornerRadius::same(style::theme().radius_compact),
+        style::radius_for(style::RadiusRole::Compact),
         fill,
-        egui::Stroke::new(style::theme().border_width, border),
+        border,
         egui::epaint::StrokeKind::Inside,
     );
 }
@@ -495,7 +505,7 @@ fn paint_lock(ui: &egui::Ui, rect: egui::Rect, active: bool, color: egui::Color3
     );
     ui.painter().rect_filled(
         body_rect,
-        egui::CornerRadius::same(style::theme().radius_compact),
+        style::radius_for(style::RadiusRole::Compact),
         color,
     );
 
@@ -611,6 +621,8 @@ impl<'a> TreeBody<'a> {
         accent: egui::Color32,
         slots: &mut [TreeIconSlot<'_>],
     ) -> TreeRowResponse {
-        tree_row(self.ui, id_salt, depth, expanded, icon, label, selected, accent, slots)
+        tree_row(
+            self.ui, id_salt, depth, expanded, icon, label, selected, accent, slots,
+        )
     }
 }

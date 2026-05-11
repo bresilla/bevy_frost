@@ -6,7 +6,7 @@ use egui::{
 };
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::vendored::{InPinId, NodeId, OutPinId, Graph};
+use crate::vendored::{Graph, InPinId, NodeId, OutPinId};
 
 use super::{GraphWidget, transform_matching_points};
 
@@ -351,7 +351,9 @@ impl GraphState {
     /// `GraphWidget::show` runs makes the new translation take
     /// effect this frame.
     pub fn nudge_saved_translation(cx: &Context, id: Id, delta: egui::Vec2) {
-        let Some(mut data) = GraphStateData::load(cx, id) else { return };
+        let Some(mut data) = GraphStateData::load(cx, id) else {
+            return;
+        };
         data.to_global.translation += delta;
         data.save(cx, id);
     }
@@ -628,4 +630,3 @@ impl GraphWidget {
             .into_vec()
     }
 }
-

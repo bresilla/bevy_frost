@@ -17,12 +17,8 @@
 //! the picker's slider to the section's available width so it reads
 //! at a comfortable size.
 
-use crate::style::{theme, widget_border};
+use crate::style::{RadiusRole, StrokeRole, radius_for, stroke_for, theme};
 
-/// Swatch button width — matches the DragValue input width so the
-/// right column lines up between colour rows and numeric rows in the
-/// same section.
-const SWATCH_W: f32 = 72.0;
 /// Swatch button height — canonical 1U row.
 pub const COLOR_SWATCH_H: f32 = 20.0;
 
@@ -47,7 +43,7 @@ pub fn color_rgb(
     }
 
     if open {
-        ui.add_space(4.0);
+        ui.add_space(theme().widgets.color.picker_gap);
         let mut color32 = preview;
         let changed = picker_scope(ui, |ui| {
             egui::color_picker::color_picker_color32(
@@ -62,7 +58,7 @@ pub fn color_rgb(
             rgb[2] = color32.b() as f32 / 255.0;
             row_resp.mark_changed();
         }
-        ui.add_space(4.0);
+        ui.add_space(theme().widgets.color.picker_gap);
     }
     row_resp
 }
@@ -93,7 +89,7 @@ pub fn color_rgba(
     }
 
     if open {
-        ui.add_space(4.0);
+        ui.add_space(theme().widgets.color.picker_gap);
         let mut color32 = preview;
         let changed = picker_scope(ui, |ui| {
             egui::color_picker::color_picker_color32(
@@ -116,7 +112,7 @@ pub fn color_rgba(
             rgba[3] = a as f32 / 255.0;
             row_resp.mark_changed();
         }
-        ui.add_space(4.0);
+        ui.add_space(theme().widgets.color.picker_gap);
     }
     row_resp
 }
@@ -131,20 +127,21 @@ fn labelled_swatch(
     open: bool,
     accent: egui::Color32,
 ) -> egui::Response {
-    let row_h = COLOR_SWATCH_H;
+    let color_theme = theme().widgets.color;
+    let row_h = color_theme.row_h;
     let avail_w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(avail_w, row_h), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.text(
-        egui::pos2(rect.min.x + 4.0, rect.center().y),
+        egui::pos2(rect.min.x + color_theme.label_pad_l, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(color_theme.label_font),
         crate::style::on_section(),
     );
     let swatch_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.max.x - SWATCH_W, rect.min.y),
-        egui::vec2(SWATCH_W, row_h),
+        egui::pos2(rect.max.x - color_theme.swatch_w, rect.min.y),
+        egui::vec2(color_theme.swatch_w, row_h),
     );
     let resp = ui.interact(
         swatch_rect,
@@ -154,13 +151,13 @@ fn labelled_swatch(
     let border = if open || resp.hovered() {
         accent
     } else {
-        widget_border(accent)
+        stroke_for(StrokeRole::WidgetBorder, accent).color
     };
     egui::color_picker::show_color_at(&painter, color, swatch_rect.shrink(1.0));
     painter.rect_stroke(
         swatch_rect,
-        egui::CornerRadius::same(theme().radius_compact),
-        egui::Stroke::new(theme().border_width, border),
+        radius_for(RadiusRole::Compact),
+        egui::Stroke::new(theme().stroke.border_width, border),
         egui::epaint::StrokeKind::Inside,
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)

@@ -23,7 +23,7 @@
 
 use std::hash::Hash;
 
-use egui::{vec2, Color32, Id, Rect, Response, Sense, Ui};
+use egui::{Color32, Id, Rect, Response, Sense, Ui, vec2};
 
 use crate::container::SeparatorOrient;
 use crate::style;
@@ -84,9 +84,7 @@ pub fn paint_container_dots(
         SeparatorOrient::Horizontal => egui::CursorIcon::ResizeVertical,
         SeparatorOrient::Vertical => egui::CursorIcon::ResizeHorizontal,
     };
-    let resp = ui
-        .interact(rect, id, Sense::drag())
-        .on_hover_cursor(cursor);
+    let resp = ui.interact(rect, id, Sense::drag()).on_hover_cursor(cursor);
     if !ui.is_rect_visible(rect) {
         return resp;
     }

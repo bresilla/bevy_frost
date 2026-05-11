@@ -28,7 +28,6 @@ use egui;
 
 use crate::icons;
 use crate::style;
-use crate::style::widget_border;
 
 /// Width of the leading / trailing glyph columns.
 const GLYPH_W: f32 = 18.0;
@@ -60,19 +59,16 @@ pub fn text_input_h(
     height: f32,
 ) -> egui::Response {
     let w = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(w, height),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
 
     // Background + border — accent-tinted glass surface, same recipe
     // a dropdown trigger / DragValue input would use.
     if ui.is_rect_visible(rect) {
         ui.painter().rect(
             rect,
-            egui::CornerRadius::same(style::theme().radius_widget),
-            style::track_fill(accent),
-            egui::Stroke::new(style::theme().border_width, widget_border(accent)),
+            style::radius_for(style::RadiusRole::Widget),
+            style::fill_for(style::FillRole::Track, accent),
+            style::stroke_for(style::StrokeRole::WidgetBorder, accent),
             egui::StrokeKind::Inside,
         );
     }

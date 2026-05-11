@@ -25,15 +25,15 @@
 //!     .show(&mut state.graph, &mut state.viewer, ui);
 //! ```
 
-mod vendored;
 pub mod node_view;
+mod vendored;
 
 pub use vendored::{
+    Graph, InPin, InPinId, Node, NodeId, OutPin, OutPinId,
     ui::{
-        AnyPins, BackgroundPattern, Dots, Grid, Hex, NodeHalo, NodeLayout, PinInfo, PinPlacement,
-        PinShape, NodePin, GraphState, GraphStyle, NodeViewer, GraphWidget, WireColorMode,
+        AnyPins, BackgroundPattern, Dots, GraphState, GraphStyle, GraphWidget, Grid, Hex, NodeHalo,
+        NodeLayout, NodePin, NodeViewer, PinInfo, PinPlacement, PinShape, WireColorMode,
     },
-    InPin, InPinId, Node, NodeId, OutPin, OutPinId, Graph,
 };
 
 pub use node_view::{NodeViewBackend, NodeViewState, show, show_with_anchor};

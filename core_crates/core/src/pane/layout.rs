@@ -8,10 +8,10 @@
 //! resize — the new size is reflected on the same frame it's
 //! computed.
 
-use egui::{vec2, Align, Align2, Pos2, Rect, Vec2};
+use egui::{Align, Align2, Pos2, Rect, Vec2, vec2};
 
-use super::anchor::{PaneAnchor, RailZone};
 use super::RAIL_INSET;
+use super::anchor::{PaneAnchor, RailZone};
 
 /// Pick the `Align2` + offset for an anchor. Used by
 /// [`compute_pane_pos`] to translate to a top-left screen position
@@ -25,18 +25,18 @@ pub(crate) fn anchor_align(anchor: PaneAnchor) -> (Align2, Vec2) {
     // No per-anchor nudges; if the alignment looks off, the fix
     // belongs in `RAIL_INSET` or in the ribbon's button placement.
     match anchor {
-        PaneAnchor::LeftRail(RailZone::Start)   => (Align2::LEFT_TOP,      vec2( i,  i)),
-        PaneAnchor::LeftRail(RailZone::Middle)  => (Align2::LEFT_CENTER,   vec2( i,  0.0)),
-        PaneAnchor::LeftRail(RailZone::End)     => (Align2::LEFT_BOTTOM,   vec2( i, -i)),
-        PaneAnchor::RightRail(RailZone::Start)  => (Align2::RIGHT_TOP,     vec2(-i,  i)),
-        PaneAnchor::RightRail(RailZone::Middle) => (Align2::RIGHT_CENTER,  vec2(-i,  0.0)),
-        PaneAnchor::RightRail(RailZone::End)    => (Align2::RIGHT_BOTTOM,  vec2(-i, -i)),
-        PaneAnchor::TopRail(RailZone::Start)    => (Align2::LEFT_TOP,      vec2( i,  i)),
-        PaneAnchor::TopRail(RailZone::Middle)   => (Align2::CENTER_TOP,    vec2( 0.0, i)),
-        PaneAnchor::TopRail(RailZone::End)      => (Align2::RIGHT_TOP,     vec2(-i,  i)),
-        PaneAnchor::BottomRail(RailZone::Start) => (Align2::LEFT_BOTTOM,   vec2( i, -i)),
-        PaneAnchor::BottomRail(RailZone::Middle)=> (Align2::CENTER_BOTTOM, vec2( 0.0,-i)),
-        PaneAnchor::BottomRail(RailZone::End)   => (Align2::RIGHT_BOTTOM,  vec2(-i, -i)),
+        PaneAnchor::LeftRail(RailZone::Start) => (Align2::LEFT_TOP, vec2(i, i)),
+        PaneAnchor::LeftRail(RailZone::Middle) => (Align2::LEFT_CENTER, vec2(i, 0.0)),
+        PaneAnchor::LeftRail(RailZone::End) => (Align2::LEFT_BOTTOM, vec2(i, -i)),
+        PaneAnchor::RightRail(RailZone::Start) => (Align2::RIGHT_TOP, vec2(-i, i)),
+        PaneAnchor::RightRail(RailZone::Middle) => (Align2::RIGHT_CENTER, vec2(-i, 0.0)),
+        PaneAnchor::RightRail(RailZone::End) => (Align2::RIGHT_BOTTOM, vec2(-i, -i)),
+        PaneAnchor::TopRail(RailZone::Start) => (Align2::LEFT_TOP, vec2(i, i)),
+        PaneAnchor::TopRail(RailZone::Middle) => (Align2::CENTER_TOP, vec2(0.0, i)),
+        PaneAnchor::TopRail(RailZone::End) => (Align2::RIGHT_TOP, vec2(-i, i)),
+        PaneAnchor::BottomRail(RailZone::Start) => (Align2::LEFT_BOTTOM, vec2(i, -i)),
+        PaneAnchor::BottomRail(RailZone::Middle) => (Align2::CENTER_BOTTOM, vec2(0.0, -i)),
+        PaneAnchor::BottomRail(RailZone::End) => (Align2::RIGHT_BOTTOM, vec2(-i, -i)),
     }
 }
 
@@ -46,21 +46,16 @@ pub(crate) fn anchor_align(anchor: PaneAnchor) -> (Align2, Vec2) {
 /// from the animation `openness`, so the position has zero lag —
 /// unlike `egui::Area::anchor()` which uses last frame's
 /// `state.size`.
-pub(crate) fn compute_pane_pos(
-    align: Align2,
-    offset: Vec2,
-    screen: Rect,
-    size: Vec2,
-) -> Pos2 {
+pub(crate) fn compute_pane_pos(align: Align2, offset: Vec2, screen: Rect, size: Vec2) -> Pos2 {
     let x = match align.x() {
-        Align::Min    => screen.min.x + offset.x,
+        Align::Min => screen.min.x + offset.x,
         Align::Center => screen.center().x - size.x * 0.5 + offset.x,
-        Align::Max    => screen.max.x - size.x + offset.x,
+        Align::Max => screen.max.x - size.x + offset.x,
     };
     let y = match align.y() {
-        Align::Min    => screen.min.y + offset.y,
+        Align::Min => screen.min.y + offset.y,
         Align::Center => screen.center().y - size.y * 0.5 + offset.y,
-        Align::Max    => screen.max.y - size.y + offset.y,
+        Align::Max => screen.max.y - size.y + offset.y,
     };
     egui::pos2(x, y)
 }

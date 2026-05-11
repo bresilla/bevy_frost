@@ -17,7 +17,7 @@ pub mod tabbed;
 
 pub use body::Body;
 pub use normal::Normal;
-pub use separator::{paint_separator, paint_separator_resize, SeparatorOrient, SeparatorStyle};
+pub use separator::{SeparatorOrient, SeparatorStyle, paint_separator, paint_separator_resize};
 pub use tabbed::Tab;
 
 use egui::Id;
@@ -126,9 +126,7 @@ pub fn set_container_initial_flow(ctx: &egui::Context, cid: Id, value: f32) {
 ///    The user cannot drag below 12U.
 pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -> f32 {
     let (min_v, max_v) = container_flow_bounds(is_horizontal_strip);
-    if let Some(user) =
-        ctx.data_mut(|d| d.get_persisted::<f32>(container_flow_key(cid)))
-    {
+    if let Some(user) = ctx.data_mut(|d| d.get_persisted::<f32>(container_flow_key(cid))) {
         return user.clamp(min_v, max_v);
     }
     // Per-container override set via `Normal::initial_flow` —
@@ -164,12 +162,7 @@ pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -
 /// size — called from the inter-container drag handler. Clamped to
 /// the orientation-specific bounds before writing, so the user can't
 /// drag below 12U on horizontally-stacked containers.
-pub fn set_container_flow(
-    ctx: &egui::Context,
-    cid: Id,
-    value: f32,
-    is_horizontal_strip: bool,
-) {
+pub fn set_container_flow(ctx: &egui::Context, cid: Id, value: f32, is_horizontal_strip: bool) {
     let (min_v, max_v) = container_flow_bounds(is_horizontal_strip);
     let v = value.clamp(min_v, max_v);
     ctx.data_mut(|d| d.insert_persisted(container_flow_key(cid), v));

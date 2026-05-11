@@ -22,7 +22,7 @@
 
 use std::hash::Hash;
 
-use egui::{vec2, Color32, Rect, Response, Sense, Stroke, Ui};
+use egui::{Color32, Rect, Response, Sense, Stroke, Ui, vec2};
 
 use crate::style;
 
@@ -130,9 +130,7 @@ pub fn paint_separator_resize(
         SeparatorOrient::Horizontal => egui::CursorIcon::ResizeVertical,
         SeparatorOrient::Vertical => egui::CursorIcon::ResizeHorizontal,
     };
-    let resp = ui
-        .interact(rect, id, Sense::drag())
-        .on_hover_cursor(cursor);
+    let resp = ui.interact(rect, id, Sense::drag()).on_hover_cursor(cursor);
     if !ui.is_rect_visible(rect) {
         return resp;
     }
@@ -196,16 +194,10 @@ fn paint_horizontal(ui: &Ui, rect: Rect, style: SeparatorStyle, ink: Color32, st
                     .circle_filled(egui::pos2(mid_x + dx, mid_y), DOT_R, ink);
             }
             let half = DOT_SPACING + DOT_R + GRIP_HALF_GAP;
-            ui.painter().hline(
-                (rect.left() + EDGE_INSET)..=(mid_x - half),
-                mid_y,
-                stroke,
-            );
-            ui.painter().hline(
-                (mid_x + half)..=(rect.right() - EDGE_INSET),
-                mid_y,
-                stroke,
-            );
+            ui.painter()
+                .hline((rect.left() + EDGE_INSET)..=(mid_x - half), mid_y, stroke);
+            ui.painter()
+                .hline((mid_x + half)..=(rect.right() - EDGE_INSET), mid_y, stroke);
         }
     }
 }
@@ -228,16 +220,10 @@ fn paint_vertical(ui: &Ui, rect: Rect, style: SeparatorStyle, ink: Color32, stro
                     .circle_filled(egui::pos2(mid_x, mid_y + dy), DOT_R, ink);
             }
             let half = DOT_SPACING + DOT_R + GRIP_HALF_GAP;
-            ui.painter().vline(
-                mid_x,
-                (rect.top() + EDGE_INSET)..=(mid_y - half),
-                stroke,
-            );
-            ui.painter().vline(
-                mid_x,
-                (mid_y + half)..=(rect.bottom() - EDGE_INSET),
-                stroke,
-            );
+            ui.painter()
+                .vline(mid_x, (rect.top() + EDGE_INSET)..=(mid_y - half), stroke);
+            ui.painter()
+                .vline(mid_x, (mid_y + half)..=(rect.bottom() - EDGE_INSET), stroke);
         }
     }
 }

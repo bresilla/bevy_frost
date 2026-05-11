@@ -38,7 +38,9 @@ use std::hash::Hash;
 use egui;
 
 use crate::ribbon::{RibbonCluster, RibbonEdge};
-use crate::style::{glass_alpha_window, glass_fill};
+use crate::style::{
+    RadiusRole, StrokeRole, glass_alpha_window, glass_fill, radius_for, stroke_for,
+};
 
 /// Configuration for the fullscreen overlay's chrome — currently
 /// just where the minimize button sits, but expandable as more
@@ -71,7 +73,10 @@ impl OverlayOpts {
     /// Build with the minimize button anchored to the given edge +
     /// cluster on the fullscreen overlay.
     pub fn minimize_at(edge: RibbonEdge, cluster: RibbonCluster) -> Self {
-        Self { minimize_edge: edge, minimize_cluster: cluster }
+        Self {
+            minimize_edge: edge,
+            minimize_cluster: cluster,
+        }
     }
 }
 
@@ -156,8 +161,7 @@ pub fn maximizable_with_opts(
     // overlay.
     let global_key = egui::Id::new("frost_maximize_global");
     let pass_nr = ui.ctx().cumulative_pass_nr();
-    let stored_global: Option<(u64, egui::Id)> =
-        ui.ctx().data(|d| d.get_temp(global_key));
+    let stored_global: Option<(u64, egui::Id)> = ui.ctx().data(|d| d.get_temp(global_key));
     let some_other_maximized = match stored_global {
         Some((f, id)) => (f == pass_nr || f + 1 == pass_nr) && id != max_id,
         None => false,
@@ -167,19 +171,7 @@ pub fn maximizable_with_opts(
             .data_mut(|d| d.insert_temp(global_key, (pass_nr, max_id)));
     }
 
-    // Chip dimensions for the inline (non-maximized) maximize button.
-    // Inline mode no longer paints a floating chip — callers wire a
-    // header-action chip (`header_action_maximize`) into the
-    // hosting section's actions strip instead.
-    const CHIP: f32 = 24.0;
-    const CHIP_PAD: f32 = 4.0;
-    // Fullscreen overlay button: matches the regular ribbon button
-    // size (SIDE_BTN_SIZE = 34) and EDGE_GAP (8) so the floating
-    // chip lands EXACTLY where a real right-rail ribbon button
-    // would, with the same chip body. The visual reads as "this
-    // is just another ribbon button, on the right edge."
-    const FS_BTN_SIZE: f32 = 34.0;
-    const FS_EDGE_GAP: f32 = 8.0;
+    let overlay = crate::style::theme().overlay;
 
     if maximized {
         // Placeholder in the caller's layout so the surrounding
@@ -190,7 +182,7 @@ pub fn maximizable_with_opts(
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "(maximised)",
+                overlay.placeholder_text,
                 egui::FontId::proportional(12.0),
                 crate::style::on_section_dim(),
             );
@@ -216,7 +208,11 @@ pub fn maximizable_with_opts(
                 ui.set_min_size(screen.size());
                 ui.set_max_size(screen.size());
                 let frame = egui::Frame::new()
-                    .fill(glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window()))
+                    .fill(glass_fill(
+                        crate::style::theme().bg_panel,
+                        accent,
+                        glass_alpha_window(),
+                    ))
                     .corner_radius(egui::CornerRadius::ZERO)
                     .inner_margin(egui::Margin::ZERO);
                 frame.show(ui, |ui| {
@@ -233,8 +229,8 @@ pub fn maximizable_with_opts(
             &ctx,
             screen,
             opts,
-            FS_BTN_SIZE,
-            FS_EDGE_GAP,
+            overlay.fullscreen_button_size,
+            overlay.fullscreen_edge_gap,
             accent,
             id_salt,
         ) {
@@ -260,7 +256,10 @@ pub fn maximizable_with_opts(
         // its overlay covers the screen and our `Order::Tooltip` chip
         // would otherwise paint on top of nothing.
         if !some_other_maximized {
-            let chip_pos = egui::pos2(rect.max.x - CHIP - CHIP_PAD, rect.min.y + CHIP_PAD);
+            let chip_pos = egui::pos2(
+                rect.max.x - overlay.inline_chip_size - overlay.inline_chip_pad,
+                rect.min.y + overlay.inline_chip_pad,
+            );
             if max_button_overlay(ui.ctx(), chip_pos, false, accent, id_salt).clicked() {
                 toggle = true;
             }
@@ -272,7 +271,6 @@ pub fn maximizable_with_opts(
             .data_mut(|d| d.insert_temp::<bool>(max_id, !maximized));
     }
 }
-
 
 /// The 24 px maximise / restore chip. Lives in its own
 /// `Order::Tooltip` Area so it paints (and intercepts clicks)
@@ -286,14 +284,13 @@ fn max_button_overlay(
     accent: egui::Color32,
     id_salt: impl Hash + Copy,
 ) -> egui::Response {
-    const BTN: f32 = 24.0;
+    let btn = crate::style::theme().overlay.inline_chip_size;
     let area_id = egui::Id::new("frost_maximize_btn").with(id_salt);
     let inner = egui::Area::new(area_id)
         .order(egui::Order::Tooltip)
         .fixed_pos(pos)
         .show(ctx, |ui| {
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::vec2(BTN, BTN), egui::Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn, btn), egui::Sense::click());
             let resp = resp
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(if maximized { "Restore" } else { "Maximize" });
@@ -379,27 +376,17 @@ fn fullscreen_minimize_button(
     // Persisted user-chosen anchor (set on drag-release). When
     // empty, fall back to the caller-supplied `opts`.
     let anchor_key = egui::Id::new("frost_maximize_chip_anchor").with(id_salt);
-    let stored: Option<(RibbonEdge, RibbonCluster)> =
-        ctx.data(|d| d.get_temp(anchor_key));
-    let active_anchor =
-        stored.unwrap_or((opts.minimize_edge, opts.minimize_cluster));
+    let stored: Option<(RibbonEdge, RibbonCluster)> = ctx.data(|d| d.get_temp(anchor_key));
+    let active_anchor = stored.unwrap_or((opts.minimize_edge, opts.minimize_cluster));
     // While the user is mid-drag, override the chip position with
     // the cursor (so the chip follows the pointer) — keyed by the
     // SAME id so the value clears on release.
-    let drag_pos_key =
-        egui::Id::new("frost_maximize_chip_drag_pos").with(id_salt);
-    let drag_cursor: Option<egui::Pos2> =
-        ctx.data(|d| d.get_temp(drag_pos_key));
+    let drag_pos_key = egui::Id::new("frost_maximize_chip_drag_pos").with(id_salt);
+    let drag_cursor: Option<egui::Pos2> = ctx.data(|d| d.get_temp(drag_pos_key));
     let chip_pos = if let Some(c) = drag_cursor {
         egui::pos2(c.x - btn_size * 0.5, c.y - btn_size * 0.5)
     } else {
-        compute_chip_pos(
-            screen,
-            active_anchor.0,
-            active_anchor.1,
-            btn_size,
-            edge_gap,
-        )
+        compute_chip_pos(screen, active_anchor.0, active_anchor.1, btn_size, edge_gap)
     };
 
     let area_id = egui::Id::new("frost_maximize_minimize").with(id_salt);
@@ -428,11 +415,8 @@ fn fullscreen_minimize_button(
                     // Compute the live snap target so we can paint
                     // a ghost outline showing where the chip WILL
                     // land on release.
-                    let snap =
-                        nearest_anchor(screen, p, btn_size, edge_gap);
-                    let snap_pos = compute_chip_pos(
-                        screen, snap.0, snap.1, btn_size, edge_gap,
-                    );
+                    let snap = nearest_anchor(screen, p, btn_size, edge_gap);
+                    let snap_pos = compute_chip_pos(screen, snap.0, snap.1, btn_size, edge_gap);
                     ghost_target = Some(egui::Rect::from_min_size(
                         snap_pos,
                         egui::vec2(btn_size, btn_size),
@@ -444,8 +428,7 @@ fn fullscreen_minimize_button(
                     .ctx()
                     .pointer_interact_pos()
                     .unwrap_or_else(|| rect.center());
-                let snapped =
-                    nearest_anchor(screen, cursor, btn_size, edge_gap);
+                let snapped = nearest_anchor(screen, cursor, btn_size, edge_gap);
                 ui.ctx().data_mut(|d| {
                     d.insert_temp(anchor_key, snapped);
                     d.remove::<egui::Pos2>(drag_pos_key);
@@ -462,19 +445,14 @@ fn fullscreen_minimize_button(
                 let glyph_col = if resp.hovered() {
                     crate::style::contrast_text_for(accent)
                 } else {
-                    egui::Color32::from_rgba_unmultiplied(
-                        accent.r(),
-                        accent.g(),
-                        accent.b(),
-                        220,
-                    )
+                    egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220)
                 };
                 crate::icons::paint_icon(
                     &ui.painter(),
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "arrow-minimize",
-                    btn_size * 0.55,
+                    btn_size * crate::style::theme().icons.overlay_icon_scale,
                     glyph_col,
                 );
             }
@@ -487,30 +465,21 @@ fn fullscreen_minimize_button(
                     egui::Order::Tooltip,
                     egui::Id::new(("frost_maximize_chip_ghost", id_salt)),
                 );
-                let ghost_painter = egui::Painter::new(
-                    ui.ctx().clone(),
-                    ghost_layer,
-                    screen,
-                );
+                let ghost_painter = egui::Painter::new(ui.ctx().clone(), ghost_layer, screen);
+                let overlay = crate::style::theme().overlay;
                 let ghost_fill = egui::Color32::from_rgba_unmultiplied(
                     accent.r(),
                     accent.g(),
                     accent.b(),
-                    48,
+                    overlay.ghost_fill_alpha,
                 );
-                let ghost_stroke = egui::Color32::from_rgba_unmultiplied(
-                    accent.r(),
-                    accent.g(),
-                    accent.b(),
-                    180,
-                );
+                let ghost_stroke =
+                    egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180);
                 ghost_painter.rect(
                     g,
-                    egui::CornerRadius::same(
-                        crate::style::theme().radius_md,
-                    ),
+                    radius_for(RadiusRole::Section),
                     ghost_fill,
-                    egui::Stroke::new(1.5, ghost_stroke),
+                    egui::Stroke::new(overlay.ghost_stroke_width, ghost_stroke),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -531,25 +500,24 @@ fn nearest_anchor(
     edge_gap: f32,
 ) -> (RibbonEdge, RibbonCluster) {
     const CANDIDATES: &[(RibbonEdge, RibbonCluster)] = &[
-        (RibbonEdge::Top,    RibbonCluster::Start),
-        (RibbonEdge::Top,    RibbonCluster::Middle),
-        (RibbonEdge::Top,    RibbonCluster::End),
+        (RibbonEdge::Top, RibbonCluster::Start),
+        (RibbonEdge::Top, RibbonCluster::Middle),
+        (RibbonEdge::Top, RibbonCluster::End),
         (RibbonEdge::Bottom, RibbonCluster::Start),
         (RibbonEdge::Bottom, RibbonCluster::Middle),
         (RibbonEdge::Bottom, RibbonCluster::End),
-        (RibbonEdge::Left,   RibbonCluster::Start),
-        (RibbonEdge::Left,   RibbonCluster::Middle),
-        (RibbonEdge::Left,   RibbonCluster::End),
-        (RibbonEdge::Right,  RibbonCluster::Start),
-        (RibbonEdge::Right,  RibbonCluster::Middle),
-        (RibbonEdge::Right,  RibbonCluster::End),
+        (RibbonEdge::Left, RibbonCluster::Start),
+        (RibbonEdge::Left, RibbonCluster::Middle),
+        (RibbonEdge::Left, RibbonCluster::End),
+        (RibbonEdge::Right, RibbonCluster::Start),
+        (RibbonEdge::Right, RibbonCluster::Middle),
+        (RibbonEdge::Right, RibbonCluster::End),
     ];
     let mut best = CANDIDATES[0];
     let mut best_d = f32::INFINITY;
     for &(e, c) in CANDIDATES {
         let p = compute_chip_pos(screen, e, c, btn_size, edge_gap);
-        let centre =
-            egui::pos2(p.x + btn_size * 0.5, p.y + btn_size * 0.5);
+        let centre = egui::pos2(p.x + btn_size * 0.5, p.y + btn_size * 0.5);
         let d = (centre - cursor).length();
         if d < best_d {
             best_d = d;
@@ -579,16 +547,24 @@ fn paint_ribbon_style_chip(
         );
         glass_fill(tinted, accent, glass_alpha_window())
     } else if hovered {
-        glass_fill(crate::style::theme().bg_raised, accent, glass_alpha_window())
+        glass_fill(
+            crate::style::theme().bg_raised,
+            accent,
+            glass_alpha_window(),
+        )
     } else {
         glass_fill(crate::style::theme().bg_panel, accent, glass_alpha_window())
     };
-    let stroke = if active { accent } else { crate::style::widget_border(accent) };
+    let stroke = if active {
+        egui::Stroke::new(crate::style::theme().stroke.border_width, accent)
+    } else {
+        stroke_for(StrokeRole::WidgetBorder, accent)
+    };
     painter.rect(
         rect,
-        egui::CornerRadius::same(crate::style::theme().radius_md),
+        radius_for(RadiusRole::Section),
         bg,
-        egui::Stroke::new(crate::style::theme().border_width, stroke),
+        stroke,
         egui::StrokeKind::Inside,
     );
 }
@@ -610,21 +586,19 @@ fn paint_fullscreen_arrows(
     } else {
         egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220)
     };
-    let stroke_w = 1.4;
-    let shrunk = rect.shrink(5.0);
+    let icons = crate::style::theme().icons;
+    let stroke_w = icons.overlay_arrow_stroke_w;
+    let shrunk = rect.shrink(icons.overlay_arrow_shrink);
     let center = rect.center();
     let ne_corner = egui::pos2(shrunk.max.x, shrunk.min.y);
     let sw_corner = egui::pos2(shrunk.min.x, shrunk.max.y);
     let lerp = |a: egui::Pos2, b: egui::Pos2, t: f32| -> egui::Pos2 {
         egui::pos2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
     };
-    let t = 0.65;
+    let t = icons.overlay_arrow_tip_t;
     let ne_tip = lerp(center, ne_corner, t);
     let sw_tip = lerp(center, sw_corner, t);
-    painter.line_segment(
-        [sw_tip, ne_tip],
-        egui::Stroke::new(stroke_w, color),
-    );
+    painter.line_segment([sw_tip, ne_tip], egui::Stroke::new(stroke_w, color));
     let (from_ne, from_sw) = if inward {
         (ne_corner, sw_corner)
     } else {
@@ -644,8 +618,9 @@ fn paint_arrowhead(
     let len = dir.length().max(1e-3);
     let dir = dir / len;
     let perp = egui::vec2(-dir.y, dir.x);
-    let head_len = 4.0;
-    let head_half_w = 2.6;
+    let icons = crate::style::theme().icons;
+    let head_len = icons.overlay_arrow_head_len;
+    let head_half_w = icons.overlay_arrow_head_half_w;
     let back = tip - dir * head_len;
     let p1 = back + perp * head_half_w;
     let p2 = back - perp * head_half_w;
