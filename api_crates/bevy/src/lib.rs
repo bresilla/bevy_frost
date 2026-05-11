@@ -204,7 +204,15 @@ fn consume_egui_input_system(
     // an interactive widget is masked the same frame, not one frame
     // late.
     let egui_owns_pointer = ctx.is_using_pointer() || ctx.wants_pointer_input();
-    let ui_owns_pointer = cursor_over_pane || egui_owns_pointer;
+    // When ANY frost widget is in its fullscreen overlay (graph or
+    // code editor maximised), the entire screen IS the UI — so the
+    // Bevy 3D layer below must never see pointer events, no matter
+    // where the cursor sits or whether the parent ctx has claimed
+    // it (the graph drives input through a SECONDARY egui context,
+    // so the parent's `is_using_pointer` stays false while the user
+    // pans the graph).
+    let fs_active = frost_core::embed::is_any_fullscreen(ctx);
+    let ui_owns_pointer = cursor_over_pane || egui_owns_pointer || fs_active;
 
     // Track which mouse buttons were pressed while the cursor was
     // over a pane. Released → drop from the set. The whole point

@@ -51,5 +51,5 @@ pub use slider::{slider, slider_h};
 pub use text_input::{text_input, text_input_h};
 pub use toggle::{toggle, toggle_h, toggle_track_only};
 pub use tree::{
-    tree_row, TreeIconKind, TreeIconSlot, TreeRowResponse, TREE_INDENT, TREE_ROW_H,
+    tree_row, TreeBody, TreeIconKind, TreeIconSlot, TreeRowResponse, TREE_INDENT, TREE_ROW_H,
 };

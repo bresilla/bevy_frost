@@ -196,21 +196,21 @@ pub fn maximizable_with_opts(
             );
         }
 
-        // Full-window overlay at `Order::Background` — the same
-        // layer `Pane2` uses. Painting at Background (instead of
-        // Foreground) lets host apps paint their own
-        // `Order::Middle` ribbons / tooltips ON TOP of the overlay
-        // when the widget is fullscreen, so the host can compose a
-        // "new canvas" look around the maximised body using the
-        // standard frost UI primitives (`ribbon::draw_assembly`,
-        // floating panes, etc.) — the consumer just branches on
-        // `is_any_fullscreen(ctx)` and paints whichever rail set
-        // belongs to the fullscreen mode. Frame has NO corner
-        // radius / stroke / inner margin so it covers edge-to-edge.
+        // Full-window overlay at `Order::Foreground` — paints
+        // ABOVE `Order::Middle`, which is where the GAME-theme
+        // floating section icons (`z::CONTAINER_FLOATING_ICON`)
+        // sit. Without this layering the big icons would bleed
+        // through onto the maximised node-graph / code-editor
+        // canvas. For the host's own fullscreen ribbons /
+        // tooltips to remain visible on top, the host must paint
+        // them AFTER the pane loop returns (egui paints
+        // later-registered Areas at the same Order on top of
+        // earlier ones). Frame has NO corner radius / stroke /
+        // inner margin so the overlay covers edge-to-edge.
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
         egui::Area::new(ui.id().with(("frost_maximize_overlay", id_salt)))
-            .order(egui::Order::Background)
+            .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(&ctx, |ui| {
                 ui.set_min_size(screen.size());

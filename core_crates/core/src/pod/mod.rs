@@ -1122,7 +1122,7 @@ impl Pod {
     /// The unit hint defaults to `1`; call [`Pod::with_custom_units`]
     /// when the closure paints more than one 1U row's worth so the
     /// inter-pod drag-resize math remains proportional.
-    pub fn with_custom(
+    pub(crate) fn with_custom(
         mut self,
         paint: impl FnOnce(&mut Ui) + Send + Sync + 'static,
     ) -> Self {
@@ -1133,11 +1133,29 @@ impl Pod {
         self
     }
 
+    /// Typed pod constructor for hosting a recursive tree built
+    /// from frost [`tree_row`](crate::widget::tree_row)s. The
+    /// closure receives a [`TreeBody`](crate::widget::TreeBody)
+    /// wrapper that exposes only `row(...)` (forwarding to
+    /// `tree_row`) and ctx-data access — no raw [`egui::Ui`]
+    /// leaks. `units` is the inter-pod resize hint (same shape
+    /// as `with_custom_units`).
+    #[must_use]
+    pub fn with_tree<F>(self, units: usize, body: F) -> Self
+    where
+        F: FnOnce(&mut crate::widget::TreeBody) + Send + Sync + 'static,
+    {
+        self.with_custom_units(units, move |ui| {
+            let mut tb = crate::widget::TreeBody::new(ui);
+            body(&mut tb);
+        })
+    }
+
     /// Like [`Pod::with_custom`] but with an explicit "this slot
     /// occupies N units of 1U row height" hint, used by the
     /// inter-pod resize-handle to share drag delta across pods
     /// proportionally to their content size.
-    pub fn with_custom_units(
+    pub(crate) fn with_custom_units(
         mut self,
         units: usize,
         paint: impl FnOnce(&mut Ui) + Send + Sync + 'static,

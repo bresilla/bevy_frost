@@ -157,3 +157,46 @@ fn frost_code_theme(accent: egui::Color32) -> ColorTheme {
         special: accent,
     }
 }
+
+// ─── Typed Pod constructor ──────────────────────────────────────────
+//
+// Adds `Pod::with_code_editor(text_id, syntax, default_text)` so
+// pane bodies can host a code editor through the canonical pod path
+// instead of reaching into `Pod::with_custom_units` (which is the
+// raw-egui escape hatch). The text buffer is stashed in egui ctx
+// data under `text_id`; the editor reads / writes it each frame.
+
+impl crate::pod::Pod {
+    /// Append a frost-themed code editor to this pod. The editor's
+    /// text lives in egui ctx data under `text_id` — pre-seed it
+    /// (`ctx.data_mut(|d| d.insert_temp(text_id, "default".to_string()))`)
+    /// or rely on `default_text` to seed on first render.
+    ///
+    /// Uses `frost_core::style::active_accent()` for the inline
+    /// theme. The maximise / restore chip in the editor's top-left
+    /// corner toggles fullscreen via `frost_core::embed`.
+    ///
+    /// Reserves 10 row-height units of pod space.
+    #[must_use]
+    pub fn with_code_editor(
+        self,
+        text_id: egui::Id,
+        syntax: Syntax,
+        default_text: impl Into<String>,
+    ) -> Self {
+        let default = default_text.into();
+        self.with_custom_units(10, move |ui| {
+            let mut text: String = ui
+                .ctx()
+                .data(|d| d.get_temp::<String>(text_id))
+                .unwrap_or_else(|| default.clone());
+            let avail = ui.available_size_before_wrap();
+            let accent = crate::style::active_accent();
+            frost_code_editor_with_opts(
+                ui, text_id, &mut text, syntax.clone(), accent, avail,
+                OverlayOpts::default(),
+            );
+            ui.ctx().data_mut(|d| d.insert_temp(text_id, text));
+        })
+    }
+}

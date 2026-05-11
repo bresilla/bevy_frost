@@ -752,7 +752,7 @@ impl Normal {
     /// regular call sites should still go through
     /// [`Normal::show`] with [`crate::pod::Pod`] entries so the
     /// pod separator / fill / resize plumbing stays wired.
-    pub fn show_raw(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+    pub(crate) fn show_raw(self, ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
         let pane_id = self.pane_id;
         ui.push_id(pane_id, |ui| self.show_with_body(ui, body));
     }

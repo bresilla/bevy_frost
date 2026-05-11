@@ -31,7 +31,6 @@ pub mod container;
 pub mod debug;
 pub mod embed;
 pub mod extras;
-pub mod floating;
 pub mod icons;
 pub mod layer;
 pub mod pane;
@@ -57,7 +56,6 @@ pub use style::{BODY_FONT_SIZE, UNIT};
 // compile against frost_core without breakage.
 
 pub use command_palette::{command_palette, CommandPaletteState, PaletteItem};
-pub use floating::{floating_window_for_item, PaneBuilder};
 pub use ribbon::{
     draw_assembly, find_item, find_ribbon, RibbonClick, RibbonCluster, RibbonDef, RibbonDrag,
     RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole,

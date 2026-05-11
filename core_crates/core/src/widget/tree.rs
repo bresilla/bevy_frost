@@ -558,3 +558,59 @@ fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
         mix(a.a(), b.a()),
     )
 }
+
+// ─── Typed Pod tree builder ─────────────────────────────────────────
+//
+// `TreeBody` is the typed wrapper passed to `Pod::with_tree`'s
+// closure. It exposes ONE method, `row`, that forwards to
+// [`tree_row`] — so a tree body can only compose other tree-rows
+// (no raw egui access).
+
+/// Typed wrapper around a pod's body Ui — only exposes
+/// [`TreeBody::row`] (which forwards to [`tree_row`]) and read-only
+/// access to the egui [`Context`] (for persisted-state lookups).
+/// Used by `Pod::with_tree` to host a recursive tree without
+/// leaking raw [`egui::Ui`] to the caller.
+pub struct TreeBody<'a> {
+    ui: &'a mut egui::Ui,
+}
+
+impl<'a> TreeBody<'a> {
+    #[doc(hidden)]
+    pub fn new(ui: &'a mut egui::Ui) -> Self {
+        Self { ui }
+    }
+
+    /// Read-only egui context, for persisted-state lookups
+    /// (`ctx().data(...)`).
+    #[must_use]
+    pub fn ctx(&self) -> &egui::Context {
+        self.ui.ctx()
+    }
+
+    /// Mutable egui context, for persisted-state writes
+    /// (`ctx_mut().data_mut(...)`).
+    #[must_use]
+    pub fn ctx_mut(&mut self) -> &egui::Context {
+        // egui's `data_mut` only needs `&Context` even though it
+        // mutates internal state, so this returns `&Context` not
+        // `&mut Context`. The name `ctx_mut` signals intent.
+        self.ui.ctx()
+    }
+
+    /// Paint a single tree row. Mirrors [`tree_row`] verbatim.
+    #[allow(clippy::too_many_arguments)]
+    pub fn row<H: core::hash::Hash + Copy>(
+        &mut self,
+        id_salt: H,
+        depth: u32,
+        expanded: Option<&mut bool>,
+        icon: Option<&str>,
+        label: &str,
+        selected: bool,
+        accent: egui::Color32,
+        slots: &mut [TreeIconSlot<'_>],
+    ) -> TreeRowResponse {
+        tree_row(self.ui, id_salt, depth, expanded, icon, label, selected, accent, slots)
+    }
+}

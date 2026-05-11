@@ -16,11 +16,13 @@
 //! * `mod.rs` (this file) — `Pane2` builder + render entry point.
 
 mod anchor;
+mod body;
 mod dots;
 mod drag;
 mod layout;
 mod title;
 
+pub use body::{ContainerSpec, PaneBody};
 pub use dots::paint_container_dots;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
@@ -462,7 +464,7 @@ impl Pane2 {
     /// horizontal title bar grows down with stacked containers; a
     /// vertical title strip grows right). The span axis (the one
     /// the title spans) is fixed per anchor.
-    pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui)) {
+    pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut PaneBody)) {
         let (align, offset) = layout::anchor_align(self.anchor);
         let area_id = self.id.with("pane2_area");
 
@@ -1043,7 +1045,7 @@ impl Pane2 {
     /// pane is exactly tall/wide enough to fit the title strip plus
     /// whatever the body closure allocates. Empty body → pane is
     /// just the strip.
-    fn lay_out_flex(self, ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    fn lay_out_flex(self, ui: &mut egui::Ui, body: impl FnOnce(&mut PaneBody)) {
         let Pane2 {
             id,
             title,
@@ -1150,7 +1152,13 @@ impl Pane2 {
             );
         }
 
-        body(ui);
+        // Wrap the body Ui in the typed `PaneBody` builder — the
+        // user closure only sees the typed API, never the raw Ui.
+        // After the closure returns, `PaneBody::finish` dispatches
+        // the accumulated container specs through `render_containers`.
+        let mut pane_body = PaneBody::new(ui, id, anchor, accent);
+        body(&mut pane_body);
+        let _ = pane_body.finish();
 
         // Stack axis: matches `body` layout direction — BottomRail /
         // TopRail panes stack vertically (Y), LeftRail / RightRail

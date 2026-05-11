@@ -894,11 +894,18 @@ pub fn draw_assembly(
                 egui::Order::Tooltip,
             )
         } else {
-            (resting_rect.min, egui::Order::Middle)
+            // `Order::Foreground` (was `Middle`): ribbon buttons
+            // sit above the GAME-theme floating section icons
+            // (`z::CONTAINER_FLOATING_ICON`, Middle) AND above the
+            // `embed` fullscreen overlay (`Order::Foreground` too,
+            // but the host paints the ribbon assembly AFTER the
+            // pane loop, so registration order lands ribbons on
+            // top within the same Foreground tier).
+            (resting_rect.min, egui::Order::Foreground)
         };
 
         let area_id = egui::Id::new(("frost_assembly_btn", item.id));
-        let resp = egui::Area::new(area_id)
+        let area_response = egui::Area::new(area_id)
             .order(order)
             .fixed_pos(paint_pos)
             .interactable(true)
@@ -927,8 +934,16 @@ pub fn draw_assembly(
                 );
                 paint_ribbon_glyph(ui, rect, item.glyph, fg);
                 r.on_hover_text(item.tooltip)
-            })
-            .inner;
+            });
+        // Force the ribbon button's layer to the top of its Order
+        // every frame. Without this, clicking inside the `embed`
+        // fullscreen overlay (same `Order::Foreground`) brings the
+        // overlay to the top of the order, hiding ribbon icons
+        // until the next paint that re-orders them. Calling
+        // `move_to_top` on every ribbon Area keeps them on top
+        // even after the overlay claims focus.
+        ctx.move_to_top(area_response.response.layer_id);
+        let resp = area_response.inner;
 
         if def.draggable && resp.drag_started() {
             drag_started_idx = Some(idx);
@@ -975,7 +990,7 @@ pub fn draw_assembly(
             let rect = screen_rect(ctx, p);
             let area_id = egui::Id::new("frost_assembly_drop_outline");
             egui::Area::new(area_id)
-                .order(egui::Order::Middle)
+                .order(egui::Order::Foreground)
                 .fixed_pos(rect.min)
                 .interactable(false)
                 .show(ctx, |ui| {

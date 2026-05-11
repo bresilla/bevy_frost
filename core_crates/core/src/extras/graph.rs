@@ -458,3 +458,52 @@ pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
         },
     );
 }
+
+
+// ─── Typed PaneBody constructor ─────────────────────────────────────
+//
+// Adds `PaneBody::add_node_graph(...)` so pane bodies can host a
+// node graph as a first-class container without reaching into
+// `ContainerSpec::raw_internal` directly. The graph closure needs
+// to borrow `&mut NodeViewState` / `&mut Graph` / `&mut Viewer` /
+// `&mut dyn NodeViewBackend` (all non-`'static`), which is why this
+// goes through the crate-internal `raw_internal` escape — but the
+// closure is fully owned by frost_core, so external callers cannot
+// smuggle arbitrary egui code through it.
+
+impl<'ui, 'spec> crate::pane::PaneBody<'ui, 'spec> {
+    /// Append a frost-themed node-graph container to the pane.
+    /// The graph borrows `state` / `graph` / `viewer` / `backend`
+    /// for the duration of THIS call (they don't have to outlive
+    /// the pane closure).
+    ///
+    /// **Reorder trade-off:** the graph paints inline at this
+    /// point in the pane body closure, *not* through the
+    /// deferred-pending pipeline that drives drag-reorder for
+    /// `add_normal` / `add_tabbed`. The graph's position relative
+    /// to other containers in the pane is therefore fixed by
+    /// declaration order — drag-reorder works between any
+    /// `add_normal`/`add_tabbed` containers, but not against the
+    /// graph. This is the only way to support the non-`'static`
+    /// borrows the graph needs.
+    pub fn add_node_graph<T, V>(
+        &mut self,
+        id: impl Into<egui::Id>,
+        title: impl Into<String>,
+        icon: &'static str,
+        state: &mut NodeViewState,
+        graph: &mut Graph<T>,
+        viewer: &mut V,
+        backend: &mut dyn NodeViewBackend,
+    ) -> &mut Self
+    where
+        V: NodeViewer<T>,
+    {
+        self.paint_inline_raw(id, title, icon, move |inner_ui| {
+            let avail = inner_ui.available_size_before_wrap();
+            let accent = crate::style::active_accent();
+            frost_node_graph(inner_ui, state, backend, graph, viewer, accent, avail);
+        });
+        self
+    }
+}
