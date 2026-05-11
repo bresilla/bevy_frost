@@ -1,0 +1,27 @@
+[package]
+name = "frost_graph"
+description = "Standalone egui node-graph crate. Vendored fork of `egui-snarl` (zero external snarl dep). Theme-neutral — call sites pick a `SnarlStyle` (default builder ships sensible egui defaults; frost-tinted styling lives in `frostui` under the optional `graph` feature)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+egui = { workspace = true, default-features = false }
+# Used by `node_view` to render the graph into a secondary egui
+# context backed by a wgpu texture, so the graph stays sharp at
+# any zoom level.
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
+egui-scale = "0.3"
+slab = "0.4"
+smallvec = { version = "1.15", features = ["const_new"] }
+
+[features]
+# Silent markers for the upstream `egui-snarl` cfg gates that
+# survived vendoring. The crate compiles its public surface
+# unconditionally; these stay as opt-in no-ops for the
+# `#[cfg(feature = "serde")]` / `#[cfg(feature = "egui-probe")]`
+# annotations on node + style types.
+serde = []
+egui-probe = []

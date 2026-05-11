@@ -1,0 +1,19 @@
+[package]
+name = "frost_code"
+description = "Standalone egui code-editor crate. Vendored fork of `egui_code_editor` (zero external editor dep). Theme-neutral — call sites pick a `ColorTheme` (default builder ships sensible egui defaults; frost-tinted styling lives in `frostui` under the optional `code` feature)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+egui = { workspace = true, default-features = false }
+
+[features]
+# Silent markers for the upstream `egui_code_editor` cfg gates that
+# survived vendoring. The crate now compiles its egui/editor code
+# unconditionally; these features stay as no-op opt-ins for the
+# residual `#[cfg(feature = "serde")]` / `#[cfg(feature = "egui-probe")]`
+# annotations on theme + token types.
+serde = []
+egui-probe = []

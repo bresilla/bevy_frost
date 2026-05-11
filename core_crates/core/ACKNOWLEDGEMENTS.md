@@ -1,0 +1,23 @@
+# `frost_core` — third-party acknowledgements
+
+The UI core crate ships bundled font assets in addition to its
+own code; this file lists what's embedded and where it came from.
+The standalone host widgets the kit ships with — `frost_graph`
+(node graph) and `frost_code` (code editor) — live in their own
+crates with their own acknowledgements; see
+[`../graph/ACKNOWLEDGEMENTS.md`](../graph/ACKNOWLEDGEMENTS.md) and
+[`../code/ACKNOWLEDGEMENTS.md`](../code/ACKNOWLEDGEMENTS.md).
+
+## Bundled font assets (`src/fonts/`)
+
+### Iosevka (9 weights)
+
+- **Files:** `iosevka-thin.ttf`, `iosevka-extralight.ttf`,
+  `iosevka-light.ttf`, `iosevka-regular.ttf`, `iosevka-medium.ttf`,
+  `iosevka-semibold.ttf`, `iosevka-bold.ttf`, `iosevka-extrabold.ttf`,
+  `iosevka-heavy.ttf`.
+- **Upstream:** <https://github.com/be5invis/Iosevka>
+- **Author:** Belleve Invis
+  ([@be5invis](https://github.com/be5invis))
+- **License:** SIL Open Font License 1.1.
+- **Loaded by:** `style.rs::install_fonts` via `include_bytes!`.

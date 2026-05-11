@@ -1,9 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/bevy_frost",
-    "crates/core",
-    "crates/egui_frost",
+    "api_crates/bevy",
+    "api_crates/egui",
+    "core_crates/code",
+    "core_crates/core",
+    "core_crates/graph",
 ]
 
 
@@ -32,10 +34,23 @@ wgpu = { version = "27", default-features = false }
 bevy = { version = "0.18", default-features = false }
 bevy_egui = { version = "0.39", default-features = false }
 
-# Internal crates — directory is `crates/core/`; package id is
-# `corekit` (avoids shadowing Rust's std `core`). Hosts the entire
-# UI core: panes, ribbons, containers, pods, widgets, theme.
-corekit = { path = "crates/core", version = "0.0.1" }
+# Internal crates.
+#
+# Layout:
+#   core_crates/  ← standalone library crates (UI, node graph, code editor)
+#   api_crates/   ← host-specific facades that wire the core crates
+#                    into Bevy / plain-egui apps
+#
+# `frost_core` — UI core (panes, ribbons, containers, pods, widgets,
+# theme, embed mechanism). Package id is `frost_core`, which avoids
+# shadowing Rust's std `core` in derive expansions.
+frost_core = { path = "core_crates/core", version = "0.0.1" }
+# `frost_graph` — standalone vendored egui-snarl. Usable in any
+# egui app; ships sensible defaults, no frost-theming dep.
+frost_graph = { path = "core_crates/graph", version = "0.0.1" }
+# `frost_code` — standalone vendored egui_code_editor. Usable in
+# any egui app; ships sensible defaults, no frost-theming dep.
+frost_code = { path = "core_crates/code", version = "0.0.1" }
 
 # `mimalloc` — drop-in global allocator. egui's tessellator + shape
 # `Vec`s thrash the system allocator under heavy heap pressure;

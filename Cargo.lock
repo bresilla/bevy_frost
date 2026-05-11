@@ -708,9 +708,9 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_glacial",
- "corekit",
  "egui",
  "egui_plot",
+ "frost_core",
  "mimalloc",
  "wgpu",
 ]
@@ -1815,21 +1815,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "corekit"
-version = "0.0.1"
-dependencies = [
- "bevy",
- "egui",
- "egui-scale",
- "egui-wgpu",
- "iconflow",
- "pastel",
- "slab",
- "smallvec",
- "wgpu",
-]
-
-[[package]]
 name = "cosmic-text"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2184,10 +2169,10 @@ dependencies = [
 name = "egui_frost"
 version = "0.0.1"
 dependencies = [
- "corekit",
  "eframe",
  "egui",
  "egui-wgpu",
+ "frost_core",
  "wgpu",
 ]
 
@@ -2563,6 +2548,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "frost_code"
+version = "0.0.1"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "frost_core"
+version = "0.0.1"
+dependencies = [
+ "bevy",
+ "egui",
+ "frost_code",
+ "frost_graph",
+ "iconflow",
+ "pastel",
+]
+
+[[package]]
+name = "frost_graph"
+version = "0.0.1"
+dependencies = [
+ "egui",
+ "egui-scale",
+ "egui-wgpu",
+ "slab",
+ "smallvec",
+ "wgpu",
 ]
 
 [[package]]
