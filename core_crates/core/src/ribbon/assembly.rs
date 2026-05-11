@@ -693,7 +693,7 @@ pub fn draw_assembly(
     // a top-rail pane on a screen with no bottom ribbon can extend
     // all the way to the bottom edge instead of reserving
     // `RAIL_INSET` for a phantom ribbon. See
-    // `corekit::pane::published_ribbon_edges`.
+    // `frost_core::pane::published_ribbon_edges`.
     let presence = [
         ribbons.iter().any(|r| r.edge == RibbonEdge::Left),
         ribbons.iter().any(|r| r.edge == RibbonEdge::Right),
@@ -1153,7 +1153,7 @@ pub fn cluster_width_scope(ribbon: &'static str, cluster: RibbonCluster) -> egui
 
 // `floating_window_for_item` lived here in `frostcore::ribbon::assembly`,
 // dispatching into `frostcore::floating`'s old pane builder. In
-// `corekit` the new pane (`crate::pane::Pane2`) replaces that path;
+// `frost_core` the new pane (`crate::pane::Pane2`) replaces that path;
 // callers open panes directly with `Pane2::new(...).show(ctx, body)`
 // guarded by `RibbonOpen::is_open`. The helper isn't ported.
 

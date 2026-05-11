@@ -275,7 +275,7 @@ impl NodeViewState {
     }
 }
 
-/// Host-supplied hooks the corekit-side widget calls to talk to
+/// Host-supplied hooks the frost_core-side widget calls to talk to
 /// the wgpu side. One implementation per host crate
 /// (`bevy_frost::extras::BevyNodeViewBackend`,
 /// `egui_frost::extras::EframeNodeViewBackend`).
@@ -313,11 +313,11 @@ pub trait NodeViewBackend {
     fn unregister_native(&mut self, id: egui::TextureId);
 
     /// Hook called AFTER each frame's `egui-wgpu` render pass
-    /// finishes writing into the corekit-allocated wgpu texture.
+    /// finishes writing into the frost_core-allocated wgpu texture.
     /// Default impl is a no-op (eframe doesn't need it — the
     /// render pass writes into the same texture egui samples
     /// directly). Bevy overrides this to queue a copy from the
-    /// corekit-owned source texture into a Bevy `Image` asset's
+    /// frost_core-owned source texture into a Bevy `Image` asset's
     /// GpuImage in render world (= what `bevy_egui` actually
     /// samples on the parent UI side).
     fn after_render(

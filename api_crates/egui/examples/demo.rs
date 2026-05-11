@@ -2,7 +2,7 @@
 //! `bevy_frost`'s `demo` example pane-for-pane — the only
 //! difference is the host: `eframe` instead of Bevy. Every pane,
 //! container, pod, and widget code path runs verbatim from the
-//! corekit side.
+//! frost_core side.
 //!
 //! Panes:
 //!
@@ -28,7 +28,7 @@ use frost_core::ribbon::{
 };
 use frost_core::style::{srgb_to_egui, AccentColor, GlassOpacity, Mode};
 use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
-// Vendored extras — node graph + code editor. Both live in corekit
+// Vendored extras — node graph + code editor. Both live in frost_core
 // so egui_frost can reach them without any Bevy dep.
 use frost_core::extras::code::{frost_code_editor, Syntax};
 use frost_core::extras::graph::{

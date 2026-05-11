@@ -1,6 +1,6 @@
 [package]
 name = "bevy_frost"
-description = "Bevy integration for the frost glass-themed editor UI kit. Wraps `corekit` with `Resource`s, a `Plugin` that installs the theme, and the transform-gizmo always-on-top material."
+description = "Bevy integration for the frost glass-themed editor UI kit. Wraps `frost_core` with `Resource`s, a `Plugin` that installs the theme, and the transform-gizmo always-on-top material."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
-# `corekit` is the entire UI core — pane / ribbon / container / pod
-# systems, widgets, theme runtime, vendored fonts. `bevy_frost` is
-# now just the Bevy-specific glue (resource registration, input
+# `frost_core` is the entire UI core — pane / ribbon / container /
+# pod systems, widgets, theme runtime, vendored fonts. `bevy_frost`
+# is now just the Bevy-specific glue (resource registration, input
 # firewall, gizmo material) plus the vendored extras (node graph +
 # code editor) under `bevy_frost::extras::*`.
 frost_core = { workspace = true, features = ["bevy"] }

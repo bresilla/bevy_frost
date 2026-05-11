@@ -1,5 +1,5 @@
 //! `bevy_frost` widget gallery + layout showcase, reimplemented on
-//! top of `corekit` (the new pane / ribbon / container / pod /
+//! top of `frost_core` (the new pane / ribbon / container / pod /
 //! widget stack). Mirrors the layout of the legacy frostcore demo
 //! one panel at a time:
 //!
@@ -1535,6 +1535,8 @@ impl PinType {
 /// evaluator coerces on read so e.g. plugging a `Vector` into a
 /// scalar slot yields `length(v)` rather than an error.
 #[derive(Clone)]
+#[allow(dead_code)] // `Text` is part of the type-spectrum the graph
+                    // models even though no current node emits it.
 enum Value {
     Number(f64),
     Vector([f64; 3]),
@@ -1672,8 +1674,12 @@ impl BoolOp {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)] // Turbulence + Ridged are reserved variants —
+                    // the current demo only selects FBM, but the
+                    // noise-node UI lists all three modes.
 enum NoiseMode { FBM, Turbulence, Ridged }
 impl NoiseMode {
+    #[allow(dead_code)]
     fn label(self) -> &'static str {
         match self {
             Self::FBM        => "FBM",
@@ -2550,6 +2556,10 @@ fn eval_input_at(
         .unwrap_or(Value::Number(0.0))
 }
 
+#[allow(dead_code)] // Sibling of `eval_input_idx` — same shape but
+                    // takes a borrowed `InPin` instead of an
+                    // `(NodeId, usize)`. Kept for callers that
+                    // already hold a pin reference.
 fn eval_input(graph: &Graph<GraphNode>, time: f64, pin: &InPin) -> Value {
     pin.remotes
         .first()

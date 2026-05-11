@@ -20,7 +20,7 @@ iconflow = { version = "1.0", default-features = false, features = ["pack-fluent
 # accents into the readable luma band per theme mode.
 pastel = { version = "0.12", default-features = false }
 # Optional standalone-extra crates. When the matching feature is
-# enabled, the corresponding `frostui::extras::*` re-export + the
+# enabled, the corresponding `frost_core::extras::*` re-export + the
 # frost-tinted wrapper become available.
 frost_graph = { workspace = true, optional = true }
 frost_code = { workspace = true, optional = true }

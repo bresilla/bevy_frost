@@ -18,7 +18,7 @@
 /// Body text size, in pixels. Drives the [`UNIT`] derivation below
 /// — change here only if the entire frost type ramp moves. Matches
 /// `frostcore::style::apply_theme`'s body text style (13 px), so
-/// corekit and frostcore widgets line up side-by-side at the same
+/// frost_core and frostcore widgets line up side-by-side at the same
 /// scale.
 pub const BODY_FONT_SIZE: f32 = 13.0;
 
@@ -636,7 +636,11 @@ pub fn apply_theme(ctx: &egui::Context, accent: AccentColor, opacity: GlassOpaci
 pub fn apply_theme_to(
     ctx: &egui::Context,
     accent: AccentColor,
-    opacity: GlassOpacity,
+    // Argument retained for API symmetry with [`apply_theme`]; the
+    // alpha levels in the visuals below read directly from the
+    // `glass_opacity()` global, so the caller's value is informational
+    // only. Renamed `_opacity` to silence the unused-arg lint.
+    _opacity: GlassOpacity,
 ) {
     let th = theme();
     let accent_raw = accent.0;
@@ -1746,357 +1750,23 @@ pub struct Theme {
     pub pastel_accent: bool,
 }
 
-/// PRO Light surface palette — paper-tinted neutrals matching
-/// GitHub Primer's light-mode tokens. Text colours are NOT defined
-/// here; they come from the shared `TEXT_*_LIGHT` constants so all
-/// light variants pick the same body-text tones.
-pub const PRO_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF5, 0xF5, 0xF7);
-pub const PRO_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
-// Raised + input tiers tightened — the previous values (`F6F8FA`
-// raised, `FAFAFC` input) sat ~5 units off the white panel, so
-// dropdowns and button surfaces were effectively invisible. Mirrors
-// the Dark tier deltas (panel ± ~12 units) inverted toward darker
-// grey.
-pub const PRO_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF1, 0xF3, 0xF6);
-pub const PRO_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEC);
-pub const PRO_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xEF, 0xF1, 0xF4);
-pub const PRO_LIGHT_BORDER_SUBTLE:  egui::Color32 = egui::Color32::from_rgb(0xD1, 0xD9, 0xE0);
-pub const PRO_LIGHT_BORDER_INNER:   egui::Color32 = egui::Color32::from_rgb(0xC5, 0xCC, 0xD3);
+// ── Built-in themes ──
+//
+// `Theme` (the struct), the global `set_theme` / `theme()` state, and
+// `apply_theme` (the de-dup cache + egui style transfer) live in this
+// file — they're the *engine*. Theme PRESETS (PRO, GAME, …) live in
+// `crate::themes`, one file per theme. To add a new theme, drop a file
+// under `core_crates/core/src/themes/` and register it in
+// `themes/mod.rs`; see that module's docs for the full template.
+pub use crate::themes::{
+    theme_pro, theme_game,
+    PRO_LIGHT_BG_HOVER, PRO_LIGHT_BG_INPUT, PRO_LIGHT_BG_PANEL,
+    PRO_LIGHT_BG_RAISED, PRO_LIGHT_BG_WINDOW, PRO_LIGHT_BORDER_INNER,
+    PRO_LIGHT_BORDER_SUBTLE,
+    GAME_LIGHT_BG_HOVER, GAME_LIGHT_BG_INPUT, GAME_LIGHT_BG_PANEL,
+    GAME_LIGHT_BG_RAISED, GAME_LIGHT_BG_WINDOW,
+};
 
-/// Built-in PRO profile — soft glass, rounded corners, subtle
-/// accent-tinted borders. Pick a [`Mode`] to flip between the
-/// original dark surfaces and a paper-tinted light variant; every
-/// other field (shape / chrome / brackets) is shared across modes.
-pub const fn theme_pro(mode: Mode) -> Theme {
-    let dark = matches!(mode, Mode::Dark);
-    Theme {
-        name: if dark { "PRO_DARK" } else { "PRO_LIGHT" },
-        is_light: !dark,
-        bg_window:  if dark { BG_0_WINDOW } else { PRO_LIGHT_BG_WINDOW },
-        bg_panel:   if dark { BG_1_PANEL  } else { PRO_LIGHT_BG_PANEL  },
-        bg_raised:  if dark { BG_2_RAISED } else { PRO_LIGHT_BG_RAISED },
-        bg_hover:   if dark { BG_3_HOVER  } else { PRO_LIGHT_BG_HOVER  },
-        bg_input:   if dark { BG_4_INPUT  } else { PRO_LIGHT_BG_INPUT  },
-        panel_fill_mode:    ColorMode::FromBg,
-        section_fill_mode:  ColorMode::FromBg,
-        section_show_frame: true,
-        section_show_title_divider: true,
-        section_pad_x: 2,
-        section_pad_y: 2,
-        section_body_indent: 8.0,
-        section_outer_margin_flow_title: 3,
-        section_outer_margin_flow_body: 3,
-        section_outer_margin_span: 3,
-        section_body_inner_top_pad: 0.0,
-        pane_title_chromatic_aberration: false,
-        // PRO — quick snappy fold / unfold so flipping sections
-        // open while inspecting feels responsive.
-        // 0.15 → 0.06 (~2.5× faster). PRO sections fold/unfold
-        // almost instantly — feedback is present but doesn't slow
-        // navigation when flipping through panels.
-        section_animation_time: 0.06,
-        animations_enabled: true,
-        button_anim_scale: 1.0,
-        pane_fade_scale: 0.5,
-        // Text — pulled from the SHARED light/dark tone constants so
-        // every variant ends up with the same body-text colours. No
-        // per-theme drift.
-        text_primary:   if dark { TEXT_PRIMARY }   else { TEXT_PRIMARY_LIGHT },
-        text_secondary: if dark { TEXT_SECONDARY } else { TEXT_SECONDARY_LIGHT },
-        text_disabled:  if dark { TEXT_DISABLED }  else { TEXT_DISABLED_LIGHT },
-        // Title in accent in BOTH Dark and Light — keeps the kit's
-        // signature "title tints with the user's accent" identity
-        // across modes. If the user picks a low-contrast accent
-        // (light accent on light panel), that's the user's call.
-        title_color_mode: TextColorMode::Accent,
-        title_softness: 0.0,
-        ribbon_button_accent_fill: false,
-        section_gap: 0.0,
-        section_corner_ticks_inset: 0.0,
-        section_title_brackets: false,
-        section_title_prefix: None,
-        section_title_letter_spacing: 0.0,
-        subcaption_prefix: None,
-        section_bottom_rule: false,
-        pane_fill_visible: true,
-        show_section_chevron: true,
-        title_strip_filled: false,
-        section_title_size: 11.0,
-        body_accent_darken: 0.0,
-        section_icon_at_end: false,
-        section_icon_size: 0.0,
-        section_body_top_pad: 0.0,
-        row_separator_dash: None,
-        section_title_trailing_rule: false,
-        section_corner_ticks: 0.0,
-        border_subtle:      if dark { BORDER_SUBTLE } else { PRO_LIGHT_BORDER_SUBTLE },
-        border_inner:       if dark { BORDER_INNER }  else { PRO_LIGHT_BORDER_INNER  },
-        // Light borders are paler hairlines — full 230 alpha looks
-        // too heavy on white; Primer / Linear settle around α 140.
-        // Dark gets a softer alpha than Light — a light-grey
-        // outline on a dark panel reads stronger to the eye than a
-        // dark-grey outline on a white panel at the same alpha.
-        // Tuned further down on Dark so widget borders barely
-        // whisper instead of competing with the surface tier.
-        // PRO Light dialed down 160 → 100 so the borders sit lighter
-        // on the white panels. Dark unchanged.
-        border_alpha:       if dark { 70 } else { 100 },
-        border_accent_tint: 0.06,
-        border_width:       1.0,
-        // Light needs a stronger alpha than Dark — α 64 of an already
-        // pale `PRO_LIGHT_BORDER_SUBTLE` over a near-white panel
-        // collapses the separator into invisibility. Bumping to 110
-        // gives the same visual weight Dark has at 96.
-        // Same Dark < Light asymmetry as `border_alpha`. Dark gets
-        // pulled even further down so row separators sit just shy of
-        // disappearing — present as rhythm, not as a drawn line.
-        // PRO Light dialed down 80 → 50; Dark unchanged.
-        row_separator_alpha: if dark { 35 } else { 50 },
-        // Was 0.76 / 0.57 — too transparent to keep the panel/section
-        // tier delta visible. Bumped so sections paint opaque enough
-        // for the new bg_panel → bg_raised delta to actually read.
-        // Hierarchy first; the glass effect is still preserved by the
-        // outer window opacity slider.
-        glass_card_factor:  0.92,
-        glass_group_factor: 0.78,
-        glass_accent_tint:  0.03,
-        radius_widget:  radius::WIDGET,
-        radius_compact: radius::COMPACT,
-        radius_sm:      radius::SM,
-        radius_md:      radius::MD,
-        radius_lg:      radius::LG,
-        row_alternation: false,
-        row_alt_lift: 0.0,
-        button_full_accent_on_press: false,
-        button_tint_rest:  0.08,
-        button_tint_hover: 0.16,
-        button_tint_press: 0.30,
-        pane_shadow_blur:  24,
-        pane_shadow_y:     8,
-        pane_show_title_divider: true,
-        pane_title_stripes: false,
-        scramble_titles: false,
-        tree_guide_width: 1.0,
-        graph_pin_width:  1.0,
-        graph_wire_glow:  0.6,
-        graph_pin_glow:   0.5,
-        graph_canvas_hex: false,
-        progressbar_segmented: false,
-        pane_title_brackets: false,
-        section_separator_strip_h: 2.0,
-        section_separator_alpha: 128,
-        section_body_inner_end_pad: 0.0,
-        ghost_fill_alpha:   28,
-        ghost_stroke_width: 1.5,
-        pastel_accent: true,
-    }
-}
-
-/// GAME Light surface palette — bright accent-tinted surfaces, dark
-/// text. Text colours flow through the shared `TEXT_*_LIGHT`
-/// constants, not per-theme overrides.
-pub const GAME_LIGHT_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0xF0, 0xF1, 0xF5);
-pub const GAME_LIGHT_BG_PANEL:  egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFD);
-// Raised + input tightened (same reasoning as PRO Light). Raised
-// flipped from `FFFFFF` (which was actually *brighter* than the
-// panel — wrong direction for a Light theme) to a tone visibly
-// darker than the panel. Input also pulled away from the panel.
-pub const GAME_LIGHT_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0xF1, 0xF3, 0xF7);
-pub const GAME_LIGHT_BG_HOVER:  egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE8, 0xEE);
-pub const GAME_LIGHT_BG_INPUT:  egui::Color32 = egui::Color32::from_rgb(0xEE, 0xF0, 0xF5);
-
-/// Built-in GAME profile — square corners, accent-tinted panels,
-/// bracket-decorated titles on a solid accent banner, dashed row
-/// separators, L-bracket corner ticks. Pick a [`Mode`] to flip the
-/// whole brightness axis: Dark lerps surfaces toward black for the
-/// deep tactical look, Light lerps toward white for a paper /
-/// accent-stained variant.
-pub const fn theme_game(mode: Mode) -> Theme {
-    let dark = matches!(mode, Mode::Dark);
-    let lerp_target = if dark {
-        egui::Color32::BLACK
-    } else {
-        egui::Color32::WHITE
-    };
-    let lerp_factor = if dark { 0.22 } else { 0.18 };
-    Theme {
-        name: if dark { "GAME_DARK" } else { "GAME_LIGHT" },
-        is_light: !dark,
-        bg_window:  if dark { egui::Color32::from_rgb(0x08, 0x0A, 0x12) } else { GAME_LIGHT_BG_WINDOW },
-        bg_panel:   if dark { egui::Color32::from_rgb(0x10, 0x14, 0x1F) } else { GAME_LIGHT_BG_PANEL },
-        bg_raised:  if dark { egui::Color32::from_rgb(0x16, 0x1B, 0x29) } else { GAME_LIGHT_BG_RAISED },
-        bg_hover:   if dark { egui::Color32::from_rgb(0x1F, 0x26, 0x38) } else { GAME_LIGHT_BG_HOVER },
-        bg_input:   if dark { egui::Color32::from_rgb(0x06, 0x08, 0x0E) } else { GAME_LIGHT_BG_INPUT },
-        // Panel surface flows through `FromAccent` with the mode's
-        // brightness target. Dark mode: lerp 22 % toward BLACK,
-        // producing the deep accent-tinted tactical surface. Light
-        // mode: lerp 18 % toward WHITE, producing a pale
-        // accent-tinted paper surface.
-        panel_fill_mode:   ColorMode::FromAccent { lerp_factor, lerp_target },
-        section_fill_mode: ColorMode::FromAccent { lerp_factor, lerp_target },
-        section_show_frame: true,
-        section_show_title_divider: false,
-        // Padding — `pad_y = 8` so the last row in each section gets
-        // a clear breathing band before the card's bottom edge
-        // instead of almost touching it. Top picks up the same
-        // value, which keeps the header strip from looking crammed
-        // against the corner ticks.
-        section_pad_x: 3,
-        section_pad_y: 2,
-        section_body_indent: 8.0,
-        // GAME stacking: tighter than the original 9, but still
-        // a touch more breathing room than PRO between the pane
-        // title strip and the first container so it doesn't crowd
-        // the title chrome. `flow_body = 0` keeps adjacent
-        // containers tight; the inter-container dot handle
-        // provides the visible gap. Span margin stays tight so
-        // each container is almost flush with the pane edge.
-        section_outer_margin_flow_title: 6,
-        section_outer_margin_flow_body: 0,
-        section_outer_margin_span: 1,
-        section_body_inner_top_pad: 12.0,
-        pane_title_chromatic_aberration: true,
-        // GAME — slower fold / unfold so the banner expansion reads
-        // as a deliberate "scene change" cue.
-        section_animation_time: 0.35,
-        animations_enabled: true,
-        // GAME button feedback runs 2× slower than PRO — clicks
-        // linger, depress takes a beat to settle, the discharge
-        // ring expands languidly. Matches the rest of the GAME
-        // motion language.
-        button_anim_scale: 2.0,
-        pane_fade_scale: 1.0,
-        // Text — both Dark and Light branches now pull from the
-        // shared tone constants. GAME used to ship custom blue-grey
-        // tones for Dark; aligning with the canonical `TEXT_*` set
-        // means a body-row label is identical across PRO and GAME
-        // for the same Mode.
-        text_primary:   if dark { TEXT_PRIMARY }   else { TEXT_PRIMARY_LIGHT },
-        text_secondary: if dark { TEXT_SECONDARY } else { TEXT_SECONDARY_LIGHT },
-        text_disabled:  if dark { TEXT_DISABLED }  else { TEXT_DISABLED_LIGHT },
-        // Title in pure accent — a different *hue* from the body's
-        // near-black contrast text. On a 65 %-lerp accent panel, the
-        // saturated accent reads ~35 % brighter than the panel, so
-        // it pops without needing extra softening. Body text
-        // (`on_section`) remains at full contrast, which is the
-        // "darker than title" tier the user asked for in GAME.
-        title_color_mode: TextColorMode::Accent,
-        title_softness: 0.0,
-        ribbon_button_accent_fill: true,
-        // Inter-section gap. Originally 12 px → 7.2 → 4.0 (further
-        // tightened). Just enough to read as a separation; the
-        // sections now stack densely so a pane fits more content.
-        section_gap: 4.0,
-        // Corner ticks sit 2 px inside the section's painted edge —
-        // gives every bracket some breathing room from the edge
-        // (which the user explicitly asked for) AND guarantees the
-        // strokes can't bleed past the rect under any sub-pixel
-        // rounding.
-        section_corner_ticks_inset: 3.0,
-        section_title_brackets: true,
-        // No prefix glyph — the brackets are the only header
-        // ornament. Originally `▸ ` showed when brackets were off
-        // (unfolded), but the user didn't want it appearing in
-        // either state.
-        section_title_prefix: None,
-        section_title_letter_spacing: 1.5,
-        subcaption_prefix: Some("// "),
-        section_bottom_rule: true,
-        // Pane frame goes transparent → scene shows through the
-        // gaps between sections. Each section will paint its own
-        // opaque bg via `section_show_frame: true` below; the title
-        // strip falls back to a manual paint inside floating.rs.
-        pane_fill_visible: false,
-        // No chevron — bracketed title is the only header chrome.
-        show_section_chevron: false,
-        // Title sits on a solid accent banner; text colour flips to
-        // dark contrast inside `section_tracked`, top corner ticks
-        // flip to the same contrast colour so they read as cut-outs
-        // of the banner, not stripes hiding inside it.
-        title_strip_filled: true,
-        section_title_size: 11.5,
-        body_accent_darken: 0.18,
-        section_icon_at_end: true,
-        // Trimmed 24 → 20 — less dominant on the title strip while
-        // still readable when the section unfolds (the unfolded
-        // multiplier in `widgets/foldable.rs` lifts it back up).
-        section_icon_size: 20.0,
-        section_body_top_pad: 16.0,
-        row_separator_dash: Some((4.0, 3.0)),
-        // Trailing dashed rule after the title is OFF — user
-        // explicitly disliked the `[ TITLE ] ────` extension. The
-        // title can stand on its own banner without it.
-        section_title_trailing_rule: false,
-        // Longer ticks (10 px arms) read as deliberate "frame
-        // brackets" rather than incidental ticks.
-        section_corner_ticks: 10.0,
-        // Pane / section / input / button outlines: OFF in GAME (the
-        // square borderless look the profile is built around). The
-        // faint hairline the user wanted is exclusively for **row
-        // separators inside section bodies** — see
-        // `row_separator_alpha`. Mid-grey separator base so the line
-        // reads on both bright and dark accent panels.
-        // Mid-grey separator in Dark, darker grey in Light — on a
-        // pale accent-tinted panel a #80 grey at α 60 disappears,
-        // so Light dropping closer to the text colour keeps the
-        // dashed dividers visible.
-        border_subtle:      if dark {
-            egui::Color32::from_rgb(0x80, 0x80, 0x80)
-        } else {
-            egui::Color32::from_rgb(0x6B, 0x70, 0x78)
-        },
-        border_inner:       egui::Color32::from_rgb(0x1F, 0x26, 0x38),
-        // GAME Dark borders — alpha + stroke width both reduced
-        // ~37 % from the previous (α 110, w 1.0): the user wanted a
-        // 30 % thickness drop on GAME, plus another 10 % on Dark
-        // (`0.7 × 0.9 ≈ 0.63`). Then halved again for the
-        // "separators 50 % more transparent" request: 70 → 35.
-        // Light still has no border at all.
-        border_alpha:       if dark { 35 } else { 0 },
-        border_accent_tint: 0.0,
-        border_width:       if dark { 0.63 } else { 0.0 },
-        // GAME row separators — same 50 % transparency bump as
-        // border_alpha (Dark 50 → 25, Light 56 → 28) so the dashed
-        // inter-row hairlines just whisper.
-        row_separator_alpha: if dark { 25 } else { 28 },
-        glass_card_factor:  1.0,
-        glass_group_factor: 1.0,
-        glass_accent_tint:  0.0,
-        radius_widget:  0,
-        radius_compact: 0,
-        radius_sm:      0,
-        radius_md:      0,
-        radius_lg:      0,
-        row_alternation: false,
-        row_alt_lift: 0.0,
-        button_full_accent_on_press: true,
-        // Was 0.0 — flat with the panel, invisible at rest. Bump to
-        // 0.12 so the rest tier picks up `surface_lift_target` and
-        // the button reads as visibly raised (Dark) / sunken (Light)
-        // against the GAME accent panel.
-        button_tint_rest:  0.12,
-        button_tint_hover: 0.18,
-        button_tint_press: 0.40,
-        pane_shadow_blur:  0,
-        pane_shadow_y:     0,
-        pane_show_title_divider: false,
-        pane_title_stripes: true,
-        scramble_titles: true,
-        tree_guide_width: 0.0,
-        graph_pin_width:  0.0,
-        graph_wire_glow:  1.0,
-        graph_pin_glow:   0.85,
-        graph_canvas_hex: true,
-        progressbar_segmented: true,
-        pane_title_brackets: true,
-        section_separator_strip_h: 14.0,
-        section_separator_alpha: 64,
-        section_body_inner_end_pad: 12.0,
-        ghost_fill_alpha:   90,
-        ghost_stroke_width: 0.0,
-        pastel_accent: true,
-    }
-}
 
 /// Packed `(r, g, b, a)` snapshot of the active accent colour.
 /// `apply_theme` writes this so widget paints can call

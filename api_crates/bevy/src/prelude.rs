@@ -5,7 +5,7 @@
 //! use bevy_frost::prelude::*;
 //! ```
 //!
-//! Brings in everything `corekit` exports (panes, ribbons,
+//! Brings in everything `frost_core` exports (panes, ribbons,
 //! containers, pods, widgets, theme primitives) plus the
 //! Bevy-specific additions from this crate — `FrostPlugin`,
 //! `ThemePlugin`, `RibbonPlugin`, `RibbonGhostSet`, and

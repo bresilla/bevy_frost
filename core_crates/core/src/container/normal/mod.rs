@@ -168,7 +168,7 @@ impl Normal {
     ///
     /// ```ignore
     /// Normal::new(title, anchor, accent, cid)
-    ///     .initial_flow(12.0 * corekit::UNIT)
+    ///     .initial_flow(12.0 * frost_core::UNIT)
     ///     .show(ui, pods);
     /// ```
     pub fn initial_flow(mut self, flow: f32) -> Self {

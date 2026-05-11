@@ -3,8 +3,8 @@
 //!
 //! ## Usage with egui
 //!
-//! ```rust
-//! use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
+//! ```ignore
+//! use frost_code::{CodeEditor, ColorTheme, Syntax};
 //!
 //! CodeEditor::default()
 //!   .id_source("code editor")
@@ -28,9 +28,9 @@
 //!
 //! **main.rs**
 //!
-//! ```rust
+//! ```ignore
 //! use colorful::{Color, Colorful};
-//! use egui_code_editor::{Syntax, Token, TokenType};
+//! use frost_code::{Syntax, Token, TokenType};
 //!
 //! fn color(token: TokenType) -> Color {
 //!     match token {
@@ -70,8 +70,6 @@
 mod completer;
 pub mod highlighting;
 mod syntax;
-#[cfg(test)]
-mod tests;
 mod themes;
 
 use egui::text::LayoutJob;

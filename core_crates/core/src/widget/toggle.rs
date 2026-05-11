@@ -12,7 +12,7 @@ use crate::style::{
 };
 
 /// Default toggle row height. Matches
-/// `frostcore::widgets::toggle::H = 18` so the corekit toggle
+/// `frostcore::widgets::toggle::H = 18` so the frost_core toggle
 /// lines up with frostcore at the same scale.
 pub const TOGGLE_ROW_H: f32 = 18.0;
 /// Track width — matches `frostcore::widgets::toggle::W = 38`.

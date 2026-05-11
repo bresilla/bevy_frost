@@ -715,6 +715,8 @@ impl GraphStyle {
         self.wire_glow.unwrap_or(0.0).clamp(0.0, 1.5)
     }
 
+    #[allow(dead_code)] // mirrors `get_wire_glow`; kept symmetric for future
+                        // pin-halo render paths that will read it.
     fn get_pin_glow(&self) -> f32 {
         self.pin_glow.unwrap_or(0.0).clamp(0.0, 1.5)
     }

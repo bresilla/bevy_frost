@@ -1,7 +1,7 @@
 //! Legacy free-function widget aliases — keeps source compatibility
 //! with apps written against `frostcore::widgets::*` while the new
 //! pod-driven API stabilises. Each function here delegates to its
-//! corekit equivalent (or wraps a small composite) so consumers can
+//! frost_core equivalent (or wraps a small composite) so consumers can
 //! keep calling the old names verbatim.
 
 use egui::Sense;
@@ -84,7 +84,7 @@ pub fn labelled_row_custom_left(
 
 // ─── Standalone widget aliases ─────────────────────────────────────
 //
-// These are name-only redirects to the canonical corekit widgets
+// These are name-only redirects to the canonical frost_core widgets
 // — provided so the old `frostcore::widgets::*` call sites compile
 // without source edits. New code should call the canonical name
 // (`button`, `readout`, `slider`, `dropdown`, `text_input`).

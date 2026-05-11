@@ -260,7 +260,7 @@ impl<'a> Button<'a> {
                 painted_rect.center().y,
             );
             // Treat `glyph` as an icon NAME first (Fluent UI lookup
-            // via corekit::icons). Fall back to literal text paint
+            // via frost_core::icons). Fall back to literal text paint
             // when the name isn't bundled — that way callers can pass
             // either `"settings"` (looked up) or `"⊕"` (literal).
             if crate::icons::icon(g).is_some() {

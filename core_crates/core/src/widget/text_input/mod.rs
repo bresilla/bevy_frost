@@ -21,7 +21,7 @@
 //! changed when clicked).
 //!
 //! Ported verbatim from `frostcore::widgets::search::search_field`,
-//! minus the `flush_pending_separator` glue (corekit doesn't carry
+//! minus the `flush_pending_separator` glue (frost_core doesn't carry
 //! that side-channel).
 
 use egui;

@@ -34,13 +34,13 @@ pub mod node_view_backend;
 pub mod prelude;
 
 // `extras` (vendored graph + code_editor + maximize) lives in
-// `corekit` so the egui-only `egui_frost` facade can ship the same
+// `frost_core` so the egui-only `egui_frost` facade can ship the same
 // graph + code wrappers without dragging Bevy in. Re-exported here
 // at the legacy `bevy_frost::extras::*` path so existing call
 // sites stay put.
 pub use frost_core::extras;
 
-// Re-export `corekit` so apps can keep going through `bevy_frost::*`
+// Re-export `frost_core` so apps can keep going through `bevy_frost::*`
 // for state types, widgets, the pane / ribbon / pod systems, etc.
 pub use frost_core::*;
 
@@ -90,7 +90,7 @@ fn apply_theme_system(
 #[derive(SystemSet, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct RibbonGhostSet;
 
-/// Registers the corekit ribbon `Resource`s + the F12 debug toggle.
+/// Registers the frost_core ribbon `Resource`s + the F12 debug toggle.
 /// [`FrostPlugin`] installs this transitively.
 pub struct RibbonPlugin;
 

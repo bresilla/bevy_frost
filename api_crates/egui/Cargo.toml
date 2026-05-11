@@ -1,6 +1,6 @@
 [package]
 name = "egui_frost"
-description = "Plain-egui facade for the frost glass-themed editor UI kit. Wraps `corekit` with helpers for installing the theme + ribbon state into a standalone egui host (eframe, etc.) — no Bevy dependency."
+description = "Plain-egui facade for the frost glass-themed editor UI kit. Wraps `frost_core` with helpers for installing the theme + ribbon state into a standalone egui host (eframe, etc.) — no Bevy dependency."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,14 +8,14 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
-# `corekit` is the entire UI core — pane / ribbon / container / pod
+# `frost_core` is the entire UI core — pane / ribbon / container / pod
 # systems, widgets, theme runtime, vendored fonts. `egui_frost` is
 # the egui-only convenience layer on top: helpers for one-line
 # theme install in eframe / standalone egui apps, plus a thin
 # `RibbonState` aggregate so consumers can pass a single struct
 # through their app instead of juggling four separate state types.
 #
-# No `bevy` feature on `corekit` here — this crate compiles in any
+# No `bevy` feature on `frost_core` here — this crate compiles in any
 # environment where egui works, and stays free of Bevy types.
 frost_core = { workspace = true }
 egui = { workspace = true }
@@ -27,7 +27,7 @@ egui-wgpu = { workspace = true }
 wgpu = { workspace = true }
 
 [dev-dependencies]
-# `eframe` pairs the same egui version that corekit builds against
+# `eframe` pairs the same egui version that frost_core builds against
 # (0.33).
 #
 # `default-features = false` so we drop `wayland` — winit prefers

@@ -2,7 +2,7 @@
 //! API mapped onto the new [`crate::pane::Pane2`] +
 //! [`crate::container::Normal`] system. Apps written against
 //! `frostcore::floating::floating_window_for_item` keep their call
-//! sites; the visuals are the new corekit's pane chrome + container
+//! sites; the visuals are the new frost_core's pane chrome + container
 //! chrome wrapping the legacy widget calls inside.
 //!
 //! What's supported:

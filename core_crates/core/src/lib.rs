@@ -1,4 +1,4 @@
-//! # corekit — modular UI core for `bevy_frost`
+//! # frost_core — modular UI core for `bevy_frost`
 //!
 //! Successor to `frostcore` (see `PLAN_NEWUI.md` at the repo root).
 //! Self-contained: ships its own bundled Iosevka fonts, theme
@@ -6,7 +6,7 @@
 //! `frostcore`.
 //!
 //! Naming note: directory is `crates/core/` but the crate identifier
-//! is `corekit`. Naming the package `core` would shadow Rust's std
+//! is `frost_core`. Naming the package `core` would shadow Rust's std
 //! `core`, breaking derive macros that expand to `::core::clone::Clone`.
 //!
 //! ## Modules
@@ -38,22 +38,23 @@ pub mod pane;
 pub mod pod;
 pub mod ribbon;
 pub mod style;
+pub mod themes;
 pub mod widget;
 
 // Foundational row-height unit — re-exported at crate root so the
-// canonical name is `corekit::UNIT`. Every widget is sized in
+// canonical name is `frost_core::UNIT`. Every widget is sized in
 // multiples of this. See [`style::UNIT`] for the definition.
 pub use style::{BODY_FONT_SIZE, UNIT};
 
 // ─── Top-level convenience re-exports ─────────────────────────────
 //
-// `bevy_frost::prelude::*` glob-imports `corekit::*`, so anything
+// `bevy_frost::prelude::*` glob-imports `frost_core::*`, so anything
 // re-exported here surfaces directly under the consumer's prelude
 // (`use bevy_frost::prelude::*;` → `RibbonOpen`, `AccentColor`, …
 // in scope). These are the names the old `frostcore` crate
 // surfaced — keeping them callable via the same paths means apps
 // that hadn't fully migrated to nested-module imports still
-// compile against corekit without breakage.
+// compile against frost_core without breakage.
 
 pub use command_palette::{command_palette, CommandPaletteState, PaletteItem};
 pub use floating::{floating_window_for_item, PaneBuilder};

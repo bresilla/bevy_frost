@@ -13,7 +13,7 @@
 //! detect double-clicks (e.g. "double-click to copy").
 //!
 //! Mirrors `frostcore::widgets::row::readout_row`, minus the
-//! flush/widget separator glue (corekit's Pod owns separators).
+//! flush/widget separator glue (frost_core's Pod owns separators).
 
 use crate::style::{on_section, on_section_dim, UNIT};
 

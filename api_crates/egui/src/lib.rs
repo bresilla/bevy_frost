@@ -1,7 +1,7 @@
 //! # egui_frost — plain-egui facade for the frost UI kit.
 //!
 //! Mirrors `bevy_frost`, minus the Bevy bits. Re-exports every
-//! public item from [`corekit`] verbatim and adds a single
+//! public item from [`frost_core`] verbatim and adds a single
 //! convenience helper ([`apply_theme_now`]) so `eframe` apps can
 //! one-line the per-frame theme refresh that `bevy_frost`'s
 //! `ThemePlugin` does automatically.

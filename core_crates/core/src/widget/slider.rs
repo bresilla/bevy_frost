@@ -5,7 +5,7 @@
 //! line up.
 //!
 //! Mirrors `frostcore::widgets::slider::pretty_slider` —
-//! the corekit version drops the trailing-separator side-effect
+//! the frost_core version drops the trailing-separator side-effect
 //! (separators are container/pod chrome here, not row-level).
 
 use crate::style::{

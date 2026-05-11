@@ -1,9 +1,9 @@
 //! # Ribbons — edge-anchored draggable button strips.
 //!
-//! `corekit`'s ribbon module is the *modern* assembly API distilled
+//! `frost_core`'s ribbon module is the *modern* assembly API distilled
 //! down. The older `RibbonLayout` / `SideActive` / `RibbonButton` /
 //! `SideRibbon` / `BarRibbon` paths that lived next to it in
-//! `frostcore` were retired here — every consumer in `corekit`
+//! `frostcore` were retired here — every consumer in `frost_core`
 //! (and the `newui` example) drives ribbons through
 //! [`draw_assembly`] alone.
 //!
