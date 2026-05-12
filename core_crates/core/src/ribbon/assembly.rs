@@ -365,6 +365,30 @@ fn compute_side_insets(ribbons: &[RibbonDef]) -> SideInsets {
     }
 }
 
+/// The first declared ribbon is the persistent/main bar. It owns its
+/// edge end-to-end; perpendicular ribbons yield their corner cells to
+/// it. This keeps one stable app bar no matter what optional rails are
+/// declared after it.
+fn is_main_ribbon(ribbons: &[RibbonDef], def: &RibbonDef) -> bool {
+    ribbons.first().is_some_and(|first| first.id == def.id)
+}
+
+fn insets_for_ribbon(ribbons: &[RibbonDef], def: &RibbonDef, base: SideInsets) -> SideInsets {
+    if !is_main_ribbon(ribbons, def) {
+        return base;
+    }
+
+    let mut out = base;
+    if def.edge.is_vertical() {
+        out.top = EDGE_GAP;
+        out.bottom = EDGE_GAP;
+    } else {
+        out.left = EDGE_GAP;
+        out.right = EDGE_GAP;
+    }
+    out
+}
+
 fn place_button(
     def: &RibbonDef,
     cluster: RibbonCluster,
@@ -402,7 +426,7 @@ fn place_button(
         // opens.
         (RibbonEdge::Left, RibbonCluster::Start) => ButtonPlacement {
             anchor: egui::Align2::LEFT_TOP,
-            offset: egui::vec2(EDGE_GAP, EDGE_GAP + s * step),
+            offset: egui::vec2(EDGE_GAP, insets.top + s * step),
         },
         (RibbonEdge::Left, RibbonCluster::Middle) => ButtonPlacement {
             anchor: egui::Align2::LEFT_CENTER,
@@ -410,11 +434,11 @@ fn place_button(
         },
         (RibbonEdge::Left, RibbonCluster::End) => ButtonPlacement {
             anchor: egui::Align2::LEFT_BOTTOM,
-            offset: egui::vec2(EDGE_GAP, -EDGE_GAP - s * step),
+            offset: egui::vec2(EDGE_GAP, -insets.bottom - s * step),
         },
         (RibbonEdge::Right, RibbonCluster::Start) => ButtonPlacement {
             anchor: egui::Align2::RIGHT_TOP,
-            offset: egui::vec2(-EDGE_GAP, EDGE_GAP + s * step),
+            offset: egui::vec2(-EDGE_GAP, insets.top + s * step),
         },
         (RibbonEdge::Right, RibbonCluster::Middle) => ButtonPlacement {
             anchor: egui::Align2::RIGHT_CENTER,
@@ -422,7 +446,7 @@ fn place_button(
         },
         (RibbonEdge::Right, RibbonCluster::End) => ButtonPlacement {
             anchor: egui::Align2::RIGHT_BOTTOM,
-            offset: egui::vec2(-EDGE_GAP, -EDGE_GAP - s * step),
+            offset: egui::vec2(-EDGE_GAP, -insets.bottom - s * step),
         },
 
         // ── Horizontal bars (Top / Bottom) ────────────────────────
@@ -729,7 +753,9 @@ pub fn draw_assembly(
                     continue;
                 }
                 for &cluster in clusters_for_mode(def.mode) {
-                    if cluster_region(def, cluster, ctx, insets).contains(cursor) {
+                    if cluster_region(def, cluster, ctx, insets_for_ribbon(ribbons, def, insets))
+                        .contains(cursor)
+                    {
                         hit = Some((def.id, cluster));
                         break 'outer;
                     }
@@ -761,7 +787,13 @@ pub fn draw_assembly(
                 let mut best_slot = 0u32;
                 let mut best_d = f32::INFINITY;
                 for slot in 0..total_with_ghost {
-                    let p = place_button(tgt_def, tgt_cluster_eff, slot, total_with_ghost, insets);
+                    let p = place_button(
+                        tgt_def,
+                        tgt_cluster_eff,
+                        slot,
+                        total_with_ghost,
+                        insets_for_ribbon(ribbons, tgt_def, insets),
+                    );
                     let rect = screen_rect(ctx, p);
                     let c = if axis_is_y {
                         rect.center().y
@@ -882,7 +914,13 @@ pub fn draw_assembly(
         };
 
         // Resting rect (where the button would sit if released now).
-        let resting_p = place_button(def, cluster_eff, slot_eff, total, insets);
+        let resting_p = place_button(
+            def,
+            cluster_eff,
+            slot_eff,
+            total,
+            insets_for_ribbon(ribbons, def, insets),
+        );
         let resting_rect = screen_rect(ctx, resting_p);
 
         // Paint rect — resting for most, at the cursor (as the
@@ -982,7 +1020,13 @@ pub fn draw_assembly(
                 .filter(|(_, it)| drag.item != Some(it.id))
                 .count() as u32;
             let total_with_ghost = siblings + 1;
-            let p = place_button(tgt_def, tgt_cluster_eff, insert, total_with_ghost, insets);
+            let p = place_button(
+                tgt_def,
+                tgt_cluster_eff,
+                insert,
+                total_with_ghost,
+                insets_for_ribbon(ribbons, tgt_def, insets),
+            );
             let rect = screen_rect(ctx, p);
             let area_id = egui::Id::new("frost_assembly_drop_outline");
             egui::Area::new(area_id)

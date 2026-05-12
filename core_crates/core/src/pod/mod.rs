@@ -21,6 +21,7 @@
 use egui::{Color32, Id, Ui};
 
 use crate::container::SeparatorStyle;
+use crate::module::{FrostModule, ModuleInlineCtx, ModuleInlineOptions};
 use crate::style::{UNIT, theme};
 use crate::widget::{
     badge::badge_row_colored,
@@ -52,6 +53,7 @@ pub struct PodResponse {
     pub tags: Vec<TagsResponse>,
     pub keybindings: Vec<KeybindingsResponse>,
     pub badges: Vec<BadgesResponse>,
+    pub modules: Vec<ModulePodResponse>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -152,6 +154,14 @@ pub struct KeybindingsResponse;
 
 #[derive(Clone, Debug, Default)]
 pub struct BadgesResponse;
+
+#[derive(Clone, Debug)]
+pub struct ModulePodResponse {
+    pub id: Id,
+    pub title: String,
+    pub icon: &'static str,
+    pub enter_workspace_requested: bool,
+}
 
 // ─── Widget specs ─────────────────────────────────────────────────
 
@@ -345,6 +355,11 @@ struct BadgesConfig {
     accent: Color32,
 }
 
+struct ModuleConfig {
+    options: ModuleInlineOptions,
+    module: Box<dyn FrostModule + Send + Sync>,
+}
+
 /// One ordered slot in the pod's widget stack. Painted in
 /// declaration order; response indices match the order each widget
 /// kind was added (e.g. the third `with_button` shows up at
@@ -393,6 +408,9 @@ enum WidgetSpec {
     /// (`name: tag1 tag2 …`). Pod height grows both with row count
     /// AND with how many chips wrap inside any single row.
     Badges(BadgesConfig),
+    /// Typed module slot. Modules render a compact inline surface in
+    /// the pod and can request entry into a full workspace level.
+    Module(ModuleConfig),
     /// Caller-supplied paint closure. Used as the integration point
     /// for widgets that don't fit a flat config (recursive trees,
     /// node graphs, code editors, …) — the closure draws into the
@@ -438,6 +456,7 @@ impl WidgetSpec {
             WidgetSpec::Tags(cfg) => tags_estimated_rows(cfg.items.len()),
             WidgetSpec::Keybindings(cfg) => cfg.rows.len().max(1),
             WidgetSpec::Badges(cfg) => cfg.rows.len().max(1),
+            WidgetSpec::Module(cfg) => cfg.options.units.max(1),
             WidgetSpec::Custom { units, .. } => *units,
         }
     }
@@ -480,6 +499,7 @@ impl WidgetSpec {
                 cfg.rows.len().max(1) as f32 * theme().widgets.keybinding.row_h
             }
             WidgetSpec::Badges(cfg) => cfg.rows.len().max(1) as f32 * theme().widgets.badge.row_h,
+            WidgetSpec::Module(cfg) => cfg.options.units.max(1) as f32 * UNIT,
             WidgetSpec::Custom { units, .. } => (*units as f32) * UNIT,
         }
     }
@@ -1100,6 +1120,34 @@ impl Pod {
         self
     }
 
+    /// Add a typed Frost module to this pod.
+    ///
+    /// The module paints its inline representation in the pod flow.
+    /// By default modules are allowed to request entry into a full
+    /// module workspace; the workspace stack wiring lands in the
+    /// next implementation phase, and the request is surfaced through
+    /// [`PodResponse::modules`] for now.
+    #[must_use]
+    pub fn with_module<M>(self, module: M) -> Self
+    where
+        M: FrostModule + Send + Sync + 'static,
+    {
+        self.with_module_options(module, ModuleInlineOptions::default())
+    }
+
+    /// Like [`Pod::with_module`] with explicit inline options.
+    #[must_use]
+    pub fn with_module_options<M>(mut self, module: M, options: ModuleInlineOptions) -> Self
+    where
+        M: FrostModule + Send + Sync + 'static,
+    {
+        self.widgets.push(WidgetSpec::Module(ModuleConfig {
+            options,
+            module: Box::new(module),
+        }));
+        self
+    }
+
     /// Add a caller-supplied paint closure as a widget slot. Use for
     /// custom rendering that doesn't fit one of the flat configs —
     /// the canonical case being [`crate::widget::tree_row`], which is
@@ -1282,6 +1330,7 @@ fn paint_widgets(
     let mut hybrid_select_list_idx = 0usize;
     let mut tags_idx = 0usize;
     let mut keybindings_idx = 0usize;
+    let mut module_idx = 0usize;
     for (slot_idx, spec) in widgets.into_iter().enumerate() {
         if slot_idx > 0 {
             ui.add_space(widget_spacing);
@@ -1710,6 +1759,27 @@ fn paint_widgets(
                     badge_row_colored(ui, &row.label, &pairs, cfg.accent);
                 }
                 response.badges.push(BadgesResponse);
+            }
+            WidgetSpec::Module(mut cfg) => {
+                let module_id = cfg.module.id();
+                let title = cfg.module.title().to_owned();
+                let icon = cfg.module.icon();
+                let ctx = ModuleInlineCtx {
+                    pod_id,
+                    slot_index: slot_idx,
+                    accent: crate::style::active_accent(),
+                    options: cfg.options,
+                    workspace: None,
+                };
+                let module_response = cfg.module.inline(ui, ctx);
+                crate::debug::tag(ui, ui.min_rect(), format!("widget[module #{}]", module_idx));
+                response.modules.push(ModulePodResponse {
+                    id: module_id,
+                    title,
+                    icon,
+                    enter_workspace_requested: module_response.enter_workspace,
+                });
+                module_idx += 1;
             }
             WidgetSpec::Custom { paint, .. } => {
                 paint(ui);

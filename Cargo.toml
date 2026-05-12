@@ -6,6 +6,8 @@ members = [
     "core_crates/core",
     "core_crates/modules/code",
     "core_crates/modules/graph",
+    "core_crates/modules/image",
+    "core_crates/modules/canvas",
 ]
 
 
@@ -53,6 +55,12 @@ frost_graph = { path = "core_crates/modules/graph", version = "0.0.1" }
 # `frost_code` — standalone vendored egui_code_editor. Usable in
 # any egui app; ships sensible defaults, no frost-theming dep.
 frost_code = { path = "core_crates/modules/code", version = "0.0.1" }
+# `frost_image` — lightweight image viewer/editor proof module for
+# the new View + Module architecture.
+frost_image = { path = "core_crates/modules/image", version = "0.0.1" }
+# `frost_canvas` — retained-stroke whiteboard proof module for
+# recursive View + Module workspaces.
+frost_canvas = { path = "core_crates/modules/canvas", version = "0.0.1" }
 
 # `mimalloc` — drop-in global allocator. egui's tessellator + shape
 # `Vec`s thrash the system allocator under heavy heap pressure;

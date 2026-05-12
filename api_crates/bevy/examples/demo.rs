@@ -70,6 +70,8 @@ const PANE_ABOUT: &str = "demo_pane_about";
 
 const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
+const ACTION_VIEW_BEVY: &str = "demo_action_view_bevy";
+const ACTION_VIEW_CANVAS: &str = "demo_action_view_canvas";
 
 // Fullscreen-only ribbon actions. Click targets are no-ops in this
 // demo — purpose is to show that "the same ribbon API works as
@@ -138,6 +140,16 @@ const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
 ];
 
 const RIBBONS: &[RibbonDef] = &[
+    // First declared ribbon is the persistent/main app bar. Keep it
+    // first so it owns the full left-to-right top edge.
+    RibbonDef {
+        id: RIBBON_TOP,
+        edge: RibbonEdge::Top,
+        role: RibbonRole::Panel,
+        mode: RibbonMode::ThreeSided,
+        draggable: true,
+        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
+    },
     RibbonDef {
         id: RIBBON_LEFT,
         edge: RibbonEdge::Left,
@@ -153,14 +165,6 @@ const RIBBONS: &[RibbonDef] = &[
         mode: RibbonMode::ThreeSided,
         draggable: true,
         accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
-    },
-    RibbonDef {
-        id: RIBBON_TOP,
-        edge: RibbonEdge::Top,
-        role: RibbonRole::Panel,
-        mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
     },
     RibbonDef {
         id: RIBBON_BOTTOM,
@@ -236,6 +240,28 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
+    // TOP middle — root/L0 view switcher. These are normal ribbon
+    // buttons, same style as every other demo ribbon button.
+    RibbonItem {
+        id: ACTION_VIEW_BEVY,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("cube"),
+        tooltip: "Bevy scene view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_VIEW_CANVAS,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("draw"),
+        tooltip: "Canvas / whiteboard view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
     // BOTTOM rail — Editor (placeholder; the legacy graph + code
     // wrappers lived in `frostcore` which has been removed) and the
     // one-shot cube-cycle action buttons in the End cluster.
@@ -266,6 +292,42 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         slot: 1,
         glyph: RibbonGlyph::Icon("arrow-right"),
         tooltip: "Next cube",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+];
+
+const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
+    // Canvas view opts out of the Bevy-specific side/bottom rails,
+    // but it does NOT opt out of the persistent main top bar. Keep
+    // every top-bar item that should remain global.
+    RibbonItem {
+        id: PANE_ABOUT,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("info"),
+        tooltip: "About this demo",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonItem {
+        id: ACTION_VIEW_BEVY,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("cube"),
+        tooltip: "Bevy scene view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_VIEW_CANVAS,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("draw"),
+        tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
@@ -487,6 +549,13 @@ impl Default for TintRgba {
     }
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DemoRootView {
+    #[default]
+    BevyScene,
+    Canvas,
+}
+
 #[derive(Component)]
 struct ColorCube {
     egui_col: egui::Color32,
@@ -495,6 +564,11 @@ struct ColorCube {
 
 #[derive(Resource, Default)]
 struct SelectedSwatch(Option<Entity>);
+
+#[derive(Resource, Default)]
+struct CanvasViewState {
+    strokes: Vec<Vec<egui::Pos2>>,
+}
 
 /// Per-graph sharp-zoom state (secondary egui::Context, pan, zoom,
 /// wgpu render target). Held as a Bevy resource so the SAME state
@@ -577,7 +651,9 @@ fn main() {
         .init_resource::<ThemeModeRes>()
         .init_resource::<PastelToggle>()
         .init_resource::<TintRgba>()
+        .init_resource::<DemoRootView>()
         .init_resource::<SelectedSwatch>()
+        .init_resource::<CanvasViewState>()
         .init_resource::<EditorNodeView>()
         .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
@@ -856,6 +932,8 @@ fn ui_system(
     mut mode: ResMut<ThemeModeRes>,
     mut pastel: ResMut<PastelToggle>,
     mut tint: ResMut<TintRgba>,
+    mut root_view: ResMut<DemoRootView>,
+    mut canvas_view: ResMut<CanvasViewState>,
     // ── Sharp-zoom node-graph plumbing (bundled to stay under
     //    Bevy's 16-system-param cap) ──
     mut node_view_params: NodeViewSystemParams,
@@ -879,6 +957,14 @@ fn ui_system(
     frost_core::style::apply_theme(ctx, *accent, *glass);
 
     let accent_col = frost_core::style::active_accent();
+
+    // Actual root/L0 canvas switch:
+    // - BevyScene is the normal demo: Bevy 3D scene plus Frost panes/ribbons.
+    // - Canvas owns the whole egui canvas and replaces the Bevy scene visually.
+    if *root_view == DemoRootView::Canvas {
+        canvas_root_view(ctx, accent_col, &mut canvas_view);
+    }
+
     // Fullscreen-view branch. The fullscreen overlay paints at
     // `Order::Background`, so the ribbon assembly below (drawn at
     // `Order::Middle`) layers over the maximised canvas. Which set
@@ -921,6 +1007,9 @@ fn ui_system(
     };
 
     for &(_, button_id, default_anchor, label) in PANE_DEFS {
+        if *root_view == DemoRootView::Canvas {
+            continue;
+        }
         if !is_open(button_id) {
             continue;
         }
@@ -1032,11 +1121,18 @@ fn ui_system(
             ctx,
             accent_col,
             RIBBONS,
-            RIBBON_ITEMS,
+            if *root_view == DemoRootView::Canvas {
+                RIBBON_ITEMS_ROOT_VIEW
+            } else {
+                RIBBON_ITEMS
+            },
             &mut open,
             &mut placement,
             &mut drag,
-            |_| false,
+            |id| match *root_view {
+                DemoRootView::BevyScene => id == ACTION_VIEW_BEVY,
+                DemoRootView::Canvas => id == ACTION_VIEW_CANVAS,
+            },
         )
     };
 
@@ -1052,6 +1148,14 @@ fn ui_system(
         (191, 115, 242),
     ];
     for click in clicks {
+        if click.item == ACTION_VIEW_BEVY {
+            *root_view = DemoRootView::BevyScene;
+            continue;
+        }
+        if click.item == ACTION_VIEW_CANVAS {
+            *root_view = DemoRootView::Canvas;
+            continue;
+        }
         if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
             let cur = accent.0;
             let cur_idx = SWATCH_RGB
@@ -1067,6 +1171,76 @@ fn ui_system(
             accent.0 = egui::Color32::from_rgb(r, g, b);
         }
     }
+}
+
+// ─── Canvas root view ──────────────────────────────────────────────
+
+fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut CanvasViewState) {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(frost_core::style::theme().palette.bg_window))
+        .show(ctx, |ui| {
+            let rect = ui.max_rect();
+            let response = ui.allocate_rect(rect, egui::Sense::drag());
+            let painter = ui.painter_at(rect);
+
+            painter.rect_filled(rect, 0, frost_core::style::theme().palette.bg_panel);
+
+            let grid = 32.0;
+            let grid_col = egui::Color32::from_rgba_unmultiplied(
+                frost_core::style::on_panel_dim().r(),
+                frost_core::style::on_panel_dim().g(),
+                frost_core::style::on_panel_dim().b(),
+                34,
+            );
+            let mut x = rect.left() + grid;
+            while x < rect.right() {
+                painter.line_segment(
+                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    egui::Stroke::new(1.0, grid_col),
+                );
+                x += grid;
+            }
+            let mut y = rect.top() + grid;
+            while y < rect.bottom() {
+                painter.line_segment(
+                    [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    egui::Stroke::new(1.0, grid_col),
+                );
+                y += grid;
+            }
+
+            if response.drag_started() {
+                canvas.strokes.push(Vec::new());
+            }
+            if response.dragged() || response.drag_started() {
+                if let Some(pos) = response
+                    .interact_pointer_pos()
+                    .filter(|pos| rect.contains(*pos))
+                {
+                    if let Some(stroke) = canvas.strokes.last_mut() {
+                        if stroke.last().is_none_or(|last| last.distance(pos) > 1.5) {
+                            stroke.push(pos);
+                        }
+                    }
+                }
+            }
+
+            for stroke in &canvas.strokes {
+                for points in stroke.windows(2) {
+                    painter.line_segment([points[0], points[1]], egui::Stroke::new(3.0, accent));
+                }
+            }
+
+            if canvas.strokes.is_empty() {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Canvas root view\ndrag to draw",
+                    egui::FontId::proportional(24.0),
+                    frost_core::style::on_panel_dim(),
+                );
+            }
+        });
 }
 
 // ─── Per-pane content ──────────────────────────────────────────────

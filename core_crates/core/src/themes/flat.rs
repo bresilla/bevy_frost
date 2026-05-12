@@ -5,12 +5,13 @@
 //! as data rather than with renderer-side `if theme == ...` branches.
 
 use crate::style::{
-    BadgeTheme, ButtonTheme, ChipTheme, CodeTheme, ColorMode, ColorTheme, DragValueTheme,
-    DropdownTheme, GlassTheme, GraphCanvasPattern, GraphTheme, IconTheme, KeybindingTheme, Mode,
-    MotionTheme, OverlayTheme, PaletteTheme, PaneTheme, PodTheme, ProgressTheme, ReadoutTheme,
-    RibbonTheme, SelectTheme, ShapeTheme, SliderTheme, StrokeTheme, TabInactiveGlyphColor,
-    TabLayout, TabOuterInset, TabTheme, TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme,
-    TreeTheme, WidgetTheme,
+    ActiveIndicatorTheme, BadgeTheme, ButtonTheme, ChipTheme, CodeTheme, ColorMode, ColorTheme,
+    DragValueTheme, DropdownTheme, GlassTheme, GraphCanvasPattern, GraphTheme, IconTheme,
+    KeybindingTheme, Mode, ModuleTheme, MotionTheme, OverlayTheme, PaletteTheme, PaneTheme,
+    PodTheme, ProgressTheme, ReadoutTheme, RibbonChromeTheme, RibbonTheme, SelectTheme, ShapeTheme,
+    SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset, TabTheme,
+    TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
+    ViewTheme, WidgetTheme,
 };
 
 use super::pro::theme_pro;
@@ -182,6 +183,19 @@ pub const fn theme_flat(mode: Mode) -> Theme {
             placeholder_text: "(maximised)",
             ghost_fill_alpha: 80,
             ghost_stroke_width: 2.0,
+        },
+        views: ViewTheme {
+            switcher_layout: ViewSwitcherLayout::Horizontal,
+            switcher_button_min: 34.0,
+            active_indicator_thickness: 2.0,
+            active_indicator_inset: 2.0,
+            close_icon: "dismiss",
+        },
+        modules: ModuleTheme {
+            allow_fullscreen_by_default: true,
+            workspace_restore_icon: "arrow_minimize",
+            workspace_restore_label: "Restore",
+            inline_workspace_button_label: "Open workspace",
         },
         tabs: TabTheme {
             layout: TabLayout::FolderSideStrip,
@@ -355,6 +369,36 @@ pub const fn theme_flat(mode: Mode) -> Theme {
             button_accent_fill: false,
             ghost_fill_alpha: 100,
             ghost_stroke_width: 2.0,
+            permanent: RibbonChromeTheme {
+                button_size: 34.0,
+                button_gap: 4.0,
+                edge_gap: 8.0,
+                panel_gap: 4.0,
+                ghost_fill_alpha: 100,
+                ghost_stroke_width: 2.0,
+            },
+            view_local: RibbonChromeTheme {
+                button_size: 34.0,
+                button_gap: 4.0,
+                edge_gap: 8.0,
+                panel_gap: 4.0,
+                ghost_fill_alpha: 100,
+                ghost_stroke_width: 2.0,
+            },
+            workspace: RibbonChromeTheme {
+                button_size: 34.0,
+                button_gap: 4.0,
+                edge_gap: 8.0,
+                panel_gap: 4.0,
+                ghost_fill_alpha: 100,
+                ghost_stroke_width: 2.0,
+            },
+            slot_override_transition: 0.08,
+            active_view_indicator: ActiveIndicatorTheme {
+                thickness: 2.0,
+                inset: 4.0,
+                alpha: 220,
+            },
         },
         container: crate::style::ContainerTheme {
             title_zone_thickness: 22.0,

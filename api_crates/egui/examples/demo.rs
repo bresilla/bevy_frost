@@ -257,6 +257,13 @@ impl Default for TintRgba {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DemoRootView {
+    #[default]
+    FrostGallery,
+    EframeHost,
+}
+
 /// All the per-frame mutable state the demo carries — accent
 /// colour, glass opacity, ribbon state, and the various theme
 /// toggles. Mirrors what `bevy_frost`'s demo holds across separate
@@ -271,6 +278,7 @@ struct FrostApp {
     mode: ThemeModeRes,
     pastel: PastelToggle,
     tint: TintRgba,
+    root_view: DemoRootView,
     /// Persistent secondary-context state for the node graph
     /// (sub egui::Context, pan, zoom, wgpu render target).
     /// Owns wgpu resources, hence App-owned and passed by &mut
@@ -299,6 +307,7 @@ impl Default for FrostApp {
             mode: ThemeModeRes::default(),
             pastel: PastelToggle::default(),
             tint: TintRgba::default(),
+            root_view: DemoRootView::default(),
             node_view: NodeViewState::new(),
             graph: default_graph(),
             viewer: DemoViewer,
@@ -353,6 +362,7 @@ impl eframe::App for FrostApp {
             mode,
             pastel,
             tint,
+            root_view,
             node_view,
             graph,
             viewer,
@@ -376,96 +386,230 @@ impl eframe::App for FrostApp {
         // `Order::Foreground` with the `embed` fullscreen overlay, so
         // they must register later to land on top of it.
 
-        let is_open = |id: &'static str| -> bool {
-            let Some(item) = find_item(RIBBON_ITEMS, id) else {
-                return false;
-            };
-            let (rid, _, _) = placement.resolve(item);
-            open.is_open(rid, id)
-        };
-        let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
-            let item = find_item(RIBBON_ITEMS, id)?;
-            let (rid, cluster, _) = placement.resolve(item);
-            let def = find_ribbon(RIBBONS, rid)?;
-            let zone = match cluster {
-                RibbonCluster::Start => RailZone::Start,
-                RibbonCluster::Middle => RailZone::Middle,
-                RibbonCluster::End => RailZone::End,
-            };
-            Some(match def.edge {
-                RibbonEdge::Left => PaneAnchor::LeftRail(zone),
-                RibbonEdge::Right => PaneAnchor::RightRail(zone),
-                RibbonEdge::Top => PaneAnchor::TopRail(zone),
-                RibbonEdge::Bottom => PaneAnchor::BottomRail(zone),
-            })
-        };
+        match *root_view {
+            DemoRootView::FrostGallery => {
+                let is_open = |id: &'static str| -> bool {
+                    let Some(item) = find_item(RIBBON_ITEMS, id) else {
+                        return false;
+                    };
+                    let (rid, _, _) = placement.resolve(item);
+                    open.is_open(rid, id)
+                };
+                let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
+                    let item = find_item(RIBBON_ITEMS, id)?;
+                    let (rid, cluster, _) = placement.resolve(item);
+                    let def = find_ribbon(RIBBONS, rid)?;
+                    let zone = match cluster {
+                        RibbonCluster::Start => RailZone::Start,
+                        RibbonCluster::Middle => RailZone::Middle,
+                        RibbonCluster::End => RailZone::End,
+                    };
+                    Some(match def.edge {
+                        RibbonEdge::Left => PaneAnchor::LeftRail(zone),
+                        RibbonEdge::Right => PaneAnchor::RightRail(zone),
+                        RibbonEdge::Top => PaneAnchor::TopRail(zone),
+                        RibbonEdge::Bottom => PaneAnchor::BottomRail(zone),
+                    })
+                };
 
-        for &(_, button_id, default_anchor, label) in PANE_DEFS {
-            if !is_open(button_id) {
-                continue;
-            }
-            let anchor = live_anchor(button_id).unwrap_or(default_anchor);
-            // Borrow App-side fields the editor pane needs for its
-            // sharp-zoom node graph. Keep them &mut here so the
-            // PANE_EDITOR branch can pass them down to `editor_pane`.
-            let node_view_ref = &mut *node_view;
-            let graph_ref = &mut *graph;
-            let viewer_ref = &mut *viewer;
-            let render_state_ref = &render_state;
-            Pane2::new(button_id, label, anchor, accent_col)
-                .resize(frost_core::pane::PaneResize::SPAN)
-                .show(ctx, |body| match button_id {
-                    PANE_WIDGETS => widgets_pane(body),
-                    PANE_CONTAINERS => containers_pane(body),
-                    PANE_SCENE => scene_pane(body),
-                    PANE_EDITOR => {
-                        editor_pane(body, node_view_ref, graph_ref, viewer_ref, render_state_ref)
+                for &(_, button_id, default_anchor, label) in PANE_DEFS {
+                    if !is_open(button_id) {
+                        continue;
                     }
-                    PANE_THEME => theme_pane(body, accent, glass, family, mode, pastel, tint),
-                    PANE_KEYS => keys_pane(body),
-                    PANE_ABOUT => about_pane(body),
-                    _ => {}
-                });
+                    let anchor = live_anchor(button_id).unwrap_or(default_anchor);
+                    // Borrow App-side fields the editor pane needs for its
+                    // sharp-zoom node graph. Keep them &mut here so the
+                    // PANE_EDITOR branch can pass them down to `editor_pane`.
+                    let node_view_ref = &mut *node_view;
+                    let graph_ref = &mut *graph;
+                    let viewer_ref = &mut *viewer;
+                    let render_state_ref = &render_state;
+                    Pane2::new(button_id, label, anchor, accent_col)
+                        .resize(frost_core::pane::PaneResize::SPAN)
+                        .show(ctx, |body| match button_id {
+                            PANE_WIDGETS => widgets_pane(body),
+                            PANE_CONTAINERS => containers_pane(body),
+                            PANE_SCENE => scene_pane(body),
+                            PANE_EDITOR => editor_pane(
+                                body,
+                                node_view_ref,
+                                graph_ref,
+                                viewer_ref,
+                                render_state_ref,
+                            ),
+                            PANE_THEME => {
+                                theme_pane(body, accent, glass, family, mode, pastel, tint)
+                            }
+                            PANE_KEYS => keys_pane(body),
+                            PANE_ABOUT => about_pane(body),
+                            _ => {}
+                        });
+                }
+
+                // Ribbon paint, AFTER the panes — registration order within
+                // `Order::Foreground` lands the ribbon `Area`s on top of the
+                // `embed` fullscreen overlay.
+                let clicks = draw_assembly(
+                    ctx,
+                    accent_col,
+                    RIBBONS,
+                    RIBBON_ITEMS,
+                    open,
+                    placement,
+                    drag,
+                    |_| false,
+                );
+                const SWATCH_RGB: &[(u8, u8, u8)] = &[
+                    (230, 76, 76),
+                    (242, 166, 51),
+                    (242, 230, 76),
+                    (89, 217, 115),
+                    (76, 153, 242),
+                    (191, 115, 242),
+                ];
+                for click in clicks {
+                    if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
+                        let cur = accent.0;
+                        let cur_idx = SWATCH_RGB
+                            .iter()
+                            .position(|&(r, g, b)| egui::Color32::from_rgb(r, g, b) == cur)
+                            .unwrap_or(0);
+                        let next_idx = if click.item == ACTION_PREV_CUBE {
+                            (cur_idx + SWATCH_RGB.len() - 1) % SWATCH_RGB.len()
+                        } else {
+                            (cur_idx + 1) % SWATCH_RGB.len()
+                        };
+                        let (r, g, b) = SWATCH_RGB[next_idx];
+                        accent.0 = egui::Color32::from_rgb(r, g, b);
+                    }
+                }
+            }
+            DemoRootView::EframeHost => {
+                eframe_host_view(ctx, accent_col);
+            }
         }
 
-        // Ribbon paint, AFTER the panes — registration order within
-        // `Order::Foreground` lands the ribbon `Area`s on top of the
-        // `embed` fullscreen overlay.
-        let clicks = draw_assembly(
-            ctx,
-            accent_col,
-            RIBBONS,
-            RIBBON_ITEMS,
-            open,
-            placement,
-            drag,
-            |_| false,
-        );
-        const SWATCH_RGB: &[(u8, u8, u8)] = &[
-            (230, 76, 76),
-            (242, 166, 51),
-            (242, 230, 76),
-            (89, 217, 115),
-            (76, 153, 242),
-            (191, 115, 242),
-        ];
-        for click in clicks {
-            if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
-                let cur = accent.0;
-                let cur_idx = SWATCH_RGB
-                    .iter()
-                    .position(|&(r, g, b)| egui::Color32::from_rgb(r, g, b) == cur)
-                    .unwrap_or(0);
-                let next_idx = if click.item == ACTION_PREV_CUBE {
-                    (cur_idx + SWATCH_RGB.len() - 1) % SWATCH_RGB.len()
-                } else {
-                    (cur_idx + 1) % SWATCH_RGB.len()
-                };
-                let (r, g, b) = SWATCH_RGB[next_idx];
-                accent.0 = egui::Color32::from_rgb(r, g, b);
-            }
+        if let Some(next_view) = draw_demo_view_switcher(ctx, accent_col, *root_view) {
+            *root_view = next_view;
         }
     }
+}
+
+// ─── Root view switcher ────────────────────────────────────────────
+
+fn draw_demo_view_switcher(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    active: DemoRootView,
+) -> Option<DemoRootView> {
+    let mut next = None;
+    let screen = ctx.content_rect();
+    let pos = egui::pos2(screen.center().x - 120.0, screen.top() + 8.0);
+
+    egui::Area::new(egui::Id::new("demo.root_view_switcher.visible"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(frost_core::style::glass_fill(
+                    frost_core::style::theme().palette.bg_panel,
+                    accent,
+                    frost_core::style::glass_alpha_card(),
+                ))
+                .stroke(frost_core::style::stroke_for(
+                    frost_core::style::StrokeRole::WidgetBorder,
+                    accent,
+                ))
+                .corner_radius(frost_core::style::radius_for(
+                    frost_core::style::RadiusRole::Widget,
+                ))
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if root_view_button(
+                            ui,
+                            "▦ Frost",
+                            active == DemoRootView::FrostGallery,
+                            accent,
+                        ) {
+                            next = Some(DemoRootView::FrostGallery);
+                        }
+                        if root_view_button(
+                            ui,
+                            "▣ Eframe",
+                            active == DemoRootView::EframeHost,
+                            accent,
+                        ) {
+                            next = Some(DemoRootView::EframeHost);
+                        }
+                    });
+                });
+        });
+
+    next
+}
+
+fn root_view_button(
+    ui: &mut egui::Ui,
+    label: &'static str,
+    active: bool,
+    accent: egui::Color32,
+) -> bool {
+    let fill = if active {
+        accent
+    } else {
+        frost_core::style::theme().palette.bg_raised
+    };
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).strong())
+            .fill(fill)
+            .stroke(frost_core::style::stroke_for(
+                frost_core::style::StrokeRole::WidgetBorder,
+                accent,
+            ))
+            .min_size(egui::vec2(104.0, 28.0)),
+    )
+    .on_hover_text("Switch root/L0 demo view")
+    .clicked()
+}
+
+fn eframe_host_view(ctx: &egui::Context, accent: egui::Color32) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(96.0);
+            ui.heading("Eframe host view");
+            ui.label("This is a second root/L0 view inside the main demo.");
+            ui.label(
+                "Use the permanent top-center Frost / Eframe switcher to swap the whole canvas.",
+            );
+            ui.add_space(16.0);
+            ui.group(|ui| {
+                ui.label("Plain egui content can live here without the legacy pane gallery.");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.colored_label(accent, "accent");
+                    ui.label(format!(
+                        "#{:02X}{:02X}{:02X}",
+                        accent.r(),
+                        accent.g(),
+                        accent.b()
+                    ));
+                });
+                let mut demo_value = ui.ctx().data(|d| {
+                    d.get_temp::<f32>(egui::Id::new("demo.eframe.slider"))
+                        .unwrap_or(42.0)
+                });
+                if ui
+                    .add(egui::Slider::new(&mut demo_value, 0.0..=100.0).text("host value"))
+                    .changed()
+                {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(egui::Id::new("demo.eframe.slider"), demo_value)
+                    });
+                }
+            });
+        });
+    });
 }
 
 // ─── Per-pane content ──────────────────────────────────────────────

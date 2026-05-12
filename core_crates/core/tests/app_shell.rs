@@ -1,0 +1,327 @@
+use frost_core::{
+    FrostView, RibbonAction, RibbonCluster, RibbonEdge, RibbonOverrideLayer, RibbonOverridePolicy,
+    RibbonScope, RibbonSlot, RibbonSlotDef, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride,
+    ViewCtx, ViewId, ViewRouter, dispatch_app_shell_action, permanent_system_control_ribbon,
+    resolve_app_shell_ribbons, resolve_app_shell_ribbons_with_workspace_layers,
+};
+
+struct ShellView {
+    id: ViewId,
+    title: &'static str,
+    override_slot: Option<RibbonSlotOverride>,
+}
+
+impl ShellView {
+    fn new(id: &'static str, title: &'static str) -> Self {
+        Self {
+            id: ViewId::new(id),
+            title,
+            override_slot: None,
+        }
+    }
+
+    fn with_override(mut self, override_slot: RibbonSlotOverride) -> Self {
+        self.override_slot = Some(override_slot);
+        self
+    }
+}
+
+impl FrostView for ShellView {
+    fn id(&self) -> ViewId {
+        self.id
+    }
+
+    fn title(&self) -> &str {
+        self.title
+    }
+
+    fn icon(&self) -> &'static str {
+        "view"
+    }
+
+    fn ribbons(&mut self) -> Vec<RibbonSlotDef> {
+        let item = RibbonSlotItem::new(
+            egui::Id::new(("view.local.item", self.id.0)),
+            "eye",
+            "View Tool",
+            "View-local tool",
+            RibbonAction::Command(egui::Id::new("view-tool")),
+        );
+        vec![RibbonSlotDef::new(
+            egui::Id::new(("view.local.ribbon", self.id.0)),
+            RibbonScope::View(self.id),
+            RibbonEdge::Left,
+            RibbonCluster::Start,
+            vec![RibbonSlot::new(
+                RibbonSlotId::new(("view.local.slot", self.id.0)),
+                Some(item),
+                RibbonOverridePolicy::Fixed,
+            )],
+        )]
+    }
+
+    fn ribbon_overrides(&mut self) -> RibbonOverrideLayer {
+        RibbonOverrideLayer::new(self.override_slot.clone().into_iter().collect())
+    }
+
+    fn show(&mut self, _ctx: &mut ViewCtx<'_>) {}
+}
+
+#[test]
+fn app_shell_resolves_permanent_and_active_view_ribbons() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let permanent = vec![permanent_system_control_ribbon()];
+
+    let resolved = resolve_app_shell_ribbons(&mut router, &permanent).unwrap();
+    assert_eq!(resolved.ribbons.len(), 2);
+    assert_eq!(resolved.ribbons[0].items[0].action, RibbonAction::CloseApp);
+    assert_eq!(
+        resolved.ribbons[1].scope,
+        RibbonScope::View(ViewId::new("bevy"))
+    );
+    assert_eq!(resolved.ribbons[1].items[0].icon, "eye");
+}
+
+#[test]
+fn l1_workspace_overrides_permanent_close_slot_with_restore() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("graph"));
+    let permanent = vec![permanent_system_control_ribbon()];
+
+    let resolved = resolve_app_shell_ribbons(&mut router, &permanent).unwrap();
+    let system = &resolved.ribbons[0].items[0];
+    assert_eq!(system.action, RibbonAction::PopWorkspace);
+    assert_eq!(system.icon, "arrow_minimize");
+}
+
+#[test]
+fn deepest_workspace_override_beats_active_view_override_in_app_shell() {
+    let override_slot = RibbonSlotOverride::new(
+        frost_core::system_close_or_restore_slot_id(),
+        RibbonSlotItem::new(
+            egui::Id::new("view.close.override"),
+            "settings",
+            "Settings",
+            "Settings",
+            RibbonAction::Command(egui::Id::new("settings")),
+        ),
+    );
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy").with_override(override_slot));
+    let permanent = vec![permanent_system_control_ribbon()];
+
+    let l0 = resolve_app_shell_ribbons(&mut router, &permanent).unwrap();
+    assert_eq!(l0.ribbons[0].items[0].icon, "settings");
+
+    router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("graph"));
+    let l1 = resolve_app_shell_ribbons(&mut router, &permanent).unwrap();
+    assert_eq!(l1.ribbons[0].items[0].action, RibbonAction::PopWorkspace);
+}
+
+#[test]
+fn app_shell_dispatch_routes_actions() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let graph = router.register(ShellView::new("graph", "Graph"));
+
+    dispatch_app_shell_action(&mut router, RibbonAction::SwitchView(graph)).unwrap();
+    assert_eq!(router.active(), Ok(graph));
+
+    dispatch_app_shell_action(
+        &mut router,
+        RibbonAction::PushModuleWorkspace(egui::Id::new("image")),
+    )
+    .unwrap();
+    assert_eq!(router.active_workspace().unwrap().depth(), 1);
+
+    dispatch_app_shell_action(&mut router, RibbonAction::PopWorkspace).unwrap();
+    assert_eq!(router.active_workspace().unwrap().depth(), 0);
+}
+
+#[test]
+fn workspace_supplied_layers_can_override_active_l1_slots() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("graph"));
+    let permanent = vec![permanent_system_control_ribbon()];
+    let workspace_layer = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
+        frost_core::system_close_or_restore_slot_id(),
+        RibbonSlotItem::new(
+            egui::Id::new("module.custom.restore"),
+            "module_restore",
+            "Back",
+            "Back from module",
+            RibbonAction::PopWorkspace,
+        ),
+    )]);
+
+    let resolved = resolve_app_shell_ribbons_with_workspace_layers(
+        &mut router,
+        &permanent,
+        &[workspace_layer],
+    )
+    .unwrap();
+    assert_eq!(resolved.ribbons[0].items[0].icon, "module_restore");
+}
+
+#[test]
+fn workspace_local_ribbons_participate_in_shell_resolution() {
+    use frost_core::{
+        RibbonAction, RibbonCluster, RibbonEdge, RibbonOverridePolicy, RibbonScope, RibbonSlot,
+        RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
+    };
+
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let level = router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("canvas-module"));
+    let workspace_ribbon = RibbonSlotDef::new(
+        egui::Id::new("workspace.ribbon"),
+        RibbonScope::WorkspaceLevel(level.id),
+        RibbonEdge::Top,
+        RibbonCluster::Middle,
+        vec![RibbonSlot::new(
+            RibbonSlotId::new("workspace.tool"),
+            Some(RibbonSlotItem::new(
+                egui::Id::new("workspace.pen"),
+                "draw",
+                "Pen",
+                "Use pen",
+                RibbonAction::Command(egui::Id::new("workspace.pen.command")),
+            )),
+            RibbonOverridePolicy::Fixed,
+        )],
+    );
+
+    let resolved = frost_core::resolve_app_shell_ribbons_with_workspace_chrome(
+        &mut router,
+        &[],
+        &[workspace_ribbon],
+        &[],
+    )
+    .unwrap();
+
+    let workspace = resolved
+        .ribbons
+        .iter()
+        .find(|ribbon| matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == level.id))
+        .unwrap();
+    assert_eq!(workspace.items[0].icon, "draw");
+}
+
+#[test]
+fn app_shell_calls_workspace_renderer_for_l1() {
+    use frost_core::{
+        RibbonAction, RibbonCluster, RibbonEdge, RibbonOverridePolicy, RibbonScope, RibbonSlot,
+        RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
+    };
+
+    let egui_ctx = egui::Context::default();
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let level = router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("graph-module"));
+    let mut called = false;
+
+    let (resolved, _) = frost_core::show_app_shell_with_workspace_renderer(
+        &egui_ctx,
+        &mut router,
+        &[],
+        egui::Color32::WHITE,
+        |_ctx, ws| {
+            called = true;
+            ws.add_ribbon(RibbonSlotDef::new(
+                egui::Id::new("workspace.rendered.ribbon"),
+                RibbonScope::WorkspaceLevel(level.id),
+                RibbonEdge::Top,
+                RibbonCluster::Middle,
+                vec![RibbonSlot::new(
+                    RibbonSlotId::new("workspace.rendered.tool"),
+                    Some(RibbonSlotItem::new(
+                        egui::Id::new("workspace.rendered.item"),
+                        "node_tree",
+                        "Graph",
+                        "Graph tool",
+                        RibbonAction::Command(egui::Id::new("workspace.rendered.command")),
+                    )),
+                    RibbonOverridePolicy::Fixed,
+                )],
+            ));
+        },
+    )
+    .unwrap();
+
+    assert!(called);
+    assert!(resolved.ribbons.iter().any(
+        |ribbon| matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == level.id)
+            && ribbon.items[0].icon == "node_tree"
+    ));
+}
+
+fn main_bar_with_slots(slots: Vec<RibbonSlot>) -> frost_core::AppShellChrome {
+    frost_core::AppShellChrome::new(RibbonSlotDef::new(
+        egui::Id::new("main.bar"),
+        RibbonScope::View(ViewId::new("wrong-scope-is-forced-permanent")),
+        RibbonEdge::Top,
+        RibbonCluster::Middle,
+        slots,
+    ))
+}
+
+#[test]
+fn app_shell_chrome_enforces_persistent_main_bar() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let canvas = router.register(ShellView::new("canvas", "Canvas"));
+    let slot = RibbonSlot::new(
+        RibbonSlotId::new("view.bevy"),
+        Some(RibbonSlotItem::new(
+            egui::Id::new("view.bevy.item"),
+            "cube",
+            "Bevy",
+            "Bevy view",
+            RibbonAction::SwitchView(ViewId::new("bevy")),
+        )),
+        RibbonOverridePolicy::Fixed,
+    );
+    let chrome = main_bar_with_slots(vec![slot]);
+
+    let initial = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
+    assert_eq!(initial.ribbons[0].scope, RibbonScope::Permanent);
+    assert_eq!(initial.ribbons[0].items[0].icon, "cube");
+
+    router.set_active(canvas).unwrap();
+    let switched = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
+    assert_eq!(switched.ribbons[0].scope, RibbonScope::Permanent);
+    assert_eq!(switched.ribbons[0].items[0].icon, "cube");
+}
+
+#[test]
+fn persistent_main_bar_slot_requires_explicit_hide_override() {
+    let slot_id = RibbonSlotId::new("global.about");
+    let slot = RibbonSlot::new(
+        slot_id,
+        Some(RibbonSlotItem::new(
+            egui::Id::new("global.about.item"),
+            "info",
+            "About",
+            "About",
+            RibbonAction::Command(egui::Id::new("about")),
+        )),
+        RibbonOverridePolicy::LayerOverride,
+    );
+    let mut router = ViewRouter::new(
+        ShellView::new("canvas", "Canvas").with_override(RibbonSlotOverride::hidden(slot_id)),
+    );
+    let chrome = main_bar_with_slots(vec![slot]);
+
+    let resolved = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
+    assert!(resolved.ribbons[0].items.is_empty());
+}

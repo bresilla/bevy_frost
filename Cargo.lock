@@ -2551,6 +2551,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "frost_canvas"
+version = "0.0.1"
+dependencies = [
+ "egui",
+ "frost_core",
+]
+
+[[package]]
 name = "frost_code"
 version = "0.0.1"
 dependencies = [
@@ -2579,6 +2587,14 @@ dependencies = [
  "slab",
  "smallvec",
  "wgpu",
+]
+
+[[package]]
+name = "frost_image"
+version = "0.0.1"
+dependencies = [
+ "egui",
+ "frost_core",
 ]
 
 [[package]]

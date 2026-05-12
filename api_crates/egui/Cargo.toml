@@ -57,3 +57,7 @@ wgpu = { version = "27", default-features = false, features = ["vulkan"] }
 [[example]]
 name = "demo"
 path = "examples/demo.rs"
+
+[[example]]
+name = "views"
+path = "examples/views.rs"

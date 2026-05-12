@@ -518,3 +518,238 @@ impl<'ui, 'spec> crate::pane::PaneBody<'ui, 'spec> {
         self
     }
 }
+
+// ─── View + Module bridge ──────────────────────────────────────────
+//
+// The sharp offscreen node-view path above remains available for host
+// demos that can provide a backend. This retained surface uses the
+// plain egui graph widget so it can implement PLAN.md's View + Module
+// traits without storing host-specific renderer state.
+
+/// A retained node-graph surface that can be routed as a top-level
+/// [`crate::FrostView`] or embedded as a [`crate::FrostModule`].
+#[derive(Clone, Debug)]
+pub struct GraphSurface<T, V> {
+    id: egui::Id,
+    title: String,
+    graph: Graph<T>,
+    viewer: V,
+    units: usize,
+}
+
+impl<T, V> GraphSurface<T, V> {
+    #[must_use]
+    pub fn new(
+        id: impl std::hash::Hash,
+        title: impl Into<String>,
+        graph: Graph<T>,
+        viewer: V,
+    ) -> Self {
+        Self {
+            id: egui::Id::new(id),
+            title: title.into(),
+            graph,
+            viewer,
+            units: 14,
+        }
+    }
+
+    #[must_use]
+    pub fn graph(&self) -> &Graph<T> {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut Graph<T> {
+        &mut self.graph
+    }
+
+    #[must_use]
+    pub fn viewer(&self) -> &V {
+        &self.viewer
+    }
+
+    pub fn viewer_mut(&mut self) -> &mut V {
+        &mut self.viewer
+    }
+
+    #[must_use]
+    pub fn with_units(mut self, units: usize) -> Self {
+        self.units = units.max(1);
+        self
+    }
+}
+
+impl<T, V> GraphSurface<T, V>
+where
+    V: NodeViewer<T>,
+{
+    fn show_graph(&mut self, ui: &mut egui::Ui) {
+        let size = ui.available_size_before_wrap();
+        GraphWidget::new()
+            .id(self.id)
+            .style(frost_node_graph_style(crate::style::active_accent()))
+            .min_size(size)
+            .show(&mut self.graph, &mut self.viewer, ui);
+    }
+
+    fn toolbar(&self, scope: crate::RibbonScope) -> crate::RibbonSlotDef {
+        let add_node = crate::RibbonSlotItem::new(
+            egui::Id::new(("graph.add_node", self.id)),
+            "add",
+            "Add Node",
+            "Add a graph node",
+            crate::RibbonAction::Command(egui::Id::new(("graph.add_node.command", self.id))),
+        );
+        crate::RibbonSlotDef::new(
+            egui::Id::new(("graph.ribbon", self.id)),
+            scope,
+            crate::RibbonEdge::Top,
+            crate::RibbonCluster::Middle,
+            vec![crate::RibbonSlot::new(
+                crate::RibbonSlotId::new(("graph.add_node.slot", self.id)),
+                Some(add_node),
+                crate::RibbonOverridePolicy::Fixed,
+            )],
+        )
+    }
+}
+
+impl<T, V> crate::FrostView for GraphSurface<T, V>
+where
+    V: NodeViewer<T>,
+{
+    fn id(&self) -> crate::ViewId {
+        crate::ViewId(self.id)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn icon(&self) -> &'static str {
+        "node_tree"
+    }
+
+    fn ribbons(&mut self) -> Vec<crate::RibbonSlotDef> {
+        vec![self.toolbar(crate::RibbonScope::View(crate::ViewId(self.id)))]
+    }
+
+    fn show(&mut self, ctx: &mut crate::ViewCtx<'_>) {
+        egui::CentralPanel::default().show(ctx.egui_ctx, |ui| {
+            self.show_graph(ui);
+        });
+    }
+}
+
+impl<T, V> crate::FrostModule for GraphSurface<T, V>
+where
+    V: NodeViewer<T>,
+{
+    fn id(&self) -> egui::Id {
+        self.id
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn icon(&self) -> &'static str {
+        "node_tree"
+    }
+
+    fn inline(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: crate::ModuleInlineCtx<'_>,
+    ) -> crate::ModuleResponse {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("Graph: {}", self.title));
+            });
+            self.show_graph(ui);
+            if ctx.can_enter_workspace()
+                && ui
+                    .button(crate::style::theme().modules.inline_workspace_button_label)
+                    .clicked()
+            {
+                crate::ModuleResponse::enter_workspace()
+            } else {
+                crate::ModuleResponse::none()
+            }
+        })
+        .inner
+    }
+
+    fn workspace(&mut self, ws: &mut crate::WorkspaceCtx<'_>) {
+        ws.add_bar(
+            crate::WorkspaceBar::new(
+                egui::Id::new(("graph.workspace.bar", self.id)),
+                crate::WorkspaceBarEdge::Top,
+                crate::WorkspaceBarCluster::Middle,
+            )
+            .with_item(crate::WorkspaceBarItem::command(
+                egui::Id::new(("graph.workspace.add_node", self.id)),
+                "Add Node",
+                Some("add"),
+            )),
+        );
+        ws.add_ribbon(self.toolbar(crate::RibbonScope::WorkspaceLevel(ws.level.id)));
+    }
+}
+
+#[cfg(test)]
+mod view_module_bridge_tests {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct TestNode(&'static str);
+
+    #[derive(Clone, Debug, Default)]
+    struct TestViewer;
+
+    impl NodeViewer<TestNode> for TestViewer {
+        fn title(&mut self, node: &TestNode) -> String {
+            node.0.to_owned()
+        }
+
+        fn inputs(&mut self, _node: &TestNode) -> usize {
+            0
+        }
+
+        fn show_input(
+            &mut self,
+            _pin: &InPin,
+            _ui: &mut egui::Ui,
+            _graph: &mut Graph<TestNode>,
+        ) -> impl NodePin + 'static {
+            PinInfo::default()
+        }
+
+        fn outputs(&mut self, _node: &TestNode) -> usize {
+            0
+        }
+
+        fn show_output(
+            &mut self,
+            _pin: &OutPin,
+            _ui: &mut egui::Ui,
+            _graph: &mut Graph<TestNode>,
+        ) -> impl NodePin + 'static {
+            PinInfo::default()
+        }
+    }
+
+    fn assert_view<T: crate::FrostView>(_value: &T) {}
+    fn assert_module<T: crate::FrostModule>(_value: &T) {}
+
+    #[test]
+    fn graph_surface_is_both_view_and_module() {
+        let mut graph = Graph::new();
+        graph.insert_node(egui::pos2(0.0, 0.0), TestNode("Node"));
+        let surface = GraphSurface::new("graph-surface", "Graph", graph, TestViewer);
+        assert_view(&surface);
+        assert_module(&surface);
+        assert_eq!(crate::FrostView::title(&surface), "Graph");
+        assert_eq!(crate::FrostModule::icon(&surface), "node_tree");
+    }
+}

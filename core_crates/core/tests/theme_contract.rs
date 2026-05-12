@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use frost_core::style::{GraphCanvasPattern, Mode, TabLayout, theme_flat, theme_game, theme_pro};
+use frost_core::style::{
+    GraphCanvasPattern, Mode, TabLayout, ViewSwitcherLayout, theme_flat, theme_game, theme_pro,
+};
 
 #[test]
 fn renderers_do_not_branch_on_theme_name() {
@@ -69,6 +71,13 @@ fn built_in_themes_have_typed_identity_and_tab_layouts() {
     assert!(game.pod.widget_spacing > 0.0);
     assert!(pro.icons.overlay_icon_scale > 0.0);
     assert!(flat.icons.section_chevron_w > 0.0);
+    assert_eq!(pro.views.switcher_layout, ViewSwitcherLayout::Horizontal);
+    assert_eq!(game.views.switcher_layout, ViewSwitcherLayout::VerticalRail);
+    assert!(pro.modules.allow_fullscreen_by_default);
+    assert_eq!(pro.modules.workspace_restore_icon, "arrow_minimize");
+    assert!(pro.ribbon.permanent.button_size > 0.0);
+    assert!(game.ribbon.workspace.ghost_fill_alpha >= game.ribbon.view_local.ghost_fill_alpha);
+    assert!(flat.ribbon.slot_override_transition >= 0.0);
 
     assert_ne!(pro.name, game.name);
     assert_ne!(pro.name, flat.name);

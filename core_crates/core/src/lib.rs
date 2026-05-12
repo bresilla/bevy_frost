@@ -26,6 +26,7 @@
 //! * [`ribbon`] — edge button strips.
 //! * [`icons`] — Fluent UI System Icon glyph painter.
 
+pub mod app_shell;
 pub mod command_palette;
 pub mod container;
 pub mod debug;
@@ -33,12 +34,15 @@ pub mod embed;
 pub mod extras;
 pub mod icons;
 pub mod layer;
+pub mod module;
 pub mod pane;
 pub mod pod;
 pub mod ribbon;
 pub mod style;
 pub mod themes;
+pub mod view;
 pub mod widget;
+pub mod workspace;
 
 // Foundational row-height unit — re-exported at crate root so the
 // canonical name is `frost_core::UNIT`. Every widget is sized in
@@ -55,13 +59,32 @@ pub use style::{BODY_FONT_SIZE, UNIT};
 // that hadn't fully migrated to nested-module imports still
 // compile against frost_core without breakage.
 
+pub use app_shell::{
+    AppShellChrome, AppShellError, AppShellResolution, ResolvedRibbon, dispatch_app_shell_action,
+    resolve_app_shell_chrome, resolve_app_shell_chrome_with_workspace, resolve_app_shell_ribbons,
+    resolve_app_shell_ribbons_with_workspace_chrome,
+    resolve_app_shell_ribbons_with_workspace_layers, show_app_shell,
+    show_app_shell_chrome_with_slot_ribbons, show_app_shell_with_slot_ribbons,
+    show_app_shell_with_workspace_renderer,
+};
 pub use command_palette::{CommandPaletteState, PaletteItem, command_palette};
+pub use module::{FrostModule, ModuleInlineCtx, ModuleInlineOptions, ModuleResponse, WorkspaceCtx};
 pub use ribbon::{
-    RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem,
-    RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth, draw_assembly, find_item,
-    find_ribbon,
+    ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult, RibbonClick,
+    RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
+    RibbonOpen, RibbonOverrideLayer, RibbonOverridePolicy, RibbonPlacement, RibbonRole,
+    RibbonScope, RibbonSlot, RibbonSlotClick, RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
+    RibbonSlotOverride, RibbonWidth, dispatch_ribbon_action, draw_assembly, draw_slot_ribbons,
+    find_item, find_ribbon, permanent_system_control_ribbon, permanent_view_switcher_ribbon,
+    resolve_slot_item, resolve_slot_items, restore_workspace_slot_override,
+    system_close_or_restore_slot_id,
 };
 pub use style::{AccentColor, GlassOpacity, apply_theme, set_glass_opacity};
+pub use view::{FrostView, ViewCtx, ViewEntry, ViewId, ViewRouter, ViewRouterError};
+pub use workspace::{
+    WorkspaceBar, WorkspaceBarCluster, WorkspaceBarEdge, WorkspaceBarItem, WorkspaceBarItemKind,
+    WorkspaceLevelState, WorkspaceOwner, WorkspacePolicy, WorkspaceStack, WorkspaceStackError,
+};
 
 // Surface the free widget functions at the crate root so
 // `use bevy_frost::prelude::*;` brings every standalone widget

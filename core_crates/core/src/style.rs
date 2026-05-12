@@ -1428,6 +1428,53 @@ pub struct PaneTheme {
     pub title_brackets: bool,
 }
 
+/// Theme-owned root view switcher layout.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ViewSwitcherLayout {
+    /// Top/bottom horizontal tab or button strip.
+    Horizontal,
+    /// Left/right vertical icon rail.
+    VerticalRail,
+}
+
+/// Theme-owned top-level view chrome and system-control semantics.
+#[derive(Copy, Clone, Debug)]
+pub struct ViewTheme {
+    pub switcher_layout: ViewSwitcherLayout,
+    pub switcher_button_min: f32,
+    pub active_indicator_thickness: f32,
+    pub active_indicator_inset: f32,
+    pub close_icon: &'static str,
+}
+
+/// Theme-owned module workspace semantics and restore affordance.
+#[derive(Copy, Clone, Debug)]
+pub struct ModuleTheme {
+    pub allow_fullscreen_by_default: bool,
+    pub workspace_restore_icon: &'static str,
+    pub workspace_restore_label: &'static str,
+    pub inline_workspace_button_label: &'static str,
+}
+
+/// Visual treatment for one class of slot-based ribbons.
+#[derive(Copy, Clone, Debug)]
+pub struct RibbonChromeTheme {
+    pub button_size: f32,
+    pub button_gap: f32,
+    pub edge_gap: f32,
+    pub panel_gap: f32,
+    pub ghost_fill_alpha: u8,
+    pub ghost_stroke_width: f32,
+}
+
+/// Theme-owned active-view indicator treatment.
+#[derive(Copy, Clone, Debug)]
+pub struct ActiveIndicatorTheme {
+    pub thickness: f32,
+    pub inset: f32,
+    pub alpha: u8,
+}
+
 /// Theme-owned ribbon geometry and ribbon button chrome.
 #[derive(Copy, Clone, Debug)]
 pub struct RibbonTheme {
@@ -1438,6 +1485,11 @@ pub struct RibbonTheme {
     pub button_accent_fill: bool,
     pub ghost_fill_alpha: u8,
     pub ghost_stroke_width: f32,
+    pub permanent: RibbonChromeTheme,
+    pub view_local: RibbonChromeTheme,
+    pub workspace: RibbonChromeTheme,
+    pub slot_override_transition: f32,
+    pub active_view_indicator: ActiveIndicatorTheme,
 }
 
 /// Theme-owned container and section chrome. This mirrors the
@@ -1804,6 +1856,11 @@ pub struct Theme {
     pub graph: GraphTheme,
     pub code: CodeTheme,
     pub overlay: OverlayTheme,
+    /// Top-level L0 view chrome. New app-shell renderers should use
+    /// this instead of hard-coding root view switcher placement.
+    pub views: ViewTheme,
+    /// Module inline/workspace chrome and restore semantics.
+    pub modules: ModuleTheme,
 
     // ── Surfaces — palette ──
     pub bg_window: egui::Color32,

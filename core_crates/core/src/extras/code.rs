@@ -207,3 +207,184 @@ impl crate::pod::Pod {
         })
     }
 }
+
+// ─── View + Module bridge ──────────────────────────────────────────
+//
+// This keeps the existing standalone editor wrapper intact while also
+// exposing a PLAN.md-native surface: code can now be routed as a
+// top-level L0 view or embedded as an L1-capable module.
+
+/// A retained code editor surface that implements both [`crate::FrostView`]
+/// and [`crate::FrostModule`].
+#[derive(Clone, Debug)]
+pub struct CodeEditorSurface {
+    id: egui::Id,
+    title: String,
+    text: String,
+    syntax: Syntax,
+    units: usize,
+}
+
+impl CodeEditorSurface {
+    #[must_use]
+    pub fn new(
+        id: impl Hash,
+        title: impl Into<String>,
+        text: impl Into<String>,
+        syntax: Syntax,
+    ) -> Self {
+        Self {
+            id: egui::Id::new(id),
+            title: title.into(),
+            text: text.into(),
+            syntax,
+            units: 12,
+        }
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn text_mut(&mut self) -> &mut String {
+        &mut self.text
+    }
+
+    #[must_use]
+    pub fn with_units(mut self, units: usize) -> Self {
+        self.units = units.max(1);
+        self
+    }
+
+    fn toolbar(&self, scope: crate::RibbonScope) -> crate::RibbonSlotDef {
+        let format = crate::RibbonSlotItem::new(
+            egui::Id::new(("code.format", self.id)),
+            "code",
+            "Format",
+            "Format code document",
+            crate::RibbonAction::Command(egui::Id::new(("code.format.command", self.id))),
+        );
+        crate::RibbonSlotDef::new(
+            egui::Id::new(("code.ribbon", self.id)),
+            scope,
+            crate::RibbonEdge::Top,
+            crate::RibbonCluster::Middle,
+            vec![crate::RibbonSlot::new(
+                crate::RibbonSlotId::new(("code.format.slot", self.id)),
+                Some(format),
+                crate::RibbonOverridePolicy::Fixed,
+            )],
+        )
+    }
+
+    fn show_editor(&mut self, ui: &mut egui::Ui) {
+        let min_size = ui.available_size_before_wrap();
+        frost_code_editor_with_opts(
+            ui,
+            self.id,
+            &mut self.text,
+            self.syntax.clone(),
+            crate::style::active_accent(),
+            min_size,
+            OverlayOpts::default(),
+        );
+    }
+}
+
+impl crate::FrostView for CodeEditorSurface {
+    fn id(&self) -> crate::ViewId {
+        crate::ViewId(self.id)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn icon(&self) -> &'static str {
+        "code"
+    }
+
+    fn ribbons(&mut self) -> Vec<crate::RibbonSlotDef> {
+        vec![self.toolbar(crate::RibbonScope::View(crate::ViewId(self.id)))]
+    }
+
+    fn show(&mut self, ctx: &mut crate::ViewCtx<'_>) {
+        egui::CentralPanel::default().show(ctx.egui_ctx, |ui| {
+            self.show_editor(ui);
+        });
+    }
+}
+
+impl crate::FrostModule for CodeEditorSurface {
+    fn id(&self) -> egui::Id {
+        self.id
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn icon(&self) -> &'static str {
+        "code"
+    }
+
+    fn inline(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: crate::ModuleInlineCtx<'_>,
+    ) -> crate::ModuleResponse {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("Code: {}", self.title));
+                ui.label(format!("{} bytes", self.text.len()));
+            });
+            self.show_editor(ui);
+            if ctx.can_enter_workspace()
+                && ui
+                    .button(crate::style::theme().modules.inline_workspace_button_label)
+                    .clicked()
+            {
+                crate::ModuleResponse::enter_workspace()
+            } else {
+                crate::ModuleResponse::none()
+            }
+        })
+        .inner
+    }
+
+    fn workspace(&mut self, ws: &mut crate::WorkspaceCtx<'_>) {
+        ws.add_bar(
+            crate::WorkspaceBar::new(
+                egui::Id::new(("code.workspace.bar", self.id)),
+                crate::WorkspaceBarEdge::Top,
+                crate::WorkspaceBarCluster::Middle,
+            )
+            .with_item(crate::WorkspaceBarItem::command(
+                egui::Id::new(("code.workspace.format", self.id)),
+                "Format",
+                Some("code"),
+            )),
+        );
+        ws.add_ribbon(self.toolbar(crate::RibbonScope::WorkspaceLevel(ws.level.id)));
+    }
+}
+
+#[cfg(test)]
+mod view_module_bridge_tests {
+    use super::*;
+
+    fn assert_view<T: crate::FrostView>(_value: &T) {}
+    fn assert_module<T: crate::FrostModule>(_value: &T) {}
+
+    #[test]
+    fn code_editor_surface_is_both_view_and_module() {
+        let surface =
+            CodeEditorSurface::new("code-surface", "Code", "fn main() {}", Syntax::rust());
+        assert_view(&surface);
+        assert_module(&surface);
+        assert_eq!(crate::FrostView::title(&surface), "Code");
+        assert_eq!(crate::FrostModule::icon(&surface), "code");
+        assert_eq!(surface.text(), "fn main() {}");
+    }
+}
