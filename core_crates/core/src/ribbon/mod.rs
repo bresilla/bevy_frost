@@ -42,7 +42,7 @@ pub use action::RibbonAction;
 pub use assembly::{
     RibbonClick, RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem,
     RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonWidth, draw_assembly, find_item,
-    find_ribbon, panel_anchor, panel_anchor_for_item,
+    find_ribbon, main_bar_empty_drag_started, panel_anchor, panel_anchor_for_item,
 };
 pub use dispatch::{RibbonActionError, RibbonActionResult, dispatch_ribbon_action};
 pub use permanent::{

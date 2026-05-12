@@ -374,18 +374,66 @@ fn is_main_ribbon(ribbons: &[RibbonDef], def: &RibbonDef) -> bool {
 }
 
 fn insets_for_ribbon(ribbons: &[RibbonDef], def: &RibbonDef, base: SideInsets) -> SideInsets {
-    if !is_main_ribbon(ribbons, def) {
-        return base;
+    let mut out = base;
+
+    // The first declared ribbon is the persistent/main bar and owns
+    // its edge end-to-end. Perpendicular ribbons always yield their
+    // shared corner to it.
+    if is_main_ribbon(ribbons, def) {
+        if def.edge.is_vertical() {
+            out.top = EDGE_GAP;
+            out.bottom = EDGE_GAP;
+        } else {
+            out.left = EDGE_GAP;
+            out.right = EDGE_GAP;
+        }
+        return out;
     }
 
-    let mut out = base;
-    if def.edge.is_vertical() {
-        out.top = EDGE_GAP;
-        out.bottom = EDGE_GAP;
-    } else {
-        out.left = EDGE_GAP;
-        out.right = EDGE_GAP;
+    // For the remaining rails, corner ownership follows declaration
+    // order: earlier ribbons own the shared corner, later ribbons
+    // yield. This avoids the broken case where BOTH perpendicular
+    // rails inset away from a corner, leaving neither rail reaching
+    // the end. In the demo order (Top main, Left, Right, Bottom),
+    // Left/Right yield to the Top main bar, but they own the lower
+    // corners; the Bottom bar then yields to Left/Right.
+    let Some(def_idx) = ribbons.iter().position(|r| r.id == def.id) else {
+        return out;
+    };
+    let earlier = |edge: RibbonEdge| {
+        ribbons
+            .iter()
+            .position(|r| r.edge == edge)
+            .is_some_and(|idx| idx < def_idx)
+    };
+
+    match def.edge {
+        RibbonEdge::Left | RibbonEdge::Right => {
+            out.top = if earlier(RibbonEdge::Top) {
+                base.top
+            } else {
+                EDGE_GAP
+            };
+            out.bottom = if earlier(RibbonEdge::Bottom) {
+                base.bottom
+            } else {
+                EDGE_GAP
+            };
+        }
+        RibbonEdge::Top | RibbonEdge::Bottom => {
+            out.left = if earlier(RibbonEdge::Left) {
+                base.left
+            } else {
+                EDGE_GAP
+            };
+            out.right = if earlier(RibbonEdge::Right) {
+                base.right
+            } else {
+                EDGE_GAP
+            };
+        }
     }
+
     out
 }
 
@@ -560,6 +608,27 @@ fn screen_rect(ctx: &egui::Context, p: ButtonPlacement) -> egui::Rect {
         ),
     };
     egui::Rect::from_min_size(min, size)
+}
+
+/// Temp-data key set by [`draw_assembly`] when the user presses the
+/// empty part of the first/persistent ribbon. Host integrations use
+/// this to begin native window dragging for decorationless windows.
+fn main_bar_empty_drag_started_id() -> egui::Id {
+    egui::Id::new("frost_main_bar_empty_drag_started")
+}
+
+/// Returns true for the frame where the primary pointer pressed the
+/// empty strip of the first declared ribbon.
+///
+/// This deliberately excludes every visible ribbon button rect, so
+/// dragging icons keeps doing ribbon-item drag/reorder and only
+/// blank chrome starts a native window move.
+#[must_use]
+pub fn main_bar_empty_drag_started(ctx: &egui::Context) -> bool {
+    ctx.data(|d| {
+        d.get_temp::<bool>(main_bar_empty_drag_started_id())
+            .unwrap_or(false)
+    })
 }
 
 /// Check whether `source` ribbon is allowed to drop buttons into
@@ -896,6 +965,7 @@ pub fn draw_assembly(
     let mut click_flags: Vec<bool> = vec![false; items.len()];
     let mut drag_started_idx: Option<usize> = None;
     let mut drag_stopped_this_frame = false;
+    let mut button_rects: Vec<egui::Rect> = Vec::with_capacity(items.len());
 
     for (idx, item) in items.iter().enumerate() {
         let (rid, cluster_eff, slot_eff, total) = effective(idx);
@@ -922,6 +992,7 @@ pub fn draw_assembly(
             insets_for_ribbon(ribbons, def, insets),
         );
         let resting_rect = screen_rect(ctx, resting_p);
+        button_rects.push(resting_rect);
 
         // Paint rect — resting for most, at the cursor (as the
         // ghost) for the dragged button.
@@ -1076,6 +1147,29 @@ pub fn draw_assembly(
         drag.cursor = None;
         drag.source = None;
     }
+
+    // ── Empty main-bar drag detection ──────────────────────────────
+    //
+    // Decorationless hosts still need a native-move hit zone. The
+    // first ribbon is Frost's persistent main bar; any primary press
+    // inside that strip but outside visible buttons is published so
+    // host crates can call their native `start_drag_move` equivalent.
+    let empty_main_bar_drag_started = ribbons.first().is_some_and(|main| {
+        let main_strip = ribbon_strip_rect(main, ctx, insets_for_ribbon(ribbons, main, insets));
+        ctx.input(|i| {
+            i.pointer.interact_pos().is_some_and(|pos| {
+                i.pointer.button_pressed(egui::PointerButton::Primary)
+                    && main_strip.contains(pos)
+                    && !button_rects.iter().any(|rect| rect.contains(pos))
+            })
+        })
+    });
+    ctx.data_mut(|d| {
+        d.insert_temp::<bool>(
+            main_bar_empty_drag_started_id(),
+            empty_main_bar_drag_started,
+        );
+    });
 
     // ── Click dispatch ─────────────────────────────────────────────
     let mut clicks: Vec<RibbonClick> = Vec::new();

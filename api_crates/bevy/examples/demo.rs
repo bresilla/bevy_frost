@@ -14,9 +14,10 @@
 //! Run: `cargo run -p bevy_frost --example demo`.
 
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
+use bevy::math::CompassOctant;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon, Window};
 use bevy_egui::{EguiContext, EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use bevy_glacial::prelude::*;
 
@@ -57,7 +58,6 @@ const RIBBON_BOTTOM: &str = "demo_ribbon_bottom";
 // below. Uses the SAME ribbon API as the regular rails, so the
 // fullscreen view looks like a fresh canvas built from the same
 // frost UI primitives.
-const RIBBON_FS_TOP: &str = "demo_ribbon_fs_top";
 const RIBBON_FS_LEFT: &str = "demo_ribbon_fs_left";
 
 const PANE_WIDGETS: &str = "demo_pane_widgets";
@@ -72,6 +72,8 @@ const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
 const ACTION_VIEW_BEVY: &str = "demo_action_view_bevy";
 const ACTION_VIEW_CANVAS: &str = "demo_action_view_canvas";
+const ACTION_CLOSE_APP: &str = "demo_action_close_app";
+const ACTION_RESTORE_FULLSCREEN: &str = "demo_action_restore_fullscreen";
 
 // Fullscreen-only ribbon actions. Click targets are no-ops in this
 // demo — purpose is to show that "the same ribbon API works as
@@ -262,6 +264,16 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
+    RibbonItem {
+        id: ACTION_CLOSE_APP,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("dismiss"),
+        tooltip: "Close application",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
     // BOTTOM rail — Editor (placeholder; the legacy graph + code
     // wrappers lived in `frostcore` which has been removed) and the
     // one-shot cube-cycle action buttons in the End cluster.
@@ -331,6 +343,16 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
+    RibbonItem {
+        id: ACTION_CLOSE_APP,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("dismiss"),
+        tooltip: "Close application",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
 ];
 
 // ─── Fullscreen-only ribbon sets ───────────────────────────────────
@@ -346,7 +368,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
 // below decide which icons populate each rail.
 const RIBBONS_FS: &[RibbonDef] = &[
     RibbonDef {
-        id: RIBBON_FS_TOP,
+        id: RIBBON_TOP,
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
@@ -367,9 +389,52 @@ const RIBBONS_FS: &[RibbonDef] = &[
 // (Add / Frame / Clear / Save) plus a category sidebar on the left
 // (Sources / Math / Noise / Logic).
 const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
+    // Persistent main bar stays present in module/fullscreen views.
+    // The system-control slot changes meaning here: close becomes
+    // restore-to-parent/fullscreen-exit, not app close.
+    RibbonItem {
+        id: PANE_ABOUT,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("info"),
+        tooltip: "About this demo",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonItem {
+        id: ACTION_VIEW_BEVY,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("cube"),
+        tooltip: "Bevy scene view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_VIEW_CANVAS,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("draw"),
+        tooltip: "Canvas / whiteboard view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_RESTORE_FULLSCREEN,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("arrow-minimize"),
+        tooltip: "Restore module",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
     RibbonItem {
         id: FS_GRAPH_ADD,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
         glyph: RibbonGlyph::Icon("add"),
@@ -379,7 +444,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_GRAPH_FRAME,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
         glyph: RibbonGlyph::Icon("expand"),
@@ -389,7 +454,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_GRAPH_CLEAR,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
         glyph: RibbonGlyph::Icon("trash"),
@@ -399,9 +464,9 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_GRAPH_SAVE,
-        ribbon: RIBBON_FS_TOP,
-        cluster: RibbonCluster::End,
-        slot: 0,
+        ribbon: RIBBON_FS_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 3,
         glyph: RibbonGlyph::Icon("save"),
         tooltip: "Save graph",
         child_ribbon: None,
@@ -410,7 +475,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     RibbonItem {
         id: FS_CAT_SOURCES,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 0,
         glyph: RibbonGlyph::Icon("dot"),
         tooltip: "Sources",
@@ -420,7 +485,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     RibbonItem {
         id: FS_CAT_MATH,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 1,
         glyph: RibbonGlyph::Icon("calculator"),
         tooltip: "Math",
@@ -430,7 +495,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     RibbonItem {
         id: FS_CAT_NOISE,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 2,
         glyph: RibbonGlyph::Icon("wave"),
         tooltip: "Noise",
@@ -440,7 +505,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
     RibbonItem {
         id: FS_CAT_LOGIC,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 3,
         glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Logic",
@@ -454,8 +519,48 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
 // left (main.rs / lib.rs / Cargo.toml).
 const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     RibbonItem {
+        id: PANE_ABOUT,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("info"),
+        tooltip: "About this demo",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonItem {
+        id: ACTION_VIEW_BEVY,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("cube"),
+        tooltip: "Bevy scene view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_VIEW_CANVAS,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::Middle,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("draw"),
+        tooltip: "Canvas / whiteboard view",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
+        id: ACTION_RESTORE_FULLSCREEN,
+        ribbon: RIBBON_TOP,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("arrow-minimize"),
+        tooltip: "Restore module",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    RibbonItem {
         id: FS_CODE_SAVE,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
         glyph: RibbonGlyph::Icon("save"),
@@ -465,7 +570,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_CODE_RUN,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
         glyph: RibbonGlyph::Icon("play"),
@@ -475,7 +580,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_CODE_FORMAT,
-        ribbon: RIBBON_FS_TOP,
+        ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
         glyph: RibbonGlyph::Icon("wand"),
@@ -485,9 +590,9 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     },
     RibbonItem {
         id: FS_CODE_FIND,
-        ribbon: RIBBON_FS_TOP,
-        cluster: RibbonCluster::End,
-        slot: 0,
+        ribbon: RIBBON_FS_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 3,
         glyph: RibbonGlyph::Icon("search"),
         tooltip: "Find",
         child_ribbon: None,
@@ -496,7 +601,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     RibbonItem {
         id: FS_FILE_MAIN,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 0,
         glyph: RibbonGlyph::Icon("code"),
         tooltip: "main.rs",
@@ -506,7 +611,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     RibbonItem {
         id: FS_FILE_LIB,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 1,
         glyph: RibbonGlyph::Icon("book"),
         tooltip: "lib.rs",
@@ -516,7 +621,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
     RibbonItem {
         id: FS_FILE_CARGO,
         ribbon: RIBBON_FS_LEFT,
-        cluster: RibbonCluster::Start,
+        cluster: RibbonCluster::Middle,
         slot: 2,
         glyph: RibbonGlyph::Icon("box"),
         tooltip: "Cargo.toml",
@@ -619,11 +724,13 @@ const CLOUD_ALTITUDE_M: f32 = 4_000.0;
 
 fn main() {
     let geometry = WindowGeometry::load("bevy_frost_demo");
+    let mut primary_window = geometry.to_window("bevy_frost — demo");
+    primary_window.decorations = false;
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(geometry.to_window("bevy_frost — demo")),
+                    primary_window: Some(primary_window),
                     ..default()
                 })
                 .set(bevy::log::LogPlugin {
@@ -657,7 +764,14 @@ fn main() {
         .init_resource::<EditorNodeView>()
         .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
-        .add_systems(Update, (pick_cube, update_swatch_selection))
+        .add_systems(
+            Update,
+            (
+                borderless_window_resize_system,
+                pick_cube,
+                update_swatch_selection,
+            ),
+        )
         .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
     // NOTE: an earlier revision of this file gated the 3D camera's
@@ -911,6 +1025,76 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
     Some(tmin.max(0.0))
 }
 
+fn borderless_resize_direction(pos: Vec2, size: Vec2) -> Option<CompassOctant> {
+    const EDGE: f32 = 7.0;
+    const CORNER: f32 = 18.0;
+
+    let near_left = pos.x <= EDGE;
+    let near_right = pos.x >= size.x - EDGE;
+    let near_top = pos.y <= EDGE;
+    let near_bottom = pos.y >= size.y - EDGE;
+    let corner_left = pos.x <= CORNER;
+    let corner_right = pos.x >= size.x - CORNER;
+    let corner_top = pos.y <= CORNER;
+    let corner_bottom = pos.y >= size.y - CORNER;
+
+    match (
+        near_left || corner_left,
+        near_right || corner_right,
+        near_top || corner_top,
+        near_bottom || corner_bottom,
+    ) {
+        (true, _, true, _) if corner_left && corner_top => Some(CompassOctant::NorthWest),
+        (_, true, true, _) if corner_right && corner_top => Some(CompassOctant::NorthEast),
+        (true, _, _, true) if corner_left && corner_bottom => Some(CompassOctant::SouthWest),
+        (_, true, _, true) if corner_right && corner_bottom => Some(CompassOctant::SouthEast),
+        (true, _, _, _) if near_left => Some(CompassOctant::West),
+        (_, true, _, _) if near_right => Some(CompassOctant::East),
+        (_, _, true, _) if near_top => Some(CompassOctant::North),
+        (_, _, _, true) if near_bottom => Some(CompassOctant::South),
+        _ => None,
+    }
+}
+
+fn resize_cursor_icon(direction: CompassOctant) -> SystemCursorIcon {
+    match direction {
+        CompassOctant::North => SystemCursorIcon::NResize,
+        CompassOctant::NorthEast => SystemCursorIcon::NeResize,
+        CompassOctant::East => SystemCursorIcon::EResize,
+        CompassOctant::SouthEast => SystemCursorIcon::SeResize,
+        CompassOctant::South => SystemCursorIcon::SResize,
+        CompassOctant::SouthWest => SystemCursorIcon::SwResize,
+        CompassOctant::West => SystemCursorIcon::WResize,
+        CompassOctant::NorthWest => SystemCursorIcon::NwResize,
+    }
+}
+
+fn borderless_window_resize_system(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut primary_window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
+) {
+    let Ok((entity, mut window)) = primary_window.single_mut() else {
+        return;
+    };
+    let direction = window.cursor_position().and_then(|pos| {
+        borderless_resize_direction(pos, Vec2::new(window.width(), window.height()))
+    });
+
+    if let Some(direction) = direction {
+        commands
+            .entity(entity)
+            .insert(CursorIcon::from(resize_cursor_icon(direction)));
+        if mouse.just_pressed(MouseButton::Left) {
+            window.start_drag_resize(direction);
+        }
+    } else {
+        commands
+            .entity(entity)
+            .insert(CursorIcon::from(SystemCursorIcon::Default));
+    }
+}
+
 // ─── UI ─────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -934,6 +1118,8 @@ fn ui_system(
     mut tint: ResMut<TintRgba>,
     mut root_view: ResMut<DemoRootView>,
     mut canvas_view: ResMut<CanvasViewState>,
+    mut app_exit: MessageWriter<AppExit>,
+    mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     // ── Sharp-zoom node-graph plumbing (bundled to stay under
     //    Bevy's 16-system-param cap) ──
     mut node_view_params: NodeViewSystemParams,
@@ -975,24 +1161,57 @@ fn ui_system(
     let fs_active = frost_core::extras::maximize::is_any_fullscreen(ctx);
     let graph_fs = bevy_frost::extras::graph::is_graph_fullscreen(ctx);
     let code_fs = bevy_frost::extras::code::is_code_fullscreen(ctx, cid(PANE_EDITOR, "code_state"));
+    if fs_active {
+        // The persistent main bar owns module restore in L1/fullscreen.
+        // Suppress the old floating restore chip so it does not stack
+        // above the top-right system-control slot.
+        frost_core::embed::set_fullscreen_minimize_chip_visible(ctx, false);
+    }
+    let allow_persistent_panes_over_fullscreen = fs_active
+        && open.get(RIBBON_TOP).is_some_and(|id| {
+            matches!(
+                id,
+                PANE_ABOUT | PANE_WIDGETS | PANE_CONTAINERS | PANE_SCENE | PANE_THEME | PANE_KEYS
+            )
+        });
     // Ribbon assembly is rendered AFTER the pane loop below — see
     // the trailing `draw_assembly` call. The ribbon `Area`s share
     // `Order::Foreground` with the `embed` fullscreen overlay, so
     // they must register later to land on top of it. Click handling
     // happens during that paint; pane `open` state is read one
     // frame later (~16 ms — imperceptible).
+    //
+    // IMPORTANT: persistent-bar pane buttons must resolve against
+    // the CURRENT root view's item set. Canvas opts out of the
+    // Bevy-specific side/bottom buttons, but it keeps persistent
+    // top-bar buttons like About. If we hard-skip all panes in
+    // Canvas, the persistent bar toggles state but its UI never
+    // appears over the current view.
+    let current_ribbon_items: &[RibbonItem] = if fs_active && graph_fs {
+        RIBBON_ITEMS_FS_GRAPH
+    } else if fs_active && code_fs {
+        RIBBON_ITEMS_FS_CODE
+    } else if fs_active {
+        RIBBON_ITEMS_FS_GRAPH
+    } else if *root_view == DemoRootView::Canvas {
+        RIBBON_ITEMS_ROOT_VIEW
+    } else {
+        RIBBON_ITEMS
+    };
+    let current_ribbons: &[RibbonDef] = if fs_active { RIBBONS_FS } else { RIBBONS };
 
-    let is_open = |id: &'static str| -> bool {
-        let Some(item) = find_item(RIBBON_ITEMS, id) else {
+    let is_open_in = |items: &[RibbonItem], id: &'static str| -> bool {
+        let Some(item) = find_item(items, id) else {
             return false;
         };
         let (rid, _, _) = placement.resolve(item);
         open.is_open(rid, id)
     };
+    let is_open = |id: &'static str| -> bool { is_open_in(current_ribbon_items, id) };
     let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
-        let item = find_item(RIBBON_ITEMS, id)?;
+        let item = find_item(current_ribbon_items, id)?;
         let (rid, cluster, _) = placement.resolve(item);
-        let def = find_ribbon(RIBBONS, rid)?;
+        let def = find_ribbon(current_ribbons, rid)?;
         let zone = match cluster {
             RibbonCluster::Start => RailZone::Start,
             RibbonCluster::Middle => RailZone::Middle,
@@ -1006,20 +1225,63 @@ fn ui_system(
         })
     };
 
+    // In fullscreen/module mode the maximizable owner MUST render
+    // first, because it registers the full-window overlay at
+    // `Order::Foreground`. Persistent panes are then rendered after
+    // it and also lifted to `Foreground`, so they appear on top of
+    // the module canvas instead of being hidden behind it.
+    if fs_active && is_open_in(RIBBON_ITEMS, PANE_EDITOR) {
+        let anchor = live_anchor(PANE_EDITOR).unwrap_or(PaneAnchor::BottomRail(RailZone::Start));
+        let NodeViewSystemParams {
+            render_device,
+            render_queue,
+            images,
+            egui_textures,
+            pending,
+            slots,
+            editor_node_view,
+            editor_graph,
+        } = &mut node_view_params;
+        let mut backend = BevyNodeViewBackend::new(
+            render_device,
+            render_queue,
+            images,
+            egui_textures,
+            pending,
+            slots,
+        );
+        let now = ctx.input(|i| i.time);
+        let mut viewer = DemoViewer { time: now };
+        Pane2::new(PANE_EDITOR, "Editor", anchor, accent_col)
+            .resize(frost_core::pane::PaneResize::SPAN)
+            .show(ctx, |body| {
+                editor_pane(
+                    body,
+                    &mut editor_node_view.0,
+                    &mut editor_graph.0,
+                    &mut viewer,
+                    &mut backend,
+                );
+            });
+    }
+
     for &(_, button_id, default_anchor, label) in PANE_DEFS {
-        if *root_view == DemoRootView::Canvas {
+        let is_fullscreen_owner_pane = fs_active && button_id == PANE_EDITOR;
+        if is_fullscreen_owner_pane {
             continue;
         }
-        if !is_open(button_id) {
+        if find_item(current_ribbon_items, button_id).is_none() && !is_fullscreen_owner_pane {
             continue;
         }
-        // While a fullscreen view is active, skip every pane that
-        // doesn't host the maximizable widget — those are pure
-        // CPU waste once the overlay covers them. The editor pane
-        // (which hosts the maximizable inside its body) still
-        // renders normally; the maximizable's `Foreground` Area
-        // paints the overlay on top, hiding the inline pane chrome.
-        if fs_active && button_id != PANE_EDITOR {
+        let pane_is_open = if fs_active {
+            is_open_in(RIBBON_ITEMS, button_id)
+        } else {
+            is_open(button_id)
+        };
+        if !pane_is_open {
+            continue;
+        }
+        if fs_active && !is_fullscreen_owner_pane && !allow_persistent_panes_over_fullscreen {
             continue;
         }
         let anchor = live_anchor(button_id).unwrap_or(default_anchor);
@@ -1071,6 +1333,11 @@ fn ui_system(
         }
         Pane2::new(button_id, label, anchor, accent_col)
             .resize(frost_core::pane::PaneResize::SPAN)
+            .order(if fs_active {
+                egui::Order::Foreground
+            } else {
+                egui::Order::Background
+            })
             .show(ctx, |body| match button_id {
                 PANE_WIDGETS => widgets_pane(body),
                 PANE_CONTAINERS => containers_pane(body),
@@ -1102,30 +1369,24 @@ fn ui_system(
         } else {
             RIBBON_ITEMS_FS_GRAPH
         };
-        let mut fs_open = frost_core::ribbon::RibbonOpen::default();
         let mut fs_placement = frost_core::ribbon::RibbonPlacement::default();
         let mut fs_drag = frost_core::ribbon::RibbonDrag::default();
-        let _ = draw_assembly(
+        draw_assembly(
             ctx,
             accent_col,
             RIBBONS_FS,
             fs_items,
-            &mut fs_open,
+            &mut open,
             &mut fs_placement,
             &mut fs_drag,
-            |_| false,
-        );
-        Vec::new()
+            |id| matches!(id, ACTION_RESTORE_FULLSCREEN),
+        )
     } else {
         draw_assembly(
             ctx,
             accent_col,
             RIBBONS,
-            if *root_view == DemoRootView::Canvas {
-                RIBBON_ITEMS_ROOT_VIEW
-            } else {
-                RIBBON_ITEMS
-            },
+            current_ribbon_items,
             &mut open,
             &mut placement,
             &mut drag,
@@ -1135,6 +1396,12 @@ fn ui_system(
             },
         )
     };
+
+    if frost_core::ribbon::main_bar_empty_drag_started(ctx) {
+        if let Ok(mut window) = primary_window.single_mut() {
+            window.start_drag_move();
+        }
+    }
 
     // PREV / NEXT cube — one-shot icon buttons in the BOTTOM rail's
     // End cluster. Each click rotates the AccentColor through the
@@ -1149,11 +1416,25 @@ fn ui_system(
     ];
     for click in clicks {
         if click.item == ACTION_VIEW_BEVY {
+            if fs_active {
+                frost_core::embed::restore_fullscreen(ctx);
+            }
             *root_view = DemoRootView::BevyScene;
             continue;
         }
         if click.item == ACTION_VIEW_CANVAS {
+            if fs_active {
+                frost_core::embed::restore_fullscreen(ctx);
+            }
             *root_view = DemoRootView::Canvas;
+            continue;
+        }
+        if click.item == ACTION_RESTORE_FULLSCREEN {
+            frost_core::embed::restore_fullscreen(ctx);
+            continue;
+        }
+        if click.item == ACTION_CLOSE_APP {
+            app_exit.write(AppExit::Success);
             continue;
         }
         if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
@@ -1177,7 +1458,7 @@ fn ui_system(
 
 fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut CanvasViewState) {
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(frost_core::style::theme().palette.bg_window))
+        .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
         .show(ctx, |ui| {
             let rect = ui.max_rect();
             let response = ui.allocate_rect(rect, egui::Sense::drag());

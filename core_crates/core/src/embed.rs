@@ -87,6 +87,10 @@ pub fn maximize_state_key(id_salt: impl std::hash::Hash) -> egui::Id {
     egui::Id::new(("frost_maximize", id_salt))
 }
 
+fn pending_restore_fullscreen_key() -> egui::Id {
+    egui::Id::new("frost_pending_restore_fullscreen")
+}
+
 /// Globally unique id used by the maximizer to track "is some
 /// widget currently full-window, and which one?". Reads
 /// `Some(owner_state_key)` if a maximizable widget rendered itself
@@ -110,6 +114,36 @@ pub fn fullscreen_owner(ctx: &egui::Context) -> Option<egui::Id> {
 /// SOME maximizable widget is currently in the full-window state.
 pub fn is_any_fullscreen(ctx: &egui::Context) -> bool {
     fullscreen_owner(ctx).is_some()
+}
+
+fn suppress_fullscreen_minimize_chip_key() -> egui::Id {
+    egui::Id::new("frost_suppress_fullscreen_minimize_chip")
+}
+
+/// Hide/show the built-in fullscreen restore chip for this frame.
+///
+/// Host shells that provide their own persistent app/module bar
+/// should call this with `false` before rendering maximizable
+/// content, then provide restore through their normal chrome. This
+/// keeps fullscreen modules from growing a second floating restore
+/// button on top of the persistent bar.
+pub fn set_fullscreen_minimize_chip_visible(ctx: &egui::Context, visible: bool) {
+    ctx.data_mut(|d| {
+        d.insert_temp::<bool>(suppress_fullscreen_minimize_chip_key(), !visible);
+    });
+}
+
+/// Restore the active full-window maximizable widget, if one exists.
+///
+/// Returns `true` when a fullscreen owner was found and toggled off.
+pub fn restore_fullscreen(ctx: &egui::Context) -> bool {
+    let Some(owner) = fullscreen_owner(ctx) else {
+        return false;
+    };
+    ctx.data_mut(|d| {
+        d.insert_temp::<egui::Id>(pending_restore_fullscreen_key(), owner);
+    });
+    true
 }
 
 /// Wrap a widget so it gains a maximise / restore toggle.
@@ -145,10 +179,22 @@ pub fn maximizable_with_opts(
     // / context-sensitive logic based on "is THIS widget
     // currently full-window?".
     let max_id = maximize_state_key(id_salt);
-    let maximized: bool = ui
+    let mut maximized: bool = ui
         .ctx()
         .data(|d| d.get_temp::<bool>(max_id))
         .unwrap_or(false);
+    let pending_restore = ui
+        .ctx()
+        .data(|d| d.get_temp::<egui::Id>(pending_restore_fullscreen_key()))
+        == Some(max_id);
+    if pending_restore {
+        maximized = false;
+        ui.ctx().data_mut(|d| {
+            d.insert_temp::<bool>(max_id, false);
+            d.remove::<egui::Id>(pending_restore_fullscreen_key());
+            d.remove::<(u64, egui::Id)>(egui::Id::new("frost_maximize_global"));
+        });
+    }
     let mut toggle = false;
 
     // Global "is any maximizable widget currently full-window?"
@@ -225,15 +271,20 @@ pub fn maximizable_with_opts(
         // points, and that choice persists in ctx data across
         // frames. Painted in its OWN `Order::Tooltip` Area so it
         // sits on top of the `Foreground` overlay above.
-        if fullscreen_minimize_button(
-            &ctx,
-            screen,
-            opts,
-            overlay.fullscreen_button_size,
-            overlay.fullscreen_edge_gap,
-            accent,
-            id_salt,
-        ) {
+        let suppress_minimize_chip: bool = ctx
+            .data(|d| d.get_temp(suppress_fullscreen_minimize_chip_key()))
+            .unwrap_or(false);
+        if !suppress_minimize_chip
+            && fullscreen_minimize_button(
+                &ctx,
+                screen,
+                opts,
+                overlay.fullscreen_button_size,
+                overlay.fullscreen_edge_gap,
+                accent,
+                id_salt,
+            )
+        {
             toggle = true;
         }
     } else {

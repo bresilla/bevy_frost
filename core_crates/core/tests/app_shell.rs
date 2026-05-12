@@ -1,8 +1,9 @@
 use frost_core::{
     FrostView, RibbonAction, RibbonCluster, RibbonEdge, RibbonOverrideLayer, RibbonOverridePolicy,
     RibbonScope, RibbonSlot, RibbonSlotDef, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride,
-    ViewCtx, ViewId, ViewRouter, dispatch_app_shell_action, permanent_system_control_ribbon,
-    resolve_app_shell_ribbons, resolve_app_shell_ribbons_with_workspace_layers,
+    ViewCtx, ViewId, ViewRouter, WindowControlsPolicy, dispatch_app_shell_action,
+    permanent_system_control_ribbon, resolve_app_shell_ribbons,
+    resolve_app_shell_ribbons_with_workspace_layers,
 };
 
 struct ShellView {
@@ -324,4 +325,45 @@ fn persistent_main_bar_slot_requires_explicit_hide_override() {
 
     let resolved = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
     assert!(resolved.ribbons[0].items.is_empty());
+}
+
+#[test]
+fn app_shell_chrome_includes_mandatory_close_controls_by_default() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let chrome = main_bar_with_slots(vec![]);
+
+    assert_eq!(
+        chrome.window_controls_policy(),
+        WindowControlsPolicy::Enabled
+    );
+    let resolved = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
+
+    let system = resolved
+        .ribbons
+        .iter()
+        .find(|ribbon| ribbon.id == egui::Id::new("frost.permanent.system_control"))
+        .expect("default windowed app chrome must include system controls");
+    assert_eq!(system.scope, RibbonScope::Permanent);
+    assert_eq!(system.edge, RibbonEdge::Top);
+    assert_eq!(system.cluster, RibbonCluster::End);
+    assert_eq!(system.items[0].action, RibbonAction::CloseApp);
+}
+
+#[test]
+fn app_shell_chrome_can_opt_out_of_window_controls_for_games() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let chrome = main_bar_with_slots(vec![]).without_window_controls();
+
+    assert_eq!(
+        chrome.window_controls_policy(),
+        WindowControlsPolicy::Hidden
+    );
+    let resolved = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
+
+    assert!(
+        !resolved
+            .ribbons
+            .iter()
+            .any(|ribbon| ribbon.id == egui::Id::new("frost.permanent.system_control"))
+    );
 }

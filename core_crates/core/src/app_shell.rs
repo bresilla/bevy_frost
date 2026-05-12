@@ -32,6 +32,22 @@ pub struct AppShellResolution {
     pub ribbons: Vec<ResolvedRibbon>,
 }
 
+/// Whether the app shell owns native-window controls.
+///
+/// Enabled is the default for windowed app UIs. Fullscreen/game-style
+/// shells can opt out explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowControlsPolicy {
+    Enabled,
+    Hidden,
+}
+
+impl Default for WindowControlsPolicy {
+    fn default() -> Self {
+        Self::Enabled
+    }
+}
+
 /// API-level app chrome contract.
 ///
 /// Frost has exactly one persistent main bar. Hosts construct an
@@ -43,6 +59,7 @@ pub struct AppShellResolution {
 pub struct AppShellChrome {
     main_bar: RibbonSlotDef,
     permanent_ribbons: Vec<RibbonSlotDef>,
+    window_controls: WindowControlsPolicy,
 }
 
 impl AppShellChrome {
@@ -52,6 +69,7 @@ impl AppShellChrome {
         Self {
             main_bar,
             permanent_ribbons: Vec::new(),
+            window_controls: WindowControlsPolicy::Enabled,
         }
     }
 
@@ -78,9 +96,34 @@ impl AppShellChrome {
     }
 
     #[must_use]
+    pub fn window_controls_policy(&self) -> WindowControlsPolicy {
+        self.window_controls
+    }
+
+    #[must_use]
+    pub fn with_window_controls(mut self, policy: WindowControlsPolicy) -> Self {
+        self.window_controls = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn without_window_controls(self) -> Self {
+        self.with_window_controls(WindowControlsPolicy::Hidden)
+    }
+
+    #[must_use]
+    pub fn window_controls_enabled(&self) -> bool {
+        self.window_controls == WindowControlsPolicy::Enabled
+    }
+
+    #[must_use]
     pub fn permanent_ribbon_defs(&self) -> Vec<RibbonSlotDef> {
-        let mut out = Vec::with_capacity(1 + self.permanent_ribbons.len());
+        let controls = usize::from(self.window_controls_enabled());
+        let mut out = Vec::with_capacity(1 + controls + self.permanent_ribbons.len());
         out.push(self.main_bar.clone());
+        if self.window_controls_enabled() {
+            out.push(crate::ribbon::permanent_system_control_ribbon());
+        }
         out.extend(self.permanent_ribbons.iter().cloned());
         out
     }

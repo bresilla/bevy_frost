@@ -119,7 +119,11 @@ pub const SIDE_BTN_SIZE: f32 = 34.0;
 /// Gap between adjacent ribbon buttons.
 pub const SIDE_BTN_GAP: f32 = 4.0;
 /// Distance from the screen edge to the near edge of each button.
-pub const EDGE_GAP: f32 = 8.0;
+///
+/// Keep this tight: Frost owns the whole decorationless chrome, so
+/// bars should feel attached to the window corners rather than
+/// floating far inside the canvas.
+pub const EDGE_GAP: f32 = 4.8;
 
 // ─── Paint ──────────────────────────────────────────────────────────
 

@@ -60,9 +60,9 @@ pub use style::{BODY_FONT_SIZE, UNIT};
 // compile against frost_core without breakage.
 
 pub use app_shell::{
-    AppShellChrome, AppShellError, AppShellResolution, ResolvedRibbon, dispatch_app_shell_action,
-    resolve_app_shell_chrome, resolve_app_shell_chrome_with_workspace, resolve_app_shell_ribbons,
-    resolve_app_shell_ribbons_with_workspace_chrome,
+    AppShellChrome, AppShellError, AppShellResolution, ResolvedRibbon, WindowControlsPolicy,
+    dispatch_app_shell_action, resolve_app_shell_chrome, resolve_app_shell_chrome_with_workspace,
+    resolve_app_shell_ribbons, resolve_app_shell_ribbons_with_workspace_chrome,
     resolve_app_shell_ribbons_with_workspace_layers, show_app_shell,
     show_app_shell_chrome_with_slot_ribbons, show_app_shell_with_slot_ribbons,
     show_app_shell_with_workspace_renderer,
@@ -75,9 +75,9 @@ pub use ribbon::{
     RibbonOpen, RibbonOverrideLayer, RibbonOverridePolicy, RibbonPlacement, RibbonRole,
     RibbonScope, RibbonSlot, RibbonSlotClick, RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
     RibbonSlotOverride, RibbonWidth, dispatch_ribbon_action, draw_assembly, draw_slot_ribbons,
-    find_item, find_ribbon, permanent_system_control_ribbon, permanent_view_switcher_ribbon,
-    resolve_slot_item, resolve_slot_items, restore_workspace_slot_override,
-    system_close_or_restore_slot_id,
+    find_item, find_ribbon, main_bar_empty_drag_started, permanent_system_control_ribbon,
+    permanent_view_switcher_ribbon, resolve_slot_item, resolve_slot_items,
+    restore_workspace_slot_override, system_close_or_restore_slot_id,
 };
 pub use style::{AccentColor, GlassOpacity, apply_theme, set_glass_opacity};
 pub use view::{FrostView, ViewCtx, ViewEntry, ViewId, ViewRouter, ViewRouterError};

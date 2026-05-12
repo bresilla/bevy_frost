@@ -438,12 +438,24 @@ pub struct Pane2 {
     anchor: PaneAnchor,
     accent: Color32,
     resize: PaneResize,
+    order: egui::Order,
 }
 
 impl Pane2 {
     /// Enable user-resize on the pane's edges. See [`PaneResize`].
     pub fn resize(mut self, resize: PaneResize) -> Self {
         self.resize = resize;
+        self
+    }
+
+    /// Override the egui layer order for this pane.
+    ///
+    /// Normal panes live in [`egui::Order::Background`] so ribbon
+    /// chrome stays above their shadows. Hosts can lift persistent
+    /// panes to [`egui::Order::Foreground`] when they intentionally
+    /// render over fullscreen/module overlays.
+    pub fn order(mut self, order: egui::Order) -> Self {
+        self.order = order;
         self
     }
 
@@ -461,6 +473,7 @@ impl Pane2 {
             anchor,
             accent,
             resize: PaneResize::NONE,
+            order: egui::Order::Background,
         }
     }
 
@@ -865,7 +878,7 @@ impl Pane2 {
             // shadow bleed. Removes the need for a tight clip_rect
             // (which was slicing the title strip on the rail-side
             // edge by a couple of pixels).
-            .order(egui::Order::Background)
+            .order(self.order)
             .fixed_pos(pane_pos)
             .movable(false)
             .interactable(true)
@@ -1037,6 +1050,7 @@ impl Pane2 {
             anchor,
             accent,
             resize,
+            order: _,
         } = self;
         let title_side = anchor.title_side();
         let horizontal_strip = title_side.is_horizontal_strip();
