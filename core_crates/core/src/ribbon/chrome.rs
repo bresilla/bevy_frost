@@ -1,0 +1,1002 @@
+#[cfg(feature = "bevy")]
+use bevy::prelude::*;
+use egui;
+use std::collections::HashMap;
+
+use super::{
+    RibbonSlotItem,
+    paint::{EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE, paint_ribbon_button, ribbon_button_fg},
+    slot_paint::ResolvedSlotRibbon,
+};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RibbonEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl RibbonEdge {
+    #[must_use]
+    pub fn is_vertical(self) -> bool {
+        matches!(self, RibbonEdge::Left | RibbonEdge::Right)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RibbonCluster {
+    Start,
+    Middle,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RibbonMode {
+    Centered,
+    OneSided(RibbonCluster),
+    TwoSided,
+    ThreeSided,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RibbonRole {
+    Panel,
+    Icon,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum RibbonGlyph {
+    Text(&'static str),
+    Icon(&'static str),
+    Svg(&'static str),
+}
+
+impl From<&'static str> for RibbonGlyph {
+    fn from(s: &'static str) -> Self {
+        let trimmed = s.trim_start();
+        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+            RibbonGlyph::Svg(s)
+        } else {
+            RibbonGlyph::Text(s)
+        }
+    }
+}
+
+#[cfg_attr(feature = "bevy", derive(bevy::prelude::Resource))]
+#[derive(Default, Debug, Clone)]
+pub struct RibbonOpen {
+    pub per_ribbon: HashMap<&'static str, &'static str>,
+}
+
+impl RibbonOpen {
+    pub fn get(&self, ribbon: &'static str) -> Option<&'static str> {
+        self.per_ribbon.get(ribbon).copied()
+    }
+
+    pub fn is_open(&self, ribbon: &'static str, item: &'static str) -> bool {
+        self.per_ribbon.get(ribbon).copied() == Some(item)
+    }
+
+    pub fn toggle(&mut self, ribbon: &'static str, item: &'static str) {
+        if self.is_open(ribbon, item) {
+            self.per_ribbon.remove(ribbon);
+        } else {
+            self.per_ribbon.insert(ribbon, item);
+        }
+    }
+
+    pub fn close_all(&mut self) {
+        self.per_ribbon.clear();
+    }
+
+    pub fn set(&mut self, ribbon: &'static str, item: &'static str) {
+        self.per_ribbon.insert(ribbon, item);
+    }
+}
+
+#[cfg_attr(feature = "bevy", derive(bevy::prelude::Resource))]
+#[derive(Default, Debug, Clone)]
+pub struct RibbonWidth {
+    pub per_cluster: HashMap<(&'static str, RibbonCluster), f32>,
+}
+
+impl RibbonWidth {
+    pub fn get(&self, ribbon: &'static str, cluster: RibbonCluster) -> Option<f32> {
+        self.per_cluster.get(&(ribbon, cluster)).copied()
+    }
+
+    pub fn set(&mut self, ribbon: &'static str, cluster: RibbonCluster, width: f32) {
+        self.per_cluster.insert((ribbon, cluster), width);
+    }
+}
+
+#[cfg_attr(feature = "bevy", derive(bevy::prelude::Resource))]
+#[derive(Default, Debug, Clone)]
+pub struct RibbonPlacement {
+    pub overrides: HashMap<&'static str, (&'static str, RibbonCluster, u32)>,
+}
+
+impl RibbonPlacement {
+    pub fn resolve_parts(
+        &self,
+        item_id: &'static str,
+        ribbon: &'static str,
+        cluster: RibbonCluster,
+        slot: u32,
+    ) -> (&'static str, RibbonCluster, u32) {
+        self.overrides
+            .get(item_id)
+            .copied()
+            .unwrap_or((ribbon, cluster, slot))
+    }
+}
+
+#[cfg_attr(feature = "bevy", derive(bevy::prelude::Resource))]
+#[derive(Default, Debug, Clone)]
+pub struct RibbonDrag {
+    pub item: Option<&'static str>,
+    pub cursor: Option<egui::Pos2>,
+    pub source: Option<(&'static str, RibbonCluster, u32)>,
+}
+
+pub(crate) fn chrome_bounds_key() -> egui::Id {
+    egui::Id::new("frost_ribbon_chrome_bounds")
+}
+
+fn chrome_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.data(|d| d.get_temp::<egui::Rect>(chrome_bounds_key()))
+        .unwrap_or_else(|| ctx.content_rect())
+}
+
+fn main_bar_empty_drag_started_id() -> egui::Id {
+    egui::Id::new("frost_main_bar_empty_drag_started")
+}
+
+#[must_use]
+pub fn main_bar_empty_drag_started(ctx: &egui::Context) -> bool {
+    ctx.data(|d| {
+        d.get_temp::<bool>(main_bar_empty_drag_started_id())
+            .unwrap_or(false)
+    })
+}
+
+fn effective_cluster(mode: RibbonMode, item: RibbonCluster) -> RibbonCluster {
+    match mode {
+        RibbonMode::Centered => RibbonCluster::Middle,
+        RibbonMode::OneSided(end) => end,
+        RibbonMode::TwoSided => match item {
+            RibbonCluster::Middle => RibbonCluster::Start,
+            other => other,
+        },
+        RibbonMode::ThreeSided => item,
+    }
+}
+
+fn clusters_for_mode(mode: RibbonMode) -> &'static [RibbonCluster] {
+    match mode {
+        RibbonMode::Centered => &[RibbonCluster::Middle],
+        RibbonMode::OneSided(RibbonCluster::Start) => &[RibbonCluster::Start],
+        RibbonMode::OneSided(RibbonCluster::Middle) => &[RibbonCluster::Middle],
+        RibbonMode::OneSided(RibbonCluster::End) => &[RibbonCluster::End],
+        RibbonMode::TwoSided => &[RibbonCluster::Start, RibbonCluster::End],
+        RibbonMode::ThreeSided => &[
+            RibbonCluster::Start,
+            RibbonCluster::Middle,
+            RibbonCluster::End,
+        ],
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct SideInsets {
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+}
+
+fn ribbon_id(ribbon: &ResolvedSlotRibbon) -> Option<&'static str> {
+    ribbon.chrome_id
+}
+
+fn item_id(item: &RibbonSlotItem) -> Option<&'static str> {
+    item.chrome_id
+}
+
+fn compute_side_insets(ribbons: &[ResolvedSlotRibbon]) -> SideInsets {
+    // Keep the exact old assembly spacing: when a perpendicular
+    // rail exists, reserve its edge gap + button + one inter-button
+    // gap. Do not add a second edge gap here, or side ribbons drift
+    // away from the persistent top bar.
+    let with_rail = EDGE_GAP + SIDE_BTN_SIZE + SIDE_BTN_GAP;
+    let inset = |present: bool| if present { with_rail } else { EDGE_GAP };
+    SideInsets {
+        left: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Left)),
+        right: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Right)),
+        top: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Top)),
+        bottom: inset(ribbons.iter().any(|r| r.edge == RibbonEdge::Bottom)),
+    }
+}
+
+fn edge_has_ribbon(ribbons: &[ResolvedSlotRibbon], edge: RibbonEdge) -> bool {
+    ribbons.iter().any(|ribbon| ribbon.edge == edge)
+}
+
+fn is_main_ribbon(ribbons: &[ResolvedSlotRibbon], ribbon: &ResolvedSlotRibbon) -> bool {
+    ribbons
+        .first()
+        .and_then(ribbon_id)
+        .zip(ribbon_id(ribbon))
+        .is_some_and(|(first, current)| first == current)
+}
+
+fn insets_for_ribbon(
+    ribbons: &[ResolvedSlotRibbon],
+    ribbon: &ResolvedSlotRibbon,
+    base: SideInsets,
+) -> SideInsets {
+    let mut out = base;
+    if is_main_ribbon(ribbons, ribbon) && ribbon.edge == RibbonEdge::Top {
+        out.left = EDGE_GAP;
+        out.right = EDGE_GAP;
+    }
+    out
+}
+
+fn strip_rect(ribbon: &ResolvedSlotRibbon, ctx: &egui::Context, insets: SideInsets) -> egui::Rect {
+    let screen = chrome_rect(ctx);
+    match ribbon.edge {
+        RibbonEdge::Left => egui::Rect::from_min_max(
+            screen.min + egui::vec2(EDGE_GAP, insets.top + EDGE_GAP),
+            egui::pos2(
+                screen.min.x + EDGE_GAP + SIDE_BTN_SIZE,
+                screen.max.y - insets.bottom - EDGE_GAP,
+            ),
+        ),
+        RibbonEdge::Right => egui::Rect::from_min_max(
+            egui::pos2(
+                screen.max.x - EDGE_GAP - SIDE_BTN_SIZE,
+                screen.min.y + insets.top + EDGE_GAP,
+            ),
+            egui::pos2(
+                screen.max.x - EDGE_GAP,
+                screen.max.y - insets.bottom - EDGE_GAP,
+            ),
+        ),
+        RibbonEdge::Top => egui::Rect::from_min_max(
+            screen.min + egui::vec2(insets.left + EDGE_GAP, EDGE_GAP),
+            egui::pos2(
+                screen.max.x - insets.right - EDGE_GAP,
+                screen.min.y + EDGE_GAP + SIDE_BTN_SIZE,
+            ),
+        ),
+        RibbonEdge::Bottom => egui::Rect::from_min_max(
+            egui::pos2(
+                screen.min.x + insets.left + EDGE_GAP,
+                screen.max.y - EDGE_GAP - SIDE_BTN_SIZE,
+            ),
+            egui::pos2(
+                screen.max.x - insets.right - EDGE_GAP,
+                screen.max.y - EDGE_GAP,
+            ),
+        ),
+    }
+}
+
+fn cluster_region(
+    ribbon: &ResolvedSlotRibbon,
+    cluster: RibbonCluster,
+    ctx: &egui::Context,
+    insets: SideInsets,
+) -> egui::Rect {
+    let strip = strip_rect(ribbon, ctx, insets);
+    match ribbon.mode {
+        RibbonMode::Centered | RibbonMode::OneSided(_) => strip,
+        RibbonMode::TwoSided => {
+            if ribbon.edge.is_vertical() {
+                let mid = (strip.top() + strip.bottom()) * 0.5;
+                match cluster {
+                    RibbonCluster::Start | RibbonCluster::Middle => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(strip.max.x, mid))
+                    }
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(strip.min.x, mid), strip.max)
+                    }
+                }
+            } else {
+                let mid = (strip.left() + strip.right()) * 0.5;
+                match cluster {
+                    RibbonCluster::Start | RibbonCluster::Middle => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(mid, strip.max.y))
+                    }
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(mid, strip.min.y), strip.max)
+                    }
+                }
+            }
+        }
+        RibbonMode::ThreeSided => {
+            if ribbon.edge.is_vertical() {
+                let h = strip.height() / 3.0;
+                let t1 = strip.min.y + h;
+                let t2 = strip.min.y + h * 2.0;
+                match cluster {
+                    RibbonCluster::Start => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(strip.max.x, t1))
+                    }
+                    RibbonCluster::Middle => egui::Rect::from_min_max(
+                        egui::pos2(strip.min.x, t1),
+                        egui::pos2(strip.max.x, t2),
+                    ),
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(strip.min.x, t2), strip.max)
+                    }
+                }
+            } else {
+                let w = strip.width() / 3.0;
+                let t1 = strip.min.x + w;
+                let t2 = strip.min.x + w * 2.0;
+                match cluster {
+                    RibbonCluster::Start => {
+                        egui::Rect::from_min_max(strip.min, egui::pos2(t1, strip.max.y))
+                    }
+                    RibbonCluster::Middle => egui::Rect::from_min_max(
+                        egui::pos2(t1, strip.min.y),
+                        egui::pos2(t2, strip.max.y),
+                    ),
+                    RibbonCluster::End => {
+                        egui::Rect::from_min_max(egui::pos2(t2, strip.min.y), strip.max)
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ButtonPlacement {
+    anchor: egui::Align2,
+    offset: egui::Vec2,
+}
+
+fn place_button(
+    ribbon: &ResolvedSlotRibbon,
+    cluster: RibbonCluster,
+    slot: u32,
+    total: u32,
+    insets: SideInsets,
+) -> ButtonPlacement {
+    let step = SIDE_BTN_SIZE + SIDE_BTN_GAP;
+    let len = total as f32 * SIDE_BTN_SIZE + total.saturating_sub(1) as f32 * SIDE_BTN_GAP;
+    match ribbon.edge {
+        RibbonEdge::Left => {
+            let x = EDGE_GAP;
+            let y = match cluster {
+                RibbonCluster::Start => insets.top + slot as f32 * step,
+                RibbonCluster::Middle => {
+                    let screen_h = chrome_rect_placeholder_axis();
+                    (screen_h - len) * 0.5 + slot as f32 * step
+                }
+                RibbonCluster::End => -SIDE_BTN_SIZE - insets.bottom - slot as f32 * step,
+            };
+            let anchor = if cluster == RibbonCluster::End {
+                egui::Align2::LEFT_BOTTOM
+            } else {
+                egui::Align2::LEFT_TOP
+            };
+            ButtonPlacement {
+                anchor,
+                offset: egui::vec2(x, y),
+            }
+        }
+        RibbonEdge::Right => {
+            let x = -EDGE_GAP - SIDE_BTN_SIZE;
+            let y = match cluster {
+                RibbonCluster::Start => insets.top + slot as f32 * step,
+                RibbonCluster::Middle => {
+                    let screen_h = chrome_rect_placeholder_axis();
+                    (screen_h - len) * 0.5 + slot as f32 * step
+                }
+                RibbonCluster::End => -SIDE_BTN_SIZE - insets.bottom - slot as f32 * step,
+            };
+            let anchor = if cluster == RibbonCluster::End {
+                egui::Align2::RIGHT_BOTTOM
+            } else {
+                egui::Align2::RIGHT_TOP
+            };
+            ButtonPlacement {
+                anchor,
+                offset: egui::vec2(x, y),
+            }
+        }
+        RibbonEdge::Top => {
+            let y = EDGE_GAP;
+            let x = match cluster {
+                RibbonCluster::Start => insets.left + slot as f32 * step,
+                RibbonCluster::Middle => slot as f32 * step - len * 0.5,
+                RibbonCluster::End => -SIDE_BTN_SIZE - insets.right - slot as f32 * step,
+            };
+            let anchor = match cluster {
+                RibbonCluster::Start => egui::Align2::LEFT_TOP,
+                RibbonCluster::Middle => egui::Align2::CENTER_TOP,
+                RibbonCluster::End => egui::Align2::RIGHT_TOP,
+            };
+            ButtonPlacement {
+                anchor,
+                offset: egui::vec2(x, y),
+            }
+        }
+        RibbonEdge::Bottom => {
+            let y = -EDGE_GAP - SIDE_BTN_SIZE;
+            let x = match cluster {
+                RibbonCluster::Start => insets.left + slot as f32 * step,
+                RibbonCluster::Middle => slot as f32 * step - len * 0.5,
+                RibbonCluster::End => -SIDE_BTN_SIZE - insets.right - slot as f32 * step,
+            };
+            let anchor = match cluster {
+                RibbonCluster::Start => egui::Align2::LEFT_BOTTOM,
+                RibbonCluster::Middle => egui::Align2::CENTER_BOTTOM,
+                RibbonCluster::End => egui::Align2::RIGHT_BOTTOM,
+            };
+            ButtonPlacement {
+                anchor,
+                offset: egui::vec2(x, y),
+            }
+        }
+    }
+}
+
+fn chrome_rect_placeholder_axis() -> f32 {
+    // Used only for vertical middle placement. The final anchoring in
+    // `screen_rect` corrects the absolute origin; this keeps the
+    // cluster centered for normal-sized windows.
+    720.0
+}
+
+fn screen_rect(ctx: &egui::Context, placement: ButtonPlacement) -> egui::Rect {
+    let screen = chrome_rect(ctx);
+    let size = egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE);
+    let min = match placement.anchor {
+        egui::Align2::LEFT_TOP => egui::pos2(
+            screen.min.x + placement.offset.x,
+            screen.min.y + placement.offset.y,
+        ),
+        egui::Align2::LEFT_BOTTOM => egui::pos2(
+            screen.min.x + placement.offset.x,
+            screen.max.y + placement.offset.y,
+        ),
+        egui::Align2::RIGHT_TOP => egui::pos2(
+            screen.max.x + placement.offset.x,
+            screen.min.y + placement.offset.y,
+        ),
+        egui::Align2::RIGHT_BOTTOM => egui::pos2(
+            screen.max.x + placement.offset.x,
+            screen.max.y + placement.offset.y,
+        ),
+        egui::Align2::CENTER_TOP => egui::pos2(
+            screen.center().x + placement.offset.x,
+            screen.min.y + placement.offset.y,
+        ),
+        egui::Align2::CENTER_BOTTOM => egui::pos2(
+            screen.center().x + placement.offset.x,
+            screen.max.y + placement.offset.y,
+        ),
+        _ => egui::pos2(
+            screen.center().x + placement.offset.x,
+            screen.center().y + placement.offset.y,
+        ),
+    };
+    egui::Rect::from_min_size(min, size)
+}
+
+fn accepts_drop(source: &ResolvedSlotRibbon, target: &ResolvedSlotRibbon) -> bool {
+    let Some(src) = ribbon_id(source) else {
+        return false;
+    };
+    source.draggable
+        && (target.accepts.contains(&"*")
+            || target.accepts.contains(&src)
+            || ribbon_id(target) == Some(src))
+}
+
+fn item_role(item: &RibbonSlotItem, ribbon: &ResolvedSlotRibbon) -> RibbonRole {
+    item.role.unwrap_or(ribbon.role)
+}
+
+fn paint_item_glyph(ui: &mut egui::Ui, rect: egui::Rect, item: &RibbonSlotItem, fg: egui::Color32) {
+    crate::icons::paint_icon(
+        ui.painter(),
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        item.icon,
+        18.0,
+        fg,
+    );
+}
+
+pub fn draw_unified_ribbon_chrome(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    ribbons: &[ResolvedSlotRibbon],
+    open: &mut RibbonOpen,
+    placement: &mut RibbonPlacement,
+    drag: &mut RibbonDrag,
+    active: impl Fn(&'static str) -> bool,
+) -> Vec<egui::Id> {
+    let insets = compute_side_insets(ribbons);
+    let chrome = chrome_rect(ctx);
+    ctx.data_mut(|d| {
+        d.insert_temp(chrome_bounds_key(), chrome);
+        d.insert_temp::<[bool; 4]>(
+            egui::Id::new("frost_published_ribbon_edges"),
+            [
+                edge_has_ribbon(ribbons, RibbonEdge::Left),
+                edge_has_ribbon(ribbons, RibbonEdge::Right),
+                edge_has_ribbon(ribbons, RibbonEdge::Top),
+                edge_has_ribbon(ribbons, RibbonEdge::Bottom),
+            ],
+        );
+    });
+
+    let mut flat = Vec::new();
+    for (r_idx, ribbon) in ribbons.iter().enumerate() {
+        let Some(rid) = ribbon_id(ribbon) else {
+            continue;
+        };
+        for (i_idx, item) in ribbon.items.iter().enumerate() {
+            let Some(iid) = item_id(item) else {
+                continue;
+            };
+            flat.push((r_idx, i_idx, rid, iid, ribbon.cluster, i_idx as u32));
+        }
+    }
+
+    let resolved: Vec<(&'static str, RibbonCluster, u32)> = flat
+        .iter()
+        .map(|(_, _, rid, iid, cluster, slot)| placement.resolve_parts(iid, rid, *cluster, *slot))
+        .collect();
+
+    let mut target: Option<(&'static str, RibbonCluster, u32)> = None;
+    if let (Some(dragged_id), Some(cursor), Some(_source)) = (drag.item, drag.cursor, drag.source) {
+        let src_ribbon = flat
+            .iter()
+            .position(|(_, _, _, iid, _, _)| *iid == dragged_id)
+            .and_then(|idx| {
+                let current_rid = resolved[idx].0;
+                ribbons
+                    .iter()
+                    .find(|ribbon| ribbon_id(ribbon) == Some(current_rid))
+            });
+        if let Some(src_ribbon) = src_ribbon {
+            'hit: for ribbon in ribbons {
+                if !accepts_drop(src_ribbon, ribbon) {
+                    continue;
+                }
+                let Some(rid) = ribbon_id(ribbon) else {
+                    continue;
+                };
+                for &cluster in clusters_for_mode(ribbon.mode) {
+                    if cluster_region(
+                        ribbon,
+                        cluster,
+                        ctx,
+                        insets_for_ribbon(ribbons, ribbon, insets),
+                    )
+                    .contains(cursor)
+                    {
+                        let cluster_eff = effective_cluster(ribbon.mode, cluster);
+                        let count = resolved
+                            .iter()
+                            .zip(flat.iter())
+                            .filter(|((rrid, c, _), (_, _, _, iid, _, _))| {
+                                *rrid == rid
+                                    && effective_cluster(ribbon.mode, *c) == cluster_eff
+                                    && *iid != dragged_id
+                            })
+                            .count() as u32;
+                        let axis_cursor = if ribbon.edge.is_vertical() {
+                            cursor.y
+                        } else {
+                            cursor.x
+                        };
+                        let mut best_slot = 0;
+                        let mut best_dist = f32::INFINITY;
+                        for slot in 0..=count {
+                            let rect = screen_rect(
+                                ctx,
+                                place_button(
+                                    ribbon,
+                                    cluster_eff,
+                                    slot,
+                                    count + 1,
+                                    insets_for_ribbon(ribbons, ribbon, insets),
+                                ),
+                            );
+                            let axis = if ribbon.edge.is_vertical() {
+                                rect.center().y
+                            } else {
+                                rect.center().x
+                            };
+                            let dist = (axis - axis_cursor).abs();
+                            if dist < best_dist {
+                                best_dist = dist;
+                                best_slot = slot;
+                            }
+                        }
+                        target = Some((rid, cluster_eff, best_slot));
+                        break 'hit;
+                    }
+                }
+            }
+        }
+    }
+
+    let effective = |item_idx: usize| -> (&'static str, RibbonCluster, u32, u32) {
+        let (rid, cluster_raw, slot) = resolved[item_idx];
+        let Some(ribbon) = ribbons.iter().find(|ribbon| ribbon_id(ribbon) == Some(rid)) else {
+            return (rid, cluster_raw, slot, 1);
+        };
+        let kind = (rid, effective_cluster(ribbon.mode, cluster_raw));
+        let raw_total = |target_kind: (&'static str, RibbonCluster)| -> u32 {
+            resolved
+                .iter()
+                .filter(|(rrid, c, _)| {
+                    if *rrid != target_kind.0 {
+                        return false;
+                    }
+                    let Some(ribbon) = ribbons
+                        .iter()
+                        .find(|ribbon| ribbon_id(ribbon) == Some(*rrid))
+                    else {
+                        return false;
+                    };
+                    effective_cluster(ribbon.mode, *c) == target_kind.1
+                })
+                .count() as u32
+        };
+
+        let Some((src_rid, src_cluster_raw, src_slot)) = drag.source else {
+            return (kind.0, kind.1, slot, raw_total(kind));
+        };
+        let Some(src_ribbon) = ribbons
+            .iter()
+            .find(|ribbon| ribbon_id(ribbon) == Some(src_rid))
+        else {
+            return (kind.0, kind.1, slot, raw_total(kind));
+        };
+        let src_kind = (src_rid, effective_cluster(src_ribbon.mode, src_cluster_raw));
+
+        let mut out_slot = slot;
+        let mut total_delta: i32 = 0;
+        if let Some((tgt_rid, tgt_cluster_eff, insert)) = target {
+            let tgt_kind = (tgt_rid, tgt_cluster_eff);
+            if kind == src_kind && kind == tgt_kind {
+                if src_slot < insert && slot > src_slot && slot <= insert {
+                    out_slot = slot - 1;
+                } else if src_slot > insert && slot >= insert && slot < src_slot {
+                    out_slot = slot + 1;
+                }
+            } else {
+                if kind == src_kind && slot > src_slot {
+                    out_slot = slot - 1;
+                }
+                if kind == tgt_kind && slot >= insert {
+                    out_slot = slot + 1;
+                }
+                if kind == src_kind {
+                    total_delta = -1;
+                } else if kind == tgt_kind {
+                    total_delta = 1;
+                }
+            }
+        } else {
+            if kind == src_kind && slot > src_slot {
+                out_slot = slot - 1;
+            }
+            if kind == src_kind {
+                total_delta = -1;
+            }
+        }
+
+        let total = (raw_total(kind) as i32 + total_delta).max(1) as u32;
+        (kind.0, kind.1, out_slot, total)
+    };
+
+    let mut click_flags = vec![false; flat.len()];
+    let mut drag_started_idx = None;
+    let mut drag_stopped = false;
+    let mut button_rects = Vec::with_capacity(flat.len());
+
+    for (idx, (base_r_idx, i_idx, _base_rid, iid, _base_cluster, _base_slot)) in
+        flat.iter().enumerate()
+    {
+        let (rid, cluster, slot, total) = effective(idx);
+        let Some((ribbon_idx, ribbon)) = ribbons
+            .iter()
+            .enumerate()
+            .find(|(_, ribbon)| ribbon_id(ribbon) == Some(rid))
+        else {
+            continue;
+        };
+        let item = &ribbons[*base_r_idx].items[*i_idx];
+        let cluster_eff = effective_cluster(ribbon.mode, cluster);
+        let slot_eff = slot.min(total.saturating_sub(1));
+        let resting = screen_rect(
+            ctx,
+            place_button(
+                ribbon,
+                cluster_eff,
+                slot_eff,
+                total.max(1),
+                insets_for_ribbon(ribbons, ribbon, insets),
+            ),
+        );
+        button_rects.push(resting);
+        let dragging_this = drag.item == Some(*iid);
+        let paint_pos = if dragging_this {
+            let center = drag.cursor.unwrap_or_else(|| resting.center());
+            egui::pos2(
+                center.x - SIDE_BTN_SIZE * 0.5,
+                center.y - SIDE_BTN_SIZE * 0.5,
+            )
+        } else {
+            resting.min
+        };
+        let order = if dragging_this {
+            egui::Order::Tooltip
+        } else {
+            egui::Order::Foreground
+        };
+        let role = item_role(item, &ribbons[ribbon_idx]);
+        let is_active = match role {
+            RibbonRole::Panel => open.is_open(rid, iid) || active(iid),
+            RibbonRole::Icon => active(iid),
+        };
+        let area_response = egui::Area::new(egui::Id::new(("frost_ribbon_btn", iid)))
+            .order(order)
+            .fixed_pos(paint_pos)
+            .interactable(true)
+            .show(ctx, |ui| {
+                let sense = if ribbon.draggable {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::click()
+                };
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE), sense);
+                paint_ribbon_button(
+                    ui.painter(),
+                    rect,
+                    accent,
+                    is_active,
+                    response.hovered() || dragging_this,
+                );
+                let glyph = RibbonGlyph::Icon(item.icon);
+                let fg = ribbon_button_fg(
+                    accent,
+                    is_active || dragging_this,
+                    response.hovered() || dragging_this,
+                    glyph,
+                );
+                paint_item_glyph(ui, rect, item, fg);
+                response.on_hover_text(item.tooltip.clone())
+            });
+        ctx.move_to_top(area_response.response.layer_id);
+        let response = area_response.inner;
+        if ribbon.draggable && response.drag_started() {
+            drag_started_idx = Some(idx);
+        }
+        if dragging_this && response.dragged() {
+            drag.cursor = ctx.pointer_interact_pos();
+        }
+        if dragging_this && response.drag_stopped() {
+            drag_stopped = true;
+        }
+        if response.clicked() && drag.item.is_none() && !dragging_this {
+            click_flags[idx] = true;
+        }
+    }
+
+    if let (Some((tgt_rid, tgt_cluster, insert)), Some(_dragged)) = (target, drag.item) {
+        if let Some(ribbon) = ribbons
+            .iter()
+            .find(|ribbon| ribbon_id(ribbon) == Some(tgt_rid))
+        {
+            let count = resolved
+                .iter()
+                .zip(flat.iter())
+                .filter(|((rid, c, _), (_, _, _, iid, _, _))| {
+                    *rid == tgt_rid
+                        && effective_cluster(ribbon.mode, *c) == tgt_cluster
+                        && drag.item != Some(*iid)
+                })
+                .count() as u32
+                + 1;
+            let rect = screen_rect(
+                ctx,
+                place_button(
+                    ribbon,
+                    tgt_cluster,
+                    insert,
+                    count,
+                    insets_for_ribbon(ribbons, ribbon, insets),
+                ),
+            );
+            egui::Area::new(egui::Id::new("frost_ribbon_drop_outline"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(rect.min)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect(
+                        rect,
+                        crate::style::radius_for(crate::style::RadiusRole::Section),
+                        crate::style::fill_for(crate::style::FillRole::DragGhost, accent),
+                        crate::style::stroke_for(crate::style::StrokeRole::DragGhost, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                });
+        }
+    }
+
+    if let Some(idx) = drag_started_idx {
+        let (_, _, rid, iid, cluster, slot) = flat[idx];
+        drag.item = Some(iid);
+        drag.cursor = ctx.pointer_interact_pos();
+        drag.source = Some(placement.resolve_parts(iid, rid, cluster, slot));
+    }
+
+    if drag_stopped {
+        if let (Some(dragged_id), Some((tgt_rid, tgt_cluster, insert))) = (drag.item, target) {
+            if let Some(source) = drag.source {
+                resolve_drop(
+                    placement,
+                    ribbons,
+                    &flat,
+                    dragged_id,
+                    source,
+                    tgt_rid,
+                    tgt_cluster,
+                    insert,
+                );
+            }
+        }
+        drag.item = None;
+        drag.cursor = None;
+        drag.source = None;
+    }
+
+    let empty_main_bar_drag_started = ribbons.first().is_some_and(|main| {
+        let main_strip = strip_rect(main, ctx, insets_for_ribbon(ribbons, main, insets));
+        ctx.input(|i| {
+            i.pointer.interact_pos().is_some_and(|pos| {
+                i.pointer.button_pressed(egui::PointerButton::Primary)
+                    && main_strip.contains(pos)
+                    && !button_rects.iter().any(|rect| rect.contains(pos))
+            })
+        })
+    });
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            main_bar_empty_drag_started_id(),
+            empty_main_bar_drag_started,
+        );
+    });
+
+    let mut clicks = Vec::new();
+    for (idx, fired) in click_flags.iter().copied().enumerate() {
+        if !fired {
+            continue;
+        }
+        let (base_r_idx, i_idx, rid, iid, _, _) = flat[idx];
+        let item = &ribbons[base_r_idx].items[i_idx];
+        let role = item_role(item, &ribbons[base_r_idx]);
+        if role == RibbonRole::Panel {
+            open.toggle(rid, iid);
+        }
+        clicks.push(item.id);
+    }
+    clicks
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_drop(
+    placement: &mut RibbonPlacement,
+    ribbons: &[ResolvedSlotRibbon],
+    flat: &[(usize, usize, &'static str, &'static str, RibbonCluster, u32)],
+    dragged_id: &'static str,
+    source: (&'static str, RibbonCluster, u32),
+    tgt_rid: &'static str,
+    tgt_cluster_eff: RibbonCluster,
+    insert: u32,
+) {
+    let (src_rid, src_cluster_raw, src_slot) = source;
+    let Some(src_ribbon) = ribbons
+        .iter()
+        .find(|ribbon| ribbon_id(ribbon) == Some(src_rid))
+    else {
+        return;
+    };
+    let src_cluster_eff = effective_cluster(src_ribbon.mode, src_cluster_raw);
+
+    let now: Vec<(&'static str, (&'static str, RibbonCluster, u32))> = flat
+        .iter()
+        .map(|(_, _, base_rid, iid, base_cluster, base_slot)| {
+            (
+                *iid,
+                placement.resolve_parts(iid, base_rid, *base_cluster, *base_slot),
+            )
+        })
+        .collect();
+    let cross_cluster = (src_rid, src_cluster_eff) != (tgt_rid, tgt_cluster_eff);
+
+    for (id, (rid, c_raw, slot)) in &now {
+        if *id == dragged_id {
+            continue;
+        }
+        let Some(ribbon) = ribbons
+            .iter()
+            .find(|ribbon| ribbon_id(ribbon) == Some(*rid))
+        else {
+            continue;
+        };
+        let c_eff = effective_cluster(ribbon.mode, *c_raw);
+        let mut new_slot = *slot;
+        if cross_cluster {
+            if *rid == src_rid && c_eff == src_cluster_eff && *slot > src_slot {
+                new_slot -= 1;
+            }
+            if *rid == tgt_rid && c_eff == tgt_cluster_eff && *slot >= insert {
+                new_slot += 1;
+            }
+        } else if src_slot < insert && *slot > src_slot && *slot <= insert {
+            new_slot -= 1;
+        } else if src_slot > insert && *slot >= insert && *slot < src_slot {
+            new_slot += 1;
+        }
+        placement.overrides.insert(*id, (*rid, *c_raw, new_slot));
+    }
+
+    placement
+        .overrides
+        .insert(dragged_id, (tgt_rid, tgt_cluster_eff, insert));
+
+    for ribbon in ribbons {
+        let Some(rid) = ribbon_id(ribbon) else {
+            continue;
+        };
+        for &cluster in clusters_for_mode(ribbon.mode) {
+            let c_eff = effective_cluster(ribbon.mode, cluster);
+            let mut occ: Vec<(&'static str, u32)> = flat
+                .iter()
+                .filter_map(|(_, _, base_rid, iid, base_cluster, base_slot)| {
+                    let (r, c, s) =
+                        placement.resolve_parts(iid, base_rid, *base_cluster, *base_slot);
+                    if r != rid {
+                        return None;
+                    }
+                    let ribbon = ribbons.iter().find(|ribbon| ribbon_id(ribbon) == Some(r))?;
+                    if effective_cluster(ribbon.mode, c) != c_eff {
+                        return None;
+                    }
+                    Some((*iid, s))
+                })
+                .collect();
+            occ.sort_by_key(|(_, s)| *s);
+            for (n, (id, _)) in occ.into_iter().enumerate() {
+                let Some((_, _, base_rid, _, base_cluster, base_slot)) =
+                    flat.iter().find(|(_, _, _, iid, _, _)| *iid == id)
+                else {
+                    continue;
+                };
+                let (r, c_raw, _) =
+                    placement.resolve_parts(&id, base_rid, *base_cluster, *base_slot);
+                placement.overrides.insert(id, (r, c_raw, n as u32));
+            }
+        }
+    }
+}

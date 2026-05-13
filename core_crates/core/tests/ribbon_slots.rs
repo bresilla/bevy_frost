@@ -1,7 +1,7 @@
 use frost_core::{
     RibbonAction, RibbonActionError, RibbonActionResult, RibbonOverrideLayer, RibbonOverridePolicy,
     RibbonSlot, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride, ViewId, ViewRouter,
-    dispatch_ribbon_action, permanent_system_control_ribbon, permanent_view_switcher_ribbon,
+    dispatch_ribbon_action, permanent_system_control_slot, permanent_view_switcher_ribbon,
     resolve_slot_item, resolve_slot_items, restore_workspace_slot_override,
 };
 
@@ -165,16 +165,15 @@ fn permanent_view_switcher_generates_switch_view_items() {
 
 #[test]
 fn permanent_system_control_slot_can_resolve_to_restore_override() {
-    let ribbon = permanent_system_control_ribbon();
-    let slot = &ribbon.slots[0];
+    let slot = permanent_system_control_slot();
     assert_eq!(
-        resolve_slot_item(slot, &[]).unwrap().action,
+        resolve_slot_item(&slot, &[]).unwrap().action,
         RibbonAction::CloseApp
     );
 
     let layer = RibbonOverrideLayer::new(vec![restore_workspace_slot_override()]);
     assert_eq!(
-        resolve_slot_item(slot, &[layer]).unwrap().action,
+        resolve_slot_item(&slot, &[layer]).unwrap().action,
         RibbonAction::PopWorkspace
     );
 }

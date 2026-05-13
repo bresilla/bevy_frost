@@ -29,8 +29,9 @@ use frost_core::container::SeparatorStyle;
 use frost_core::pane::{Pane, PaneAnchor, PaneBody, RailZone};
 use frost_core::pod::Pod;
 use frost_core::ribbon::{
-    RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
-    RibbonOpen, RibbonPlacement, RibbonRole, draw_assembly, find_item, find_ribbon,
+    ResolvedSlotRibbon, RibbonAction, RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph,
+    RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonSlotClick, RibbonSlotItem,
+    draw_slot_ribbons_featureful,
 };
 use frost_core::shelf::{ShelfContainer, ShelfDef, ShelfEdge, ShelfState};
 use frost_core::style::{AccentColor, GlassOpacity, Mode, srgb_to_egui};
@@ -143,10 +144,32 @@ const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
     ),
 ];
 
-const RIBBONS: &[RibbonDef] = &[
+#[derive(Clone, Copy, Debug)]
+struct RibbonSpec {
+    id: &'static str,
+    edge: RibbonEdge,
+    role: RibbonRole,
+    mode: RibbonMode,
+    draggable: bool,
+    accepts: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RibbonButtonSpec {
+    id: &'static str,
+    ribbon: &'static str,
+    cluster: RibbonCluster,
+    slot: u32,
+    glyph: RibbonGlyph,
+    tooltip: &'static str,
+    child_ribbon: Option<&'static str>,
+    role: Option<RibbonRole>,
+}
+
+const RIBBONS: &[RibbonSpec] = &[
     // First declared ribbon is the persistent/main app bar. Keep it
     // first so it owns the full left-to-right top edge.
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_TOP,
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
@@ -154,7 +177,7 @@ const RIBBONS: &[RibbonDef] = &[
         draggable: true,
         accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_LEFT,
         edge: RibbonEdge::Left,
         role: RibbonRole::Panel,
@@ -162,7 +185,7 @@ const RIBBONS: &[RibbonDef] = &[
         draggable: true,
         accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_RIGHT,
         edge: RibbonEdge::Right,
         role: RibbonRole::Panel,
@@ -170,7 +193,7 @@ const RIBBONS: &[RibbonDef] = &[
         draggable: true,
         accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_BOTTOM,
         edge: RibbonEdge::Bottom,
         role: RibbonRole::Panel,
@@ -180,9 +203,9 @@ const RIBBONS: &[RibbonDef] = &[
     },
 ];
 
-const RIBBON_ITEMS: &[RibbonItem] = &[
+const RIBBON_ITEMS: &[RibbonButtonSpec] = &[
     // LEFT rail — primary navigation cluster.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_WIDGETS,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
@@ -192,7 +215,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_CONTAINERS,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
@@ -202,7 +225,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_SCENE,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
@@ -213,7 +236,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         role: None,
     },
     // RIGHT rail — theme + input.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_THEME,
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
@@ -223,7 +246,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_KEYS,
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
@@ -234,7 +257,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         role: None,
     },
     // TOP rail — meta.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
@@ -246,7 +269,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     },
     // TOP middle — root/L0 view switcher. These are normal ribbon
     // buttons, same style as every other demo ribbon button.
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -256,7 +279,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -266,7 +289,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_CLOSE_APP,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
@@ -279,7 +302,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     // BOTTOM rail — Editor (placeholder; the legacy graph + code
     // wrappers lived in `frostcore` which has been removed) and the
     // one-shot cube-cycle action buttons in the End cluster.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_EDITOR,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::Start,
@@ -289,7 +312,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_PREV_CUBE,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::End,
@@ -299,7 +322,7 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_NEXT_CUBE,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::End,
@@ -311,11 +334,11 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     },
 ];
 
-const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
+const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
     // Canvas view opts out of the Bevy-specific side/bottom rails,
     // but it does NOT opt out of the persistent main top bar. Keep
     // every top-bar item that should remain global.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
@@ -325,7 +348,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -335,7 +358,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -345,7 +368,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_CLOSE_APP,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
@@ -359,7 +382,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
 
 // ─── Fullscreen-only ribbon sets ───────────────────────────────────
 //
-// Painted by `draw_assembly` only while the corresponding widget is
+// Painted by `ribbon renderer` only while the corresponding widget is
 // in its fullscreen overlay — branched in the per-frame paint via
 // `is_graph_fullscreen` / `is_code_fullscreen`. Each set uses the
 // SAME ribbon API as the regular rails, so the fullscreen view is
@@ -368,8 +391,8 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
 // Shared rail-definitions reused by both fullscreen flavours. Items
 // reference these by id; the per-widget `RIBBON_ITEMS_FS_*` slices
 // below decide which icons populate each rail.
-const RIBBONS_FS: &[RibbonDef] = &[
-    RibbonDef {
+const RIBBONS_FS: &[RibbonSpec] = &[
+    RibbonSpec {
         id: RIBBON_TOP,
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
@@ -377,7 +400,7 @@ const RIBBONS_FS: &[RibbonDef] = &[
         draggable: false,
         accepts: &[],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_FS_LEFT,
         edge: RibbonEdge::Left,
         role: RibbonRole::Panel,
@@ -390,11 +413,11 @@ const RIBBONS_FS: &[RibbonDef] = &[
 // Node-graph fullscreen: a graph-builder toolbar across the top
 // (Add / Frame / Clear / Save) plus a category sidebar on the left
 // (Sources / Math / Noise / Logic).
-const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
+const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
     // Persistent main bar stays present in module/fullscreen views.
     // The system-control slot changes meaning here: close becomes
     // restore-to-parent/fullscreen-exit, not app close.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
@@ -404,7 +427,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -414,7 +437,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -424,7 +447,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_RESTORE_FULLSCREEN,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
@@ -434,7 +457,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_ADD,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -444,7 +467,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_FRAME,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -454,7 +477,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_CLEAR,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -464,7 +487,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_SAVE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -474,7 +497,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_SOURCES,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -484,7 +507,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_MATH,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -494,7 +517,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_NOISE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -504,7 +527,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_LOGIC,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -519,8 +542,8 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
 // Code-editor fullscreen: an editor toolbar across the top
 // (Save / Run / Format / Find) plus a file-switcher sidebar on the
 // left (main.rs / lib.rs / Cargo.toml).
-const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
-    RibbonItem {
+const RIBBON_ITEMS_FS_CODE: &[RibbonButtonSpec] = &[
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
@@ -530,7 +553,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -540,7 +563,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
@@ -550,7 +573,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_RESTORE_FULLSCREEN,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
@@ -560,7 +583,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_SAVE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -570,7 +593,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_RUN,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -580,7 +603,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_FORMAT,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -590,7 +613,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_FIND,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
@@ -600,7 +623,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_MAIN,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -610,7 +633,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_LIB,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -620,7 +643,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_CARGO,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
@@ -631,6 +654,91 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
         role: Some(RibbonRole::Icon),
     },
 ];
+
+fn find_item<'a>(items: &'a [RibbonButtonSpec], id: &'static str) -> Option<&'a RibbonButtonSpec> {
+    items.iter().find(|item| item.id == id)
+}
+
+fn find_ribbon<'a>(ribbons: &'a [RibbonSpec], id: &'static str) -> Option<&'a RibbonSpec> {
+    ribbons.iter().find(|ribbon| ribbon.id == id)
+}
+
+fn ribbon_action(id: &'static str) -> RibbonAction {
+    match id {
+        ACTION_CLOSE_APP => RibbonAction::CloseApp,
+        ACTION_RESTORE_FULLSCREEN => RibbonAction::PopWorkspace,
+        _ => RibbonAction::Command(egui::Id::new(id)),
+    }
+}
+
+fn draw_unified_ribbons(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    ribbons: &[RibbonSpec],
+    items: &[RibbonButtonSpec],
+    open: &mut RibbonOpen,
+    placement: &mut RibbonPlacement,
+    drag: &mut RibbonDrag,
+    active: impl Fn(&'static str) -> bool,
+) -> Vec<RibbonSlotClick> {
+    let mut resolved = Vec::new();
+    for ribbon in ribbons {
+        for cluster in [
+            RibbonCluster::Start,
+            RibbonCluster::Middle,
+            RibbonCluster::End,
+        ] {
+            let slot_items: Vec<RibbonSlotItem> = items
+                .iter()
+                .filter(|item| item.ribbon == ribbon.id && item.cluster == cluster)
+                .map(|item| {
+                    let icon = match item.glyph {
+                        RibbonGlyph::Icon(icon)
+                        | RibbonGlyph::Text(icon)
+                        | RibbonGlyph::Svg(icon) => icon,
+                    };
+                    let mut slot_item = RibbonSlotItem::featureful(
+                        item.id,
+                        icon,
+                        item.id,
+                        item.tooltip,
+                        ribbon_action(item.id),
+                    )
+                    .with_role(item.role.unwrap_or(ribbon.role));
+                    if let Some(child) = item.child_ribbon {
+                        slot_item = slot_item.with_child_ribbon(child);
+                    }
+                    slot_item.active = active(item.id);
+                    slot_item
+                })
+                .collect();
+            if slot_items.is_empty() {
+                continue;
+            }
+            resolved.push(ResolvedSlotRibbon {
+                id: egui::Id::new((ribbon.id, cluster)),
+                chrome_id: Some(ribbon.id),
+                scope: demo_ribbon_scope(ribbon.id),
+                edge: ribbon.edge,
+                role: ribbon.role,
+                mode: ribbon.mode,
+                cluster,
+                draggable: ribbon.draggable,
+                accepts: ribbon.accepts,
+                items: slot_items,
+            });
+        }
+    }
+    draw_slot_ribbons_featureful(ctx, accent, &resolved, open, placement, drag)
+}
+
+fn demo_ribbon_scope(ribbon_id: &'static str) -> frost_core::RibbonScope {
+    if ribbon_id == RIBBON_TOP {
+        frost_core::RibbonScope::Permanent
+    } else {
+        frost_core::RibbonScope::View(frost_core::ViewId::new("demo.local_ribbons"))
+    }
+}
 
 // ─── Theme + scene state ───────────────────────────────────────────
 
@@ -1191,7 +1299,7 @@ fn ui_system(
             )
         });
     // Ribbon assembly is rendered AFTER the pane loop below — see
-    // the trailing `draw_assembly` call. The ribbon `Area`s share
+    // the trailing `ribbon renderer` call. The ribbon `Area`s share
     // `Order::Foreground` with the `embed` fullscreen overlay, so
     // they must register later to land on top of it. Click handling
     // happens during that paint; pane `open` state is read one
@@ -1203,7 +1311,7 @@ fn ui_system(
     // top-bar buttons like About. If we hard-skip all panes in
     // Canvas, the persistent bar toggles state but its UI never
     // appears over the current view.
-    let current_ribbon_items: &[RibbonItem] = if fs_active && graph_fs {
+    let current_ribbon_items: &[RibbonButtonSpec] = if fs_active && graph_fs {
         RIBBON_ITEMS_FS_GRAPH
     } else if fs_active && code_fs {
         RIBBON_ITEMS_FS_CODE
@@ -1214,19 +1322,20 @@ fn ui_system(
     } else {
         RIBBON_ITEMS
     };
-    let current_ribbons: &[RibbonDef] = if fs_active { RIBBONS_FS } else { RIBBONS };
+    let current_ribbons: &[RibbonSpec] = if fs_active { RIBBONS_FS } else { RIBBONS };
 
-    let is_open_in = |items: &[RibbonItem], id: &'static str| -> bool {
+    let is_open_in = |items: &[RibbonButtonSpec], id: &'static str| -> bool {
         let Some(item) = find_item(items, id) else {
             return false;
         };
-        let (rid, _, _) = placement.resolve(item);
+        let (rid, _, _) = placement.resolve_parts(item.id, item.ribbon, item.cluster, item.slot);
         open.is_open(rid, id)
     };
     let is_open = |id: &'static str| -> bool { is_open_in(current_ribbon_items, id) };
     let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
         let item = find_item(current_ribbon_items, id)?;
-        let (rid, cluster, _) = placement.resolve(item);
+        let (rid, cluster, _) =
+            placement.resolve_parts(item.id, item.ribbon, item.cluster, item.slot);
         let def = find_ribbon(current_ribbons, rid)?;
         let zone = match cluster {
             RibbonCluster::Start => RailZone::Start,
@@ -1377,8 +1486,8 @@ fn ui_system(
     // `Order::Foreground` lands the ribbon `Area`s on top of the
     // `embed` fullscreen overlay, so the host's fullscreen rails
     // remain visible.
-    let clicks: Vec<frost_core::ribbon::RibbonClick> = if fs_active {
-        let fs_items: &[RibbonItem] = if graph_fs {
+    let clicks: Vec<RibbonSlotClick> = if fs_active {
+        let fs_items: &[RibbonButtonSpec] = if graph_fs {
             RIBBON_ITEMS_FS_GRAPH
         } else if code_fs {
             RIBBON_ITEMS_FS_CODE
@@ -1387,7 +1496,7 @@ fn ui_system(
         };
         let mut fs_placement = frost_core::ribbon::RibbonPlacement::default();
         let mut fs_drag = frost_core::ribbon::RibbonDrag::default();
-        draw_assembly(
+        draw_unified_ribbons(
             ctx,
             accent_col,
             RIBBONS_FS,
@@ -1398,7 +1507,7 @@ fn ui_system(
             |id| matches!(id, ACTION_RESTORE_FULLSCREEN),
         )
     } else {
-        draw_assembly(
+        draw_unified_ribbons(
             ctx,
             accent_col,
             RIBBONS,
@@ -1431,35 +1540,37 @@ fn ui_system(
         (191, 115, 242),
     ];
     for click in clicks {
-        if click.item == ACTION_VIEW_BEVY {
+        if click.item == egui::Id::new(ACTION_VIEW_BEVY) {
             if fs_active {
                 frost_core::embed::restore_fullscreen(ctx);
             }
             *root_view = DemoRootView::BevyScene;
             continue;
         }
-        if click.item == ACTION_VIEW_CANVAS {
+        if click.item == egui::Id::new(ACTION_VIEW_CANVAS) {
             if fs_active {
                 frost_core::embed::restore_fullscreen(ctx);
             }
             *root_view = DemoRootView::Canvas;
             continue;
         }
-        if click.item == ACTION_RESTORE_FULLSCREEN {
+        if click.item == egui::Id::new(ACTION_RESTORE_FULLSCREEN) {
             frost_core::embed::restore_fullscreen(ctx);
             continue;
         }
-        if click.item == ACTION_CLOSE_APP {
+        if click.item == egui::Id::new(ACTION_CLOSE_APP) {
             app_exit.write(AppExit::Success);
             continue;
         }
-        if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
+        if click.item == egui::Id::new(ACTION_PREV_CUBE)
+            || click.item == egui::Id::new(ACTION_NEXT_CUBE)
+        {
             let cur = accent.0;
             let cur_idx = SWATCH_RGB
                 .iter()
                 .position(|&(r, g, b)| egui::Color32::from_rgb(r, g, b) == cur)
                 .unwrap_or(0);
-            let next_idx = if click.item == ACTION_PREV_CUBE {
+            let next_idx = if click.item == egui::Id::new(ACTION_PREV_CUBE) {
                 (cur_idx + SWATCH_RGB.len() - 1) % SWATCH_RGB.len()
             } else {
                 (cur_idx + 1) % SWATCH_RGB.len()
@@ -1564,6 +1675,7 @@ fn canvas_shelves(accent: egui::Color32) -> Vec<ShelfDef<'static>> {
     vec![
         ShelfDef::new(CANVAS_SHELF_LEFT, ShelfEdge::Left, accent)
             .default_size(300.0)
+            .movable()
             .container(ShelfContainer::tabbed(
                 cid(CANVAS_SHELF_LEFT, "tools"),
                 "Canvas Tools",

@@ -21,9 +21,14 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedRibbon {
     pub id: Id,
+    pub chrome_id: Option<&'static str>,
     pub scope: RibbonScope,
     pub edge: crate::ribbon::RibbonEdge,
+    pub role: crate::ribbon::RibbonRole,
+    pub mode: crate::ribbon::RibbonMode,
     pub cluster: crate::ribbon::RibbonCluster,
+    pub draggable: bool,
+    pub accepts: &'static [&'static str],
     pub items: Vec<RibbonSlotItem>,
 }
 
@@ -50,15 +55,12 @@ impl Default for WindowControlsPolicy {
 
 /// API-level app chrome contract.
 ///
-/// Frost has exactly one persistent main bar. Hosts construct an
-/// `AppShellChrome` with that bar first, then append optional
-/// permanent bars. Active views/workspaces may override or explicitly
-/// hide individual slots, but they do not rebuild the main bar by
-/// passing a different arbitrary ribbon list each frame.
+/// Frost has exactly one persistent main bar. Active views/workspaces
+/// may override or explicitly hide individual slots, but they do not
+/// rebuild the main bar by passing additional permanent ribbons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppShellChrome {
     main_bar: RibbonSlotDef,
-    permanent_ribbons: Vec<RibbonSlotDef>,
     window_controls: WindowControlsPolicy,
 }
 
@@ -68,21 +70,28 @@ impl AppShellChrome {
         main_bar.scope = RibbonScope::Permanent;
         Self {
             main_bar,
-            permanent_ribbons: Vec::new(),
             window_controls: WindowControlsPolicy::Enabled,
         }
     }
 
     #[must_use]
-    pub fn with_permanent_ribbon(mut self, mut ribbon: RibbonSlotDef) -> Self {
-        ribbon.scope = RibbonScope::Permanent;
-        self.permanent_ribbons.push(ribbon);
+    pub fn with_permanent_ribbon(mut self, ribbon: RibbonSlotDef) -> Self {
+        self.push_permanent_ribbon(ribbon);
         self
     }
 
-    pub fn push_permanent_ribbon(&mut self, mut ribbon: RibbonSlotDef) {
-        ribbon.scope = RibbonScope::Permanent;
-        self.permanent_ribbons.push(ribbon);
+    /// Merge another permanent declaration into the one persistent
+    /// main bar.
+    ///
+    /// This exists for compatibility with older callers that built
+    /// "view switcher" and "system controls" separately. It does NOT
+    /// create a second permanent ribbon.
+    pub fn push_permanent_ribbon(&mut self, ribbon: RibbonSlotDef) {
+        debug_assert!(
+            matches!(ribbon.scope, RibbonScope::Permanent),
+            "only permanent declarations can be merged into AppShellChrome"
+        );
+        self.main_bar.slots.extend(ribbon.slots);
     }
 
     #[must_use]
@@ -92,7 +101,7 @@ impl AppShellChrome {
 
     #[must_use]
     pub fn permanent_ribbons(&self) -> &[RibbonSlotDef] {
-        &self.permanent_ribbons
+        std::slice::from_ref(&self.main_bar)
     }
 
     #[must_use]
@@ -118,14 +127,12 @@ impl AppShellChrome {
 
     #[must_use]
     pub fn permanent_ribbon_defs(&self) -> Vec<RibbonSlotDef> {
-        let controls = usize::from(self.window_controls_enabled());
-        let mut out = Vec::with_capacity(1 + controls + self.permanent_ribbons.len());
-        out.push(self.main_bar.clone());
+        let mut main = self.main_bar.clone();
         if self.window_controls_enabled() {
-            out.push(crate::ribbon::permanent_system_control_ribbon());
+            main.slots
+                .push(crate::ribbon::permanent_system_control_slot());
         }
-        out.extend(self.permanent_ribbons.iter().cloned());
-        out
+        vec![main]
     }
 }
 
@@ -133,6 +140,8 @@ impl AppShellChrome {
 pub enum AppShellError {
     View(ViewRouterError),
     Action(RibbonActionError),
+    MultiplePermanentRibbons { count: usize },
+    PermanentRibbonOnBottom { id: Id },
 }
 
 impl From<ViewRouterError> for AppShellError {
@@ -151,9 +160,14 @@ impl From<ResolvedRibbon> for ResolvedSlotRibbon {
     fn from(value: ResolvedRibbon) -> Self {
         Self {
             id: value.id,
+            chrome_id: value.chrome_id,
             scope: value.scope,
             edge: value.edge,
+            role: value.role,
+            mode: value.mode,
             cluster: value.cluster,
+            draggable: value.draggable,
+            accepts: value.accepts,
             items: value.items,
         }
     }
@@ -181,6 +195,7 @@ pub fn resolve_app_shell_ribbons(
     router: &mut ViewRouter,
     permanent_ribbons: &[RibbonSlotDef],
 ) -> Result<AppShellResolution, AppShellError> {
+    validate_single_permanent_ribbon(permanent_ribbons)?;
     resolve_app_shell_ribbons_with_workspace_chrome(router, permanent_ribbons, &[], &[])
 }
 
@@ -245,6 +260,7 @@ pub fn resolve_app_shell_ribbons_with_workspace_chrome(
     workspace_ribbons: &[RibbonSlotDef],
     workspace_layers: &[RibbonOverrideLayer],
 ) -> Result<AppShellResolution, AppShellError> {
+    validate_single_permanent_ribbon(permanent_ribbons)?;
     let active_view_id = router.active()?;
     let active_depth = router.active_workspace()?.depth();
 
@@ -283,14 +299,36 @@ pub fn resolve_app_shell_ribbons_with_workspace_chrome(
             .collect();
         resolved.ribbons.push(ResolvedRibbon {
             id: ribbon.id,
+            chrome_id: ribbon.chrome_id,
             scope: ribbon.scope,
             edge: ribbon.edge,
+            role: ribbon.role,
+            mode: ribbon.mode,
             cluster: ribbon.cluster,
+            draggable: ribbon.draggable,
+            accepts: ribbon.accepts,
             items,
         });
     }
 
     Ok(resolved)
+}
+
+fn validate_single_permanent_ribbon(ribbons: &[RibbonSlotDef]) -> Result<(), AppShellError> {
+    let count = ribbons
+        .iter()
+        .filter(|ribbon| matches!(ribbon.scope, RibbonScope::Permanent))
+        .count();
+    if count > 1 {
+        return Err(AppShellError::MultiplePermanentRibbons { count });
+    }
+    if let Some(ribbon) = ribbons.iter().find(|ribbon| {
+        matches!(ribbon.scope, RibbonScope::Permanent)
+            && matches!(ribbon.edge, crate::ribbon::RibbonEdge::Bottom)
+    }) {
+        return Err(AppShellError::PermanentRibbonOnBottom { id: ribbon.id });
+    }
+    Ok(())
 }
 
 /// Dispatch a root-shell ribbon action.

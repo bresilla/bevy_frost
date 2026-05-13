@@ -427,7 +427,7 @@ pub const RAIL_INSET: f32 = crate::ribbon::EDGE_GAP + crate::ribbon::SIDE_BTN_SI
 
 /// Read which screen edges currently host an active ribbon, as
 /// `[left, right, top, bottom]`. Published every frame by
-/// [`crate::ribbon::draw_assembly`]; returns `[true; 4]` when no
+/// [`crate::ribbon::draw_slot_ribbons_featureful`]; returns `[true; 4]` when no
 /// ribbons have been drawn yet (conservative default — reserve
 /// space for ribbons on every side until we know better).
 pub fn published_ribbon_edges(ctx: &egui::Context) -> [bool; 4] {
@@ -674,13 +674,13 @@ impl Pane {
         // exceeds the budget, the next frame's walk will fold a
         // different tail container to compensate.
         let screen = ctx
-            .data(|d| d.get_temp::<egui::Rect>(crate::ribbon::assembly::chrome_bounds_key()))
+            .data(|d| d.get_temp::<egui::Rect>(crate::ribbon::chrome::chrome_bounds_key()))
             .unwrap_or_else(|| ctx.content_rect());
         // Reserve `RAIL_INSET` on the pane's OWN rail (its title
         // strip lives there); on the opposite side only reserve
         // when there's actually a ribbon hosted there. The
         // `published_ribbon_edges` registry is filled every frame
-        // by `draw_assembly` so the pane always sees current
+        // by the ribbon renderer so the pane always sees current
         // truth.
         let edges = published_ribbon_edges(ctx);
         let [has_left, has_right, has_top, has_bottom] = edges;

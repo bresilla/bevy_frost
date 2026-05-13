@@ -8,9 +8,8 @@
 
 use eframe::egui;
 use egui_frost::{
-    AccentColor, FrostView, GlassOpacity, RibbonSlotDef, ViewCtx, ViewId, ViewRouter,
-    apply_theme_now, permanent_system_control_ribbon, permanent_view_switcher_ribbon,
-    show_app_shell_with_slot_ribbons,
+    AccentColor, AppShellChrome, FrostView, GlassOpacity, ViewCtx, ViewId, ViewRouter,
+    apply_theme_now, permanent_view_switcher_ribbon, show_app_shell_chrome_with_slot_ribbons,
 };
 
 struct LabelView {
@@ -68,7 +67,7 @@ impl FrostView for LabelView {
 
 struct ViewShellApp {
     router: ViewRouter,
-    permanent_ribbons: Vec<RibbonSlotDef>,
+    chrome: AppShellChrome,
     accent: AccentColor,
     glass: GlassOpacity,
 }
@@ -94,14 +93,11 @@ impl Default for ViewShellApp {
             "This stands in for a top-level canvas/whiteboard L0 view.",
         ));
 
-        let permanent_ribbons = vec![
-            permanent_view_switcher_ribbon(router.entries()),
-            permanent_system_control_ribbon(),
-        ];
+        let chrome = AppShellChrome::new(permanent_view_switcher_ribbon(router.entries()));
 
         Self {
             router,
-            permanent_ribbons,
+            chrome,
             accent: AccentColor(egui::Color32::from_rgb(0x7C, 0x5C, 0xFF)),
             glass: GlassOpacity(100),
         }
@@ -111,10 +107,10 @@ impl Default for ViewShellApp {
 impl eframe::App for ViewShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme_now(ctx, self.accent, self.glass);
-        let _ = show_app_shell_with_slot_ribbons(
+        let _ = show_app_shell_chrome_with_slot_ribbons(
             ctx,
             &mut self.router,
-            &self.permanent_ribbons,
+            &self.chrome,
             self.accent.0,
         );
     }

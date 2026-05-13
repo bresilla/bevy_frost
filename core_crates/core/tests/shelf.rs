@@ -51,6 +51,30 @@ fn shelf_state_persists_size_and_active_container() {
     assert_eq!(state.active_container(shelf_id), None);
     state.set_active_container(shelf_id, container_id);
     assert_eq!(state.active_container(shelf_id), Some(container_id));
+
+    assert_eq!(state.edge(shelf_id, ShelfEdge::Left), ShelfEdge::Left);
+    state.set_edge(shelf_id, ShelfEdge::Right);
+    assert_eq!(state.edge(shelf_id, ShelfEdge::Left), ShelfEdge::Right);
+    state.clear_edge_override(shelf_id);
+    assert_eq!(state.edge(shelf_id, ShelfEdge::Left), ShelfEdge::Left);
+}
+
+#[test]
+fn shelf_layout_uses_state_edge_override() {
+    let theme = *style::theme().shelf();
+    let shelf_id = Id::new("movable");
+    let mut state = ShelfState::default();
+    state.set_edge(shelf_id, ShelfEdge::Bottom);
+    let available = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 800.0));
+    let shelves =
+        vec![ShelfDef::new(shelf_id, ShelfEdge::Left, egui::Color32::WHITE).default_size(200.0)];
+
+    let layout = layout_shelves(available, &shelves, &mut state, &theme);
+
+    assert!(layout.left.is_none());
+    assert!(layout.bottom.is_some());
+    assert_eq!(layout.bottom.unwrap().height(), 200.0);
+    assert_eq!(layout.viewport.max.y, 600.0);
 }
 
 #[test]
