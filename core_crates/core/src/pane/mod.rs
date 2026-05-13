@@ -13,23 +13,26 @@
 //!   the `far_flags` table that drives bottom/right inset choice.
 //! * [`layout`] — `compute_pane_pos` (anchor → screen position).
 //! * [`title`] — `paint_pane_title` (theme-aware strip painter).
-//! * `mod.rs` (this file) — `Pane2` builder + render entry point.
+//! * `mod.rs` (this file) — `Pane` builder + render entry point.
 
 mod anchor;
 mod body;
 mod dots;
 mod drag;
 mod layout;
+pub(crate) mod tab_drag;
 mod title;
 
+pub(crate) use body::render_containers;
 pub use body::{ContainerSpec, PaneBody};
 pub use dots::paint_container_dots;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
 pub use drag::{
     DragState, RectEntry, active_drag, begin_frame as begin_drag_frame, clear_drag, compute_target,
-    current_cache, dragged_size, finalize_snapshot, paint_drag_preview, paint_ghost_gap_inline,
-    push_rect, section_order_for, set_drag, set_section_order, snapshot, state as drag_state,
+    current_cache, dragged_entry, dragged_size, finalize_snapshot, paint_drag_preview,
+    paint_ghost_gap_entry_inline, paint_ghost_gap_inline, push_rect, push_rect_with_frame,
+    section_order_for, set_drag, set_section_order, snapshot, state as drag_state,
 };
 
 use egui::{Color32, Id, Sense, vec2};
@@ -60,7 +63,7 @@ pub const PANE_OUTER_SPAN: f32 = 320.0;
 pub const TITLE_STRIP_THICKNESS: f32 = 25.0;
 
 /// Animation duration for the body's open/close transition. Shared
-/// between [`Pane2`] (for size animation) and
+/// between [`Pane`] (for size animation) and
 /// [`crate::container::Normal`] (for body content animation), so
 /// both lerp at the same rate.
 pub const BODY_ANIMATION_TIME: f32 = 0.18;
@@ -91,7 +94,7 @@ pub const MAX_USER_SPAN: f32 = 1200.0;
 const CONTAINER_TITLE_THICKNESS: f32 = 22.0;
 
 /// Compute the pane's animated openness 0..=1 for `pane_id`. Both
-/// `Pane2` and `Normal` call this with the same id so they lerp in
+/// `Pane` and `Normal` call this with the same id so they lerp in
 /// lockstep and the pane size is known in-frame (no anchor drift).
 pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
     let open: bool =
@@ -147,7 +150,7 @@ pub fn set_user_span(ctx: &egui::Context, pane_id: Id, value: f32) {
     });
 }
 
-/// Per-pane resize affordance — opt-in via [`Pane2::resize`].
+/// Per-pane resize affordance — opt-in via [`Pane::resize`].
 ///
 /// `flow` adds an invisible handle on the pane's inner edge (the
 /// side facing AWAY from the rail), letting the user drag the pane
@@ -187,13 +190,21 @@ impl PaneResize {
 }
 
 /// Shared ctx-data key that points to the **currently active**
-/// `Pane2`'s id. Pane2 writes this at the top of `show` so children
+/// `Pane`'s id. Pane writes this at the top of `show` so children
 /// (e.g. `Normal`) can look up their parent pane's stagger state
 /// without needing the pane id wired through their constructors.
 /// Multiple panes' bodies run sequentially within a frame so the
 /// pointer is well-defined while any one body callback runs.
 pub fn active_pane_key() -> Id {
     Id::new("frost_active_pane_id")
+}
+
+pub(crate) fn active_tabbed_container_rect_key() -> Id {
+    Id::new("frost_active_tabbed_container_rect")
+}
+
+pub(crate) fn active_container_frame_rect_key() -> Id {
+    Id::new("frost_active_container_frame_rect")
 }
 
 /// Toggle the pane's body open state. Called from the container's
@@ -212,7 +223,7 @@ pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
         d.insert_persisted(key, !cur);
         let v: u64 = d.get_persisted(ver_key).unwrap_or(0);
         d.insert_persisted(ver_key, v.wrapping_add(1));
-        // Stamp the toggle time so the parent `Pane2` auto-fold
+        // Stamp the toggle time so the parent `Pane` auto-fold
         // walk can pick "fold the OLDEST-touched open container
         // first" instead of just blindly chopping the tail. The
         // user's most recent unfold wins — older opens yield space.
@@ -222,7 +233,7 @@ pub fn toggle_body(ctx: &egui::Context, pane_id: Id) {
 
 /// Read the timestamp (egui's `i.time` seconds) of the most recent
 /// user toggle of `body_open` for this container. Returns `0.0` if
-/// never toggled. Used by [`Pane2::show`]'s auto-fold-tail walk to
+/// never toggled. Used by [`Pane::show`]'s auto-fold-tail walk to
 /// preserve the user's most recent unfold over older opens.
 pub fn body_open_touched_at(ctx: &egui::Context, pane_id: Id) -> f64 {
     ctx.data_mut(|d| d.get_persisted::<f64>(pane_id.with("body_open_touched_at")))
@@ -273,9 +284,9 @@ pub fn container_min_flows(ctx: &egui::Context, pane_id: Id) -> Vec<f32> {
 
 /// Clear all four per-pane body-bookkeeping accumulators (min
 /// widths, min flows, container cids, extra body flow). Called by
-/// `Pane2::show` at the top of every frame so the body callback
+/// `Pane::show` at the top of every frame so the body callback
 /// can re-register fresh.
-fn clear_container_min_widths(ctx: &egui::Context, pane_id: Id) {
+pub(crate) fn clear_container_min_widths(ctx: &egui::Context, pane_id: Id) {
     ctx.data_mut(|d| {
         d.remove::<Vec<f32>>(container_mins_key(pane_id));
         d.remove::<Vec<f32>>(container_min_flows_key(pane_id));
@@ -294,7 +305,7 @@ fn body_extra_flow_key(pane_id: Id) -> Id {
 
 /// Read the list of container CIDs registered against `pane_id`
 /// during this frame's body callback. Returned in container
-/// declaration order. Used by [`Pane2::show`] to compute the
+/// declaration order. Used by [`Pane::show`] to compute the
 /// pane's auto-flow when `PaneResize::flow` is off — pane size =
 /// sum of `crate::container::container_flow(cid)` over these cids
 /// + per-container chrome + sum of extra body chrome + pane chrome.
@@ -333,7 +344,7 @@ pub fn published_body_extra_flow(ctx: &egui::Context, pane_id: Id) -> f32 {
 
 /// Add `flow` to the per-pane "extra body chrome" total. Called by
 /// any caller that paints extra flow-axis content inside a
-/// `Pane2` body — the inter-container drag-handle in
+/// `Pane` body — the inter-container drag-handle in
 /// [`paint_container_dots`] uses this to make sure the pane
 /// auto-grows to include each handle's strip height.
 pub fn publish_body_extra_flow(ctx: &egui::Context, pane_id: Id, flow: f32) {
@@ -344,7 +355,7 @@ pub fn publish_body_extra_flow(ctx: &egui::Context, pane_id: Id, flow: f32) {
     });
 }
 
-/// Global ctx-data key under which every [`Pane2::show`] call
+/// Global ctx-data key under which every [`Pane::show`] call
 /// publishes its painted rect each frame. Read by host integrations
 /// (e.g. `bevy_frost::EguiInputAbsorbPlugin`) to decide whether the
 /// cursor is currently over an interactable frost pane — a
@@ -358,19 +369,19 @@ fn published_pane_rects_key() -> Id {
 /// Read every pane's painted rect that was published THIS FRAME.
 /// Empty when no panes are currently rendering. The list resets at
 /// the start of each frame and entries are appended by
-/// `Pane2::show`.
+/// `Pane::show`.
 pub fn published_pane_rects(ctx: &egui::Context) -> Vec<egui::Rect> {
     ctx.data(|d| d.get_temp::<Vec<egui::Rect>>(published_pane_rects_key()))
         .unwrap_or_default()
 }
 
 /// Clear the global pane-rects list unconditionally. Host
-/// integrations call this once per frame BEFORE any `Pane2::show`
+/// integrations call this once per frame BEFORE any `Pane::show`
 /// runs (e.g. the bevy_frost firewall, after it has consumed the
 /// previous frame's rects), so the list reflects ONLY panes that
 /// actually painted in the most recent egui pass — without this,
 /// closing every visible pane leaves the last-seen rects stuck in
-/// `published_pane_rects` forever, since `Pane2::show` is the only
+/// `published_pane_rects` forever, since `Pane::show` is the only
 /// other entry point that resets the list.
 pub fn clear_published_pane_rects(ctx: &egui::Context) {
     ctx.data_mut(|d| {
@@ -379,7 +390,7 @@ pub fn clear_published_pane_rects(ctx: &egui::Context) {
 }
 
 /// Append `rect` to the global pane-rects list. Called by
-/// `Pane2::show` after the Frame paints. The list lives in egui
+/// `Pane::show` after the Frame paints. The list lives in egui
 /// ctx data and is reset by [`maybe_reset_published_pane_rects`].
 fn publish_pane_rect(ctx: &egui::Context, rect: egui::Rect) {
     ctx.data_mut(|d| {
@@ -391,9 +402,9 @@ fn publish_pane_rect(ctx: &egui::Context, rect: egui::Rect) {
 }
 
 /// Clear the pane-rects list. Called once per frame, before any
-/// `Pane2::show` runs, so the list reflects ONLY this frame's
+/// `Pane::show` runs, so the list reflects ONLY this frame's
 /// painted panes. Reset is keyed off `cumulative_pass_nr` — the
-/// list resets the first time `Pane2::show` is called in a new
+/// list resets the first time `Pane::show` is called in a new
 /// pass and stays accumulating until the next pass starts.
 fn maybe_reset_published_pane_rects(ctx: &egui::Context) {
     let key = Id::new("frost_published_pane_rects_pass");
@@ -430,9 +441,9 @@ const RAIL_PANEL_GAP: f32 = 8.0;
 // ─── Builder ───────────────────────────────────────────────────────
 
 /// A single floating window keyed by `id` and pinned to one of 12
-/// screen positions. Build with [`Pane2::new`], then call
-/// [`Pane2::show`] each frame the pane should be visible.
-pub struct Pane2 {
+/// screen positions. Build with [`Pane::new`], then call
+/// [`Pane::show`] each frame the pane should be visible.
+pub struct Pane {
     id: Id,
     title: String,
     anchor: PaneAnchor,
@@ -441,7 +452,7 @@ pub struct Pane2 {
     order: egui::Order,
 }
 
-impl Pane2 {
+impl Pane {
     /// Enable user-resize on the pane's edges. See [`PaneResize`].
     pub fn resize(mut self, resize: PaneResize) -> Self {
         self.resize = resize;
@@ -486,7 +497,7 @@ impl Pane2 {
     /// horizontal title bar grows down with stacked containers; a
     /// vertical title strip grows right). The span axis (the one
     /// the title spans) is fixed per anchor.
-    pub fn show(self, ctx: &egui::Context, body: impl FnOnce(&mut PaneBody)) {
+    pub fn show<'spec>(self, ctx: &egui::Context, body: impl FnOnce(&mut PaneBody<'_, 'spec>)) {
         let (align, offset) = layout::anchor_align(self.anchor);
         let area_id = self.id.with("pane2_area");
 
@@ -536,7 +547,7 @@ impl Pane2 {
         // and a fresh `section_idx = 0` counter under that id.
         // The active-pane pointer lives at a single global key so
         // `Normal::show` (whose own `pane_id` field is the
-        // CONTAINER's id, not Pane2's) can find its parent pane.
+        // CONTAINER's id, not Pane's) can find its parent pane.
         ctx.data_mut(|d| {
             d.insert_temp(active_pane_key(), self.id);
             d.insert_temp(self.id.with("frost_pane_open_elapsed"), pane_open_elapsed);
@@ -584,7 +595,7 @@ impl Pane2 {
         clear_container_min_widths(ctx, self.id);
 
         // Compute pane main from the body's animation state in
-        // THIS frame. Both `Pane2` and `Normal` call
+        // THIS frame. Both `Pane` and `Normal` call
         // `body_openness(ctx, pane_id)` with the same `pane_id`, so
         // egui returns the same value to both — meaning the pane's
         // size and the container's content are in lockstep, with
@@ -662,7 +673,9 @@ impl Pane2 {
         // ribbon button to that container to unfold it; if doing so
         // exceeds the budget, the next frame's walk will fold a
         // different tail container to compensate.
-        let screen = ctx.content_rect();
+        let screen = ctx
+            .data(|d| d.get_temp::<egui::Rect>(crate::ribbon::assembly::chrome_bounds_key()))
+            .unwrap_or_else(|| ctx.content_rect());
         // Reserve `RAIL_INSET` on the pane's OWN rail (its title
         // strip lives there); on the opposite side only reserve
         // when there's actually a ribbon hosted there. The
@@ -996,12 +1009,12 @@ impl Pane2 {
                 maybe_reset_published_pane_rects(outer_ui.ctx());
                 publish_pane_rect(outer_ui.ctx(), painted_rect.get());
                 // Custom debug inspector — paint the pane's frame
-                // rect with a `Pane2[<title>]` label when the user
+                // rect with a `Pane[<title>]` label when the user
                 // toggles the inspector and hovers inside.
                 crate::debug::tag(
                     outer_ui,
                     painted_rect.get(),
-                    format!("Pane2[{}]", pane_title_dbg),
+                    format!("Pane[{}]", pane_title_dbg),
                 );
                 let _ = outer_ui.allocate_rect(pane_rect, egui::Sense::hover());
 
@@ -1043,8 +1056,8 @@ impl Pane2 {
     /// pane is exactly tall/wide enough to fit the title strip plus
     /// whatever the body closure allocates. Empty body → pane is
     /// just the strip.
-    fn lay_out_flex(self, ui: &mut egui::Ui, body: impl FnOnce(&mut PaneBody)) {
-        let Pane2 {
+    fn lay_out_flex<'spec>(self, ui: &mut egui::Ui, body: impl FnOnce(&mut PaneBody<'_, 'spec>)) {
+        let Pane {
             id,
             title,
             anchor,
@@ -1056,8 +1069,8 @@ impl Pane2 {
         let horizontal_strip = title_side.is_horizontal_strip();
 
         // Cross axis = the dimension the title strip spans. Tracks
-        // the SAME `span_outer` value `Pane2::show` used to size
-        // the pane Area. `Pane2::show` publishes the post-clamp
+        // the SAME `span_outer` value `Pane::show` used to size
+        // the pane Area. `Pane::show` publishes the post-clamp
         // effective span under `frost_pane_effective_span` for this
         // pane id; that value already accounts for the screen-edge
         // / perpendicular-ribbon clamp so the Frame paints flush
@@ -1086,7 +1099,7 @@ impl Pane2 {
         // `set_max_*` so `ui.available_*` is stable for child
         // widgets; flow axis is content-driven by `body(ui)`. Title
         // strip and body are placed in the natural reading order
-        // dictated by `title_at_end` (decided in `Pane2::show` when
+        // dictated by `title_at_end` (decided in `Pane::show` when
         // building the outer child_ui's layout).
         let title_text = title.clone();
         let paint_title_strip = |ui: &mut egui::Ui| {
@@ -1096,7 +1109,7 @@ impl Pane2 {
 
         // The outer child_ui already carries the correct layout
         // (top_down / bottom_up / left_to_right / right_to_left)
-        // chosen by `Pane2::show` so the cursor starts at the anchor
+        // chosen by `Pane::show` so the cursor starts at the anchor
         // edge — see the comment there for why we *don't* rewrap in
         // a `with_layout(bottom_up)` here. We just clamp the cross
         // axis and zero the item-spacing.
@@ -1151,6 +1164,7 @@ impl Pane2 {
         // user closure only sees the typed API, never the raw Ui.
         // After the closure returns, `PaneBody::finish` dispatches
         // the accumulated container specs through `render_containers`.
+        tab_drag::begin_frame(ui.ctx(), id);
         let mut pane_body = PaneBody::new(ui, id, anchor, accent);
         body(&mut pane_body);
         let _ = pane_body.finish();
@@ -1176,8 +1190,8 @@ impl Pane2 {
                 let target_idx =
                     drag::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
                 if target_idx >= total {
-                    if let Some(size) = drag::dragged_size(&snap, dragged_id) {
-                        drag::paint_ghost_gap_inline(ui, size, accent, horizontal_stack);
+                    if let Some(entry) = drag::dragged_entry(&snap, dragged_id) {
+                        drag::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
                     }
                 }
             }
@@ -1211,6 +1225,45 @@ impl Pane2 {
                     drag::set_section_order(ui.ctx(), id, order);
                 }
                 drag::clear_drag(ui.ctx(), id);
+            }
+        }
+
+        // ── Tab drag: preview + commit-on-release ──
+        if let Some(tab_drag_state) = tab_drag::drag_state(ui.ctx(), id) {
+            let cursor = ui.ctx().pointer_latest_pos().or(tab_drag_state.cursor);
+            if let Some(c) = cursor {
+                // Persist the cursor pos so next frame can paint at
+                // the right spot even if egui drops the input.
+                tab_drag::set_drag(
+                    ui.ctx(),
+                    id,
+                    tab_drag::TabDragState {
+                        cursor: Some(c),
+                        ..tab_drag_state
+                    },
+                );
+                // Floating preview at the cursor — best-effort sized
+                // button. The exact tab title/icon isn't threaded
+                // through here (would need a tab_pool), but a plain
+                // accent-tinted card is enough signal.
+                let preview_size = egui::vec2(28.0, 28.0);
+                tab_drag::paint_drag_preview(ui.ctx(), id, preview_size, c, accent, "", None);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            if ui.ctx().input(|i| i.pointer.any_released()) {
+                if let Some(c) = cursor {
+                    if let Some((tgt_cid, slot)) = tab_drag::find_drop_target(ui.ctx(), id, c) {
+                        tab_drag::commit_drop(
+                            ui.ctx(),
+                            id,
+                            tab_drag_state.tab_id,
+                            tab_drag_state.source_container,
+                            tgt_cid,
+                            slot,
+                        );
+                    }
+                }
+                tab_drag::clear_drag(ui.ctx(), id);
             }
         }
     }

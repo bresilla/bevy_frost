@@ -1,4 +1,4 @@
-//! Title-strip painter for [`super::Pane2`]. Theme-aware (PRO solid
+//! Title-strip painter for [`super::Pane`]. Theme-aware (PRO solid
 //! accent vs GAME caution stripes), with text alignment + blinking
 //! pip placement driven by the pane's [`PaneAnchor`].
 

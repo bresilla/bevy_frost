@@ -276,9 +276,9 @@ fn consume_egui_input_system(
 
     // Clear the published-rects list now that we've consumed it.
     // The next egui pass either repopulates it (open panes call
-    // `Pane2::show` → publish) or leaves it empty (no panes shown
+    // `Pane::show` → publish) or leaves it empty (no panes shown
     // this frame). Without this, closing every pane would leave the
-    // last-seen rects stuck in ctx data — `Pane2::show` is the only
+    // last-seen rects stuck in ctx data — `Pane::show` is the only
     // other reset path, and it doesn't fire when no panes paint.
     frost_core::pane::clear_published_pane_rects(ctx);
 }

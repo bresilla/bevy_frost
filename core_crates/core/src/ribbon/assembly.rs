@@ -324,6 +324,15 @@ struct ButtonPlacement {
     offset: egui::Vec2,
 }
 
+pub(crate) fn chrome_bounds_key() -> egui::Id {
+    egui::Id::new("frost_chrome_bounds")
+}
+
+fn chrome_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.data(|d| d.get_temp::<egui::Rect>(chrome_bounds_key()))
+        .unwrap_or_else(|| ctx.content_rect())
+}
+
 /// Compute where a button should land on screen given its ribbon's
 /// edge + mode and the button's own cluster + slot. Centred ribbons
 /// additionally need the total button count (`cluster_total`) so the
@@ -570,7 +579,7 @@ pub struct RibbonClick {
 /// Turn a button's anchor + offset into an actual screen rect. Used
 /// both for drag ghost painting and for drop-target hit-testing.
 fn screen_rect(ctx: &egui::Context, p: ButtonPlacement) -> egui::Rect {
-    let screen = ctx.content_rect();
+    let screen = chrome_rect(ctx);
     let size = egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE);
     let min = match p.anchor {
         egui::Align2::LEFT_TOP => egui::pos2(screen.min.x + p.offset.x, screen.min.y + p.offset.y),
@@ -780,7 +789,7 @@ pub fn draw_assembly(
     active: impl Fn(&'static str) -> bool,
 ) -> Vec<RibbonClick> {
     let insets = compute_side_insets(ribbons);
-    // Publish which screen edges currently host a ribbon. `Pane2`
+    // Publish which screen edges currently host a ribbon. `Pane`
     // reads this to size itself against actual ribbon presence —
     // a top-rail pane on a screen with no bottom ribbon can extend
     // all the way to the bottom edge instead of reserving
@@ -1302,8 +1311,8 @@ pub fn cluster_width_scope(ribbon: &'static str, cluster: RibbonCluster) -> egui
 
 // `floating_window_for_item` lived here in `frostcore::ribbon::assembly`,
 // dispatching into `frostcore::floating`'s old pane builder. In
-// `frost_core` the new pane (`crate::pane::Pane2`) replaces that path;
-// callers open panes directly with `Pane2::new(...).show(ctx, body)`
+// `frost_core` the new pane (`crate::pane::Pane`) replaces that path;
+// callers open panes directly with `Pane::new(...).show(ctx, body)`
 // guarded by `RibbonOpen::is_open`. The helper isn't ported.
 
 /// Convenience: find a button's definition by id.

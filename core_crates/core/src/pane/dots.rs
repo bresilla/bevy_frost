@@ -1,5 +1,5 @@
 //! Three-dot drag handle painted between (and after) every
-//! container inside a [`super::Pane2`]. The "container resizer".
+//! container inside a [`super::Pane`]. The "container resizer".
 //!
 //! Visually distinct from
 //! [`crate::container::paint_separator_resize`] (the inter-pod
@@ -60,7 +60,7 @@ pub fn paint_container_dots(
 ) -> Response {
     let rect = allocate_strip(ui, orient);
     // Register the strip's flow-axis size with the active pane so
-    // `Pane2::show`'s auto-flow accounting includes this handle in
+    // `Pane::show`'s auto-flow accounting includes this handle in
     // the pane's outer height. Without this, the pane would be
     // sized for sum(container_body_flows) + per-container chrome
     // ONLY — the dot-handle strip per container would extend past

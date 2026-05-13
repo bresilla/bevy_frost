@@ -502,20 +502,34 @@ impl<'ui, 'spec> crate::pane::PaneBody<'ui, 'spec> {
         id: impl Into<egui::Id>,
         title: impl Into<String>,
         icon: &'static str,
-        state: &mut NodeViewState,
-        graph: &mut Graph<T>,
-        viewer: &mut V,
-        backend: &mut dyn NodeViewBackend,
+        state: &'spec mut NodeViewState,
+        graph: &'spec mut Graph<T>,
+        viewer: &'spec mut V,
+        backend: &'spec mut dyn NodeViewBackend,
     ) -> &mut Self
     where
         V: NodeViewer<T>,
+        T: 'spec,
     {
-        self.paint_inline_raw(id, title, icon, move |inner_ui| {
-            let avail = inner_ui.available_size_before_wrap();
-            let accent = crate::style::active_accent();
-            frost_node_graph(inner_ui, state, backend, graph, viewer, accent, avail);
-        });
-        self
+        // Enqueue as a `ContainerSpec::raw_internal` so the graph
+        // participates in the same drag-reorder flow as `add_normal`
+        // / `add_tabbed` (snapshot push, inline ghost gap, section
+        // order persistence). The non-`'static` borrows are tied to
+        // `'spec` — the lifetime of the `PaneBody`, bounded by the
+        // surrounding `Pane::show` call — so the host MUST keep
+        // `state` / `graph` / `viewer` / `backend` alive at least
+        // that long. The Bevy demo does this by lifting them above
+        // the `Pane::show` call (see `editor_pane`'s call site).
+        self.add(crate::pane::ContainerSpec::raw_internal(
+            id,
+            title,
+            icon,
+            move |inner_ui| {
+                let avail = inner_ui.available_size_before_wrap();
+                let accent = crate::style::active_accent();
+                frost_node_graph(inner_ui, state, backend, graph, viewer, accent, avail);
+            },
+        ))
     }
 }
 

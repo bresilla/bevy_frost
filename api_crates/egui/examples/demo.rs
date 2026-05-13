@@ -20,7 +20,7 @@
 use eframe::egui;
 
 use frost_core::container::SeparatorStyle;
-use frost_core::pane::{Pane2, PaneAnchor, PaneBody, RailZone};
+use frost_core::pane::{Pane, PaneAnchor, PaneBody, RailZone};
 use frost_core::pod::Pod;
 use frost_core::ribbon::{
     RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
@@ -417,26 +417,33 @@ impl eframe::App for FrostApp {
                         continue;
                     }
                     let anchor = live_anchor(button_id).unwrap_or(default_anchor);
-                    // Borrow App-side fields the editor pane needs for its
-                    // sharp-zoom node graph. Keep them &mut here so the
-                    // PANE_EDITOR branch can pass them down to `editor_pane`.
-                    let node_view_ref = &mut *node_view;
-                    let graph_ref = &mut *graph;
-                    let viewer_ref = &mut *viewer;
-                    let render_state_ref = &render_state;
-                    Pane2::new(button_id, label, anchor, accent_col)
+                    // Editor pane uses non-`'static` borrows that have
+                    // to outlive `Pane::show` (see `editor_pane`'s
+                    // 'spec-bound signature). Hoist `viewer` and the
+                    // backend into the iteration scope so they live
+                    // past the closure body.
+                    if button_id == PANE_EDITOR {
+                        let mut backend = EframeNodeViewBackend::new(&render_state);
+                        Pane::new(button_id, label, anchor, accent_col)
+                            .resize(frost_core::pane::PaneResize::SPAN)
+                            .show(ctx, |body| {
+                                editor_pane(
+                                    body,
+                                    &mut *node_view,
+                                    &mut *graph,
+                                    &mut *viewer,
+                                    &mut backend,
+                                );
+                            });
+                        continue;
+                    }
+                    Pane::new(button_id, label, anchor, accent_col)
                         .resize(frost_core::pane::PaneResize::SPAN)
                         .show(ctx, |body| match button_id {
                             PANE_WIDGETS => widgets_pane(body),
                             PANE_CONTAINERS => containers_pane(body),
                             PANE_SCENE => scene_pane(body),
-                            PANE_EDITOR => editor_pane(
-                                body,
-                                node_view_ref,
-                                graph_ref,
-                                viewer_ref,
-                                render_state_ref,
-                            ),
+                            PANE_EDITOR => unreachable!("handled above"),
                             PANE_THEME => {
                                 theme_pane(body, accent, glass, family, mode, pastel, tint)
                             }
@@ -767,7 +774,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Transform",
         "cube",
         vec![
-            frost_core::container::Tab::new("Position", "arrow-move").pods(vec![
+            frost_core::container::Tab::new("xform.position", "Position", "arrow-move").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "pos", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
@@ -778,18 +785,19 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
             ]),
-            frost_core::container::Tab::new("Rotation", "arrow-rotate-clockwise").pods(vec![
-                Pod::new(pid(PANE_CONTAINERS, "rot", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 2))
-                    .with_separator(SeparatorStyle::None)
-                    .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-            ]),
-            frost_core::container::Tab::new("Scale", "maximize").pods(vec![
+            frost_core::container::Tab::new("xform.rotation", "Rotation", "arrow-rotate-clockwise")
+                .pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                ]),
+            frost_core::container::Tab::new("xform.scale", "Scale", "maximize").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "scl", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 1.0, 0.01, 0.01..=100.0, 3, "×"),
@@ -807,7 +815,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Velocity",
         "flash",
         vec![
-            frost_core::container::Tab::new("Linear", "arrow-trending").pods(vec![
+            frost_core::container::Tab::new("vel.linear", "Linear", "arrow-trending").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vlin", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
@@ -818,7 +826,12 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
             ]),
-            frost_core::container::Tab::new("Angular", "arrow-rotate-counterclockwise").pods(vec![
+            frost_core::container::Tab::new(
+                "vel.angular",
+                "Angular",
+                "arrow-rotate-counterclockwise",
+            )
+            .pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vang", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
@@ -1149,16 +1162,15 @@ fn about_pane(body: &mut PaneBody) {
 /// each in its own container with a fill pod so they soak up the
 /// pane's available space. Mirrors the legacy demo's Editor pane,
 /// now driven by the vendored `bevy_frost::extras` wrappers.
-fn editor_pane(
-    body: &mut PaneBody,
-    node_view: &mut NodeViewState,
-    graph: &mut Graph<GraphNode>,
-    viewer: &mut DemoViewer,
-    render_state: &egui_wgpu::RenderState,
+fn editor_pane<'spec>(
+    body: &mut PaneBody<'_, 'spec>,
+    node_view: &'spec mut NodeViewState,
+    graph: &'spec mut Graph<GraphNode>,
+    viewer: &'spec mut DemoViewer,
+    backend: &'spec mut EframeNodeViewBackend<'_>,
 ) {
     let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");
-    let mut backend = EframeNodeViewBackend::new(render_state);
     body.add_node_graph(
         cid_graph,
         "Node graph",
@@ -1166,7 +1178,7 @@ fn editor_pane(
         node_view,
         graph,
         viewer,
-        &mut backend,
+        backend,
     );
     body.add_normal(
         cid(PANE_EDITOR, "code"),

@@ -18,16 +18,31 @@ use crate::icons::Icon;
 use crate::pod::Pod;
 
 pub struct Tab {
+    /// Stable id used by the per-pane tab-drag routing — `(tab_id →
+    /// owner container)` and per-container tab order are persisted
+    /// under this id. Pass a value that survives renames (e.g.
+    /// `"position"`, not the user-visible title).
+    pub(crate) id: egui::Id,
     pub(crate) title: String,
     pub(crate) icon: Icon<'static>,
     pub(crate) pods: Vec<Pod>,
 }
 
 impl Tab {
-    pub fn new(title: impl Into<String>, icon: impl Into<Icon<'static>>) -> Self {
+    pub fn new(
+        id: impl Into<egui::Id>,
+        title: impl Into<String>,
+        icon: impl Into<Icon<'static>>,
+    ) -> Self {
+        let icon = icon.into();
+        assert!(
+            tab_icon_is_present(icon),
+            "tab containers require every tab to have a non-empty icon"
+        );
         Self {
+            id: id.into(),
             title: title.into(),
-            icon: icon.into(),
+            icon,
             pods: Vec::new(),
         }
     }
@@ -35,5 +50,17 @@ impl Tab {
     pub fn pods(mut self, pods: impl IntoIterator<Item = Pod>) -> Self {
         self.pods = pods.into_iter().collect();
         self
+    }
+
+    /// The stable id passed to [`Tab::new`].
+    #[must_use]
+    pub fn id(&self) -> egui::Id {
+        self.id
+    }
+}
+
+fn tab_icon_is_present(icon: Icon<'_>) -> bool {
+    match icon {
+        Icon::Name(name) | Icon::Svg(name) => !name.trim().is_empty(),
     }
 }

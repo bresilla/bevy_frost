@@ -37,6 +37,7 @@ use crate::style::{
     SUCCESS,
     SelectTheme,
     ShapeTheme,
+    ShelfTheme,
     SliderTheme,
     StrokeTheme,
     // shared text constants
@@ -507,6 +508,16 @@ pub const fn theme_game(mode: Mode) -> Theme {
                 inset: 4.0,
                 alpha: 220,
             },
+        },
+        shelf: ShelfTheme {
+            side_default_size: 320.0,
+            bottom_default_size: 260.0,
+            min_size: 160.0,
+            max_size: 760.0,
+            padding: 4.0,
+            resize_handle_thickness: 10.0,
+            background_alpha: 238,
+            border_width: 1.0,
         },
         container: ContainerTheme {
             title_zone_thickness: 22.0,

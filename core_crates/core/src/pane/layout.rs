@@ -1,4 +1,4 @@
-//! Anchor → screen position for [`super::Pane2`].
+//! Anchor → screen position for [`super::Pane`].
 //!
 //! Mirrors `frostcore::floating::compute_pane_pos`'s recipe: the
 //! caller decides the pane's expected size, and we compute its

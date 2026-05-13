@@ -1,4 +1,4 @@
-//! Drag-reorder for [`super::Pane2`] containers.
+//! Drag-reorder for [`super::Pane`] containers.
 //!
 //! Direct port of `frostcore::floating::SectionDragState`. The
 //! pattern is:
@@ -37,6 +37,7 @@ pub struct DragState {
 pub struct RectEntry {
     pub id: Id,
     pub rect: Rect,
+    pub frame: Option<Rect>,
 }
 
 // ─── ctx-data accessors ────────────────────────────────────────────
@@ -83,12 +84,17 @@ pub fn begin_frame(ctx: &Context, pane_id: Id) {
 }
 
 pub fn push_rect(ctx: &Context, pane_id: Id, id: Id, rect: Rect) {
+    push_rect_with_frame(ctx, pane_id, id, rect, None);
+}
+
+pub fn push_rect_with_frame(ctx: &Context, pane_id: Id, id: Id, rect: Rect, frame: Option<Rect>) {
     ctx.data_mut(|d| {
         let mut cache: Vec<RectEntry> = d.get_temp(current_key(pane_id)).unwrap_or_default();
         if let Some(slot) = cache.iter_mut().find(|e| e.id == id) {
             slot.rect = rect;
+            slot.frame = frame;
         } else {
-            cache.push(RectEntry { id, rect });
+            cache.push(RectEntry { id, rect, frame });
         }
         d.insert_temp(current_key(pane_id), cache);
     });
@@ -158,8 +164,8 @@ pub fn set_section_order(ctx: &Context, pane_id: Id, order: Vec<Id>) {
 // ─── Convenience for Normal ────────────────────────────────────────
 
 /// Look up the **active pane**'s drag state. Used by `Normal` —
-/// which doesn't directly know its parent `Pane2`'s id — via the
-/// `active_pane_key` pointer that `Pane2::show` writes at the top
+/// which doesn't directly know its parent `Pane`'s id — via the
+/// `active_pane_key` pointer that `Pane::show` writes at the top
 /// of every frame.
 pub fn active_drag(ctx: &Context) -> Option<(Id, DragState)> {
     let pane_id: Id = ctx.data(|d| d.get_temp(active_pane_key()))?;
@@ -217,6 +223,10 @@ pub fn dragged_size(snapshot: &[RectEntry], dragged: Id) -> Option<Vec2> {
         .map(|e| e.rect.size())
 }
 
+pub fn dragged_entry(snapshot: &[RectEntry], dragged: Id) -> Option<RectEntry> {
+    snapshot.iter().find(|e| e.id == dragged).copied()
+}
+
 // ─── Paint helpers ─────────────────────────────────────────────────
 
 /// Allocate a same-sized slot inline in the parent layout and paint
@@ -229,6 +239,35 @@ pub fn paint_ghost_gap_inline(
     _horizontal_stack: bool,
 ) {
     let (rect, _) = ui.allocate_exact_size(dragged_size, Sense::hover());
+    let theme = style::theme();
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(theme.radius_md),
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36),
+        egui::Stroke::new(1.5, accent),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// Allocate a same-main-axis slot but keep the ghost's cross-axis
+/// position from the dragged entry's previous real rect. This is
+/// important for tabbed containers: their full footprint may be
+/// inset by the folder-tab strip, so painting at the raw layout
+/// cursor makes the ghost appear shifted left/up compared to where
+/// the container will land.
+pub fn paint_ghost_gap_entry_inline(
+    ui: &mut Ui,
+    entry: RectEntry,
+    accent: Color32,
+    horizontal_stack: bool,
+) {
+    let size = entry.rect.size();
+    let (slot_rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let rect = if horizontal_stack {
+        Rect::from_min_size(egui::pos2(slot_rect.left(), entry.rect.top()), size)
+    } else {
+        Rect::from_min_size(egui::pos2(entry.rect.left(), slot_rect.top()), size)
+    };
     let theme = style::theme();
     ui.painter().rect(
         rect,

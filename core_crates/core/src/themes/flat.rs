@@ -9,8 +9,8 @@ use crate::style::{
     DragValueTheme, DropdownTheme, GlassTheme, GraphCanvasPattern, GraphTheme, IconTheme,
     KeybindingTheme, Mode, ModuleTheme, MotionTheme, OverlayTheme, PaletteTheme, PaneTheme,
     PodTheme, ProgressTheme, ReadoutTheme, RibbonChromeTheme, RibbonTheme, SelectTheme, ShapeTheme,
-    SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset, TabTheme,
-    TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
+    ShelfTheme, SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset,
+    TabTheme, TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
     ViewTheme, WidgetTheme,
 };
 
@@ -399,6 +399,16 @@ pub const fn theme_flat(mode: Mode) -> Theme {
                 inset: 4.0,
                 alpha: 220,
             },
+        },
+        shelf: ShelfTheme {
+            side_default_size: 300.0,
+            bottom_default_size: 240.0,
+            min_size: 150.0,
+            max_size: 720.0,
+            padding: 4.0,
+            resize_handle_thickness: 8.0,
+            background_alpha: 255,
+            border_width: 1.0,
         },
         container: crate::style::ContainerTheme {
             title_zone_thickness: 22.0,

@@ -26,12 +26,13 @@ use bevy_glacial::prelude::*;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use frost_core::container::SeparatorStyle;
-use frost_core::pane::{Pane2, PaneAnchor, PaneBody, RailZone};
+use frost_core::pane::{Pane, PaneAnchor, PaneBody, RailZone};
 use frost_core::pod::Pod;
 use frost_core::ribbon::{
     RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
     RibbonOpen, RibbonPlacement, RibbonRole, draw_assembly, find_item, find_ribbon,
 };
+use frost_core::shelf::{ShelfContainer, ShelfDef, ShelfEdge, ShelfState};
 use frost_core::style::{AccentColor, GlassOpacity, Mode, srgb_to_egui};
 use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // Vendored extras — node graph (`egui-graph`) and code editor
@@ -67,6 +68,7 @@ const PANE_EDITOR: &str = "demo_pane_editor";
 const PANE_THEME: &str = "demo_pane_theme";
 const PANE_KEYS: &str = "demo_pane_keys";
 const PANE_ABOUT: &str = "demo_pane_about";
+const CANVAS_SHELF_LEFT: &str = "demo_canvas_shelf_left";
 
 const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
@@ -675,6 +677,9 @@ struct CanvasViewState {
     strokes: Vec<Vec<egui::Pos2>>,
 }
 
+#[derive(Resource, Default)]
+struct CanvasShelfState(ShelfState);
+
 /// Per-graph sharp-zoom state (secondary egui::Context, pan, zoom,
 /// wgpu render target). Held as a Bevy resource so the SAME state
 /// instance is passed to `frost_node_graph` every frame for the same
@@ -761,6 +766,7 @@ fn main() {
         .init_resource::<DemoRootView>()
         .init_resource::<SelectedSwatch>()
         .init_resource::<CanvasViewState>()
+        .init_resource::<CanvasShelfState>()
         .init_resource::<EditorNodeView>()
         .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
@@ -1118,6 +1124,7 @@ fn ui_system(
     mut tint: ResMut<TintRgba>,
     mut root_view: ResMut<DemoRootView>,
     mut canvas_view: ResMut<CanvasViewState>,
+    mut canvas_shelves: ResMut<CanvasShelfState>,
     mut app_exit: MessageWriter<AppExit>,
     mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     // ── Sharp-zoom node-graph plumbing (bundled to stay under
@@ -1143,12 +1150,21 @@ fn ui_system(
     frost_core::style::apply_theme(ctx, *accent, *glass);
 
     let accent_col = frost_core::style::active_accent();
+    frost_core::publish_shelf_layout(
+        ctx,
+        frost_core::ShelfLayout {
+            viewport: ctx.content_rect(),
+            left: None,
+            right: None,
+            bottom: None,
+        },
+    );
 
     // Actual root/L0 canvas switch:
     // - BevyScene is the normal demo: Bevy 3D scene plus Frost panes/ribbons.
     // - Canvas owns the whole egui canvas and replaces the Bevy scene visually.
     if *root_view == DemoRootView::Canvas {
-        canvas_root_view(ctx, accent_col, &mut canvas_view);
+        canvas_root_view(ctx, accent_col, &mut canvas_view, &mut canvas_shelves.0);
     }
 
     // Fullscreen-view branch. The fullscreen overlay paints at
@@ -1252,7 +1268,7 @@ fn ui_system(
         );
         let now = ctx.input(|i| i.time);
         let mut viewer = DemoViewer { time: now };
-        Pane2::new(PANE_EDITOR, "Editor", anchor, accent_col)
+        Pane::new(PANE_EDITOR, "Editor", anchor, accent_col)
             .resize(frost_core::pane::PaneResize::SPAN)
             .show(ctx, |body| {
                 editor_pane(
@@ -1286,7 +1302,7 @@ fn ui_system(
         }
         let anchor = live_anchor(button_id).unwrap_or(default_anchor);
         // Editor pane uses non-`'static` borrows that have to outlive
-        // `Pane2::show` — the typed `PaneBody::add_node_graph` stores
+        // `Pane::show` — the typed `PaneBody::add_node_graph` stores
         // them in the pending-spec list and the closure runs at
         // `body.finish()` time (after the user closure returns). Lift
         // `viewer` / `backend` to the iteration scope so they live
@@ -1318,7 +1334,7 @@ fn ui_system(
             );
             let now = ctx.input(|i| i.time);
             let mut viewer = DemoViewer { time: now };
-            Pane2::new(button_id, label, anchor, accent_col)
+            Pane::new(button_id, label, anchor, accent_col)
                 .resize(frost_core::pane::PaneResize::SPAN)
                 .show(ctx, |body| {
                     editor_pane(
@@ -1331,7 +1347,7 @@ fn ui_system(
                 });
             continue;
         }
-        Pane2::new(button_id, label, anchor, accent_col)
+        Pane::new(button_id, label, anchor, accent_col)
             .resize(frost_core::pane::PaneResize::SPAN)
             .order(if fs_active {
                 egui::Order::Foreground
@@ -1456,15 +1472,27 @@ fn ui_system(
 
 // ─── Canvas root view ──────────────────────────────────────────────
 
-fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut CanvasViewState) {
+fn canvas_root_view(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    canvas: &mut CanvasViewState,
+    shelf_state: &mut ShelfState,
+) {
+    let shelves = canvas_shelves(accent);
+    let shelf_theme = *frost_core::style::theme().shelf();
+    let layout =
+        frost_core::layout_shelves(ctx.content_rect(), &shelves, shelf_state, &shelf_theme);
+
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
         .show(ctx, |ui| {
-            let rect = ui.max_rect();
-            let response = ui.allocate_rect(rect, egui::Sense::drag());
-            let painter = ui.painter_at(rect);
+            let screen_rect = ui.max_rect();
+            let canvas_rect = layout.viewport;
+            let response = ui.allocate_rect(canvas_rect, egui::Sense::drag());
+            let painter = ui.painter_at(screen_rect);
 
-            painter.rect_filled(rect, 0, frost_core::style::theme().palette.bg_panel);
+            painter.rect_filled(screen_rect, 0, frost_core::style::theme().palette.bg_panel);
+            painter.rect_filled(canvas_rect, 0, frost_core::style::theme().palette.bg_window);
 
             let grid = 32.0;
             let grid_col = egui::Color32::from_rgba_unmultiplied(
@@ -1473,18 +1501,24 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
                 frost_core::style::on_panel_dim().b(),
                 34,
             );
-            let mut x = rect.left() + grid;
-            while x < rect.right() {
+            let mut x = canvas_rect.left() + grid;
+            while x < canvas_rect.right() {
                 painter.line_segment(
-                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    [
+                        egui::pos2(x, canvas_rect.top()),
+                        egui::pos2(x, canvas_rect.bottom()),
+                    ],
                     egui::Stroke::new(1.0, grid_col),
                 );
                 x += grid;
             }
-            let mut y = rect.top() + grid;
-            while y < rect.bottom() {
+            let mut y = canvas_rect.top() + grid;
+            while y < canvas_rect.bottom() {
                 painter.line_segment(
-                    [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    [
+                        egui::pos2(canvas_rect.left(), y),
+                        egui::pos2(canvas_rect.right(), y),
+                    ],
                     egui::Stroke::new(1.0, grid_col),
                 );
                 y += grid;
@@ -1496,7 +1530,7 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
             if response.dragged() || response.drag_started() {
                 if let Some(pos) = response
                     .interact_pointer_pos()
-                    .filter(|pos| rect.contains(*pos))
+                    .filter(|pos| canvas_rect.contains(*pos))
                 {
                     if let Some(stroke) = canvas.strokes.last_mut() {
                         if stroke.last().is_none_or(|last| last.distance(pos) > 1.5) {
@@ -1514,7 +1548,7 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
 
             if canvas.strokes.is_empty() {
                 painter.text(
-                    rect.center(),
+                    canvas_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "Canvas root view\ndrag to draw",
                     egui::FontId::proportional(24.0),
@@ -1522,6 +1556,90 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
                 );
             }
         });
+
+    frost_core::show_shelves(ctx, layout, shelves, shelf_state);
+}
+
+fn canvas_shelves(accent: egui::Color32) -> Vec<ShelfDef<'static>> {
+    vec![
+        ShelfDef::new(CANVAS_SHELF_LEFT, ShelfEdge::Left, accent)
+            .default_size(300.0)
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "tools"),
+                "Canvas Tools",
+                "draw-shape",
+                vec![
+                    frost_core::container::Tab::new("paint.brush", "Brush", "paint-brush").pods(
+                        vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("size", 3.0, 1.0..=24.0, 1, " px", accent),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 1))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("opacity", 1.0, 0.05..=1.0, 2, "", accent),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 2))
+                                .with_separator(SeparatorStyle::None)
+                                .with_button("Clear strokes", accent),
+                        ],
+                    ),
+                    frost_core::container::Tab::new("paint.layers", "Layers", "square-multiple")
+                        .pods(vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "layers", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_select_list(
+                                    vec![
+                                        "Sketch layer".to_owned(),
+                                        "Ink layer".to_owned(),
+                                        "Notes layer".to_owned(),
+                                    ],
+                                    None::<Vec<String>>,
+                                    accent,
+                                ),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "layers", 1))
+                                .with_separator(SeparatorStyle::None)
+                                .with_toggle_initial("show grid", accent, true),
+                        ]),
+                    frost_core::container::Tab::new("paint.assets", "Assets", "image").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "assets", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_search("search images…", accent),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "assets", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Import image", accent),
+                    ]),
+                ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "document"),
+                "Document",
+                "document",
+                vec![
+                    frost_core::container::Tab::new("paint.info", "Info", "info").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("view", "Canvas"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 1))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("shelf", "Left dock"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 2))
+                            .with_separator(SeparatorStyle::None)
+                            .with_readout("content", "multiple tabbed containers"),
+                    ]),
+                    frost_core::container::Tab::new("paint.export", "Export", "save").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "export", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_dropdown(
+                                vec!["PNG".to_owned(), "SVG".to_owned(), "Frost Scene".to_owned()],
+                                0,
+                                accent,
+                            ),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "export", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Export canvas", accent),
+                    ]),
+                ],
+            )),
+    ]
 }
 
 // ─── Per-pane content ──────────────────────────────────────────────
@@ -1682,7 +1800,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Transform",
         "cube",
         vec![
-            frost_core::container::Tab::new("Position", "arrow-move").pods(vec![
+            frost_core::container::Tab::new("xform.position", "Position", "arrow-move").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "pos", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
@@ -1693,18 +1811,19 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
             ]),
-            frost_core::container::Tab::new("Rotation", "arrow-rotate-clockwise").pods(vec![
-                Pod::new(pid(PANE_CONTAINERS, "rot", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 2))
-                    .with_separator(SeparatorStyle::None)
-                    .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-            ]),
-            frost_core::container::Tab::new("Scale", "maximize").pods(vec![
+            frost_core::container::Tab::new("xform.rotation", "Rotation", "arrow-rotate-clockwise")
+                .pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                ]),
+            frost_core::container::Tab::new("xform.scale", "Scale", "maximize").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "scl", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 1.0, 0.01, 0.01..=100.0, 3, "×"),
@@ -1722,7 +1841,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Velocity",
         "flash",
         vec![
-            frost_core::container::Tab::new("Linear", "arrow-trending").pods(vec![
+            frost_core::container::Tab::new("vel.linear", "Linear", "arrow-trending").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vlin", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
@@ -1733,7 +1852,12 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
             ]),
-            frost_core::container::Tab::new("Angular", "arrow-rotate-counterclockwise").pods(vec![
+            frost_core::container::Tab::new(
+                "vel.angular",
+                "Angular",
+                "arrow-rotate-counterclockwise",
+            )
+            .pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vang", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
@@ -2074,12 +2198,12 @@ fn about_pane(body: &mut PaneBody) {
 /// `frost_node_graph`. The pod-path closure has a `'static` bound
 /// that those refs can't satisfy.
 #[allow(clippy::too_many_arguments)]
-fn editor_pane(
-    body: &mut PaneBody,
-    node_view: &mut NodeViewState,
-    graph: &mut Graph<GraphNode>,
-    viewer: &mut DemoViewer,
-    backend: &mut BevyNodeViewBackend<'_>,
+fn editor_pane<'spec>(
+    body: &mut PaneBody<'_, 'spec>,
+    node_view: &'spec mut NodeViewState,
+    graph: &'spec mut Graph<GraphNode>,
+    viewer: &'spec mut DemoViewer,
+    backend: &'spec mut BevyNodeViewBackend<'_>,
 ) {
     let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");

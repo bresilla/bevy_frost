@@ -10,6 +10,8 @@ fn workspace_stack_tracks_root_and_module_levels() {
     assert!(stack.current_policy().allow_app_window_controls);
     assert!(stack.current_policy().allow_root_ribbon);
     assert!(!stack.current_policy().allow_module_bars);
+    assert!(stack.current_policy().allow_shelves);
+    assert!(!stack.current_policy().inherit_root_shelves);
 
     let l1 = stack.push_module(egui::Id::new("graph"));
     assert_eq!(l1.depth, 1);
@@ -19,6 +21,8 @@ fn workspace_stack_tracks_root_and_module_levels() {
     assert!(!stack.current_policy().allow_app_window_controls);
     assert!(!stack.current_policy().allow_root_ribbon);
     assert!(stack.current_policy().allow_module_bars);
+    assert!(stack.current_policy().allow_shelves);
+    assert!(stack.current_policy().inherit_root_shelves);
     assert!(stack.current_policy().restore_to_parent);
 
     let l2 = stack.push_module(egui::Id::new("image"));

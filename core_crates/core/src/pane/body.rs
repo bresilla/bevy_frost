@@ -10,7 +10,7 @@
 //!   callers can only build specs through the typed `normal` /
 //!   `tabbed` constructors.
 //!
-//! * [`PaneBody`] — the typed wrapper the [`super::Pane2::show`]
+//! * [`PaneBody`] — the typed wrapper the [`super::Pane::show`]
 //!   closure receives. It collects [`ContainerSpec`]s through
 //!   `add_normal` / `add_tabbed` / `add` and hands them off to
 //!   [`render_containers`] when the closure returns. No raw egui
@@ -120,7 +120,7 @@ impl<'a> ContainerSpec<'a> {
 /// Typed wrapper around a pane's body Ui. Only exposes operations
 /// that add containers — there is no way to get at the inner
 /// [`egui::Ui`] from outside `frost_core`, so the closure body
-/// passed to [`super::Pane2::show`] cannot paint raw egui widgets.
+/// passed to [`super::Pane::show`] cannot paint raw egui widgets.
 ///
 /// Imperative builder: call [`add_normal`](Self::add_normal),
 /// [`add_tabbed`](Self::add_tabbed), or the generic
@@ -214,7 +214,7 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
     /// or eframe app state **inside the same closure** (e.g. a
     /// theme picker that updates an `AccentColor` resource from
     /// the colour pod). After the call, the queue is empty and
-    /// further `add_*` calls accumulate again. `Pane2::show`
+    /// further `add_*` calls accumulate again. `Pane::show`
     /// invokes `render` (via the crate-internal `finish`) once
     /// after the closure returns, so an unconsumed queue is
     /// painted automatically.
@@ -224,68 +224,10 @@ impl<'ui, 'spec> PaneBody<'ui, 'spec> {
     }
 
     /// Crate-internal: drain any remaining containers and return
-    /// their pod-response maps. Called by `Pane2::show` once the
+    /// their pod-response maps. Called by `Pane::show` once the
     /// user's body closure returns.
     pub(crate) fn finish(mut self) -> HashMap<Id, Vec<PodResponse>> {
         self.render()
-    }
-
-    /// Crate-internal: flush any queued specs, then paint a single
-    /// container with a raw closure body INLINE — the closure runs
-    /// synchronously inside this call instead of being deferred to
-    /// `finish`. Used by frost extras (`add_node_graph`) whose
-    /// closures capture non-`'static` borrows that can't fit the
-    /// `pending` storage's `'spec` lifetime parameter.
-    ///
-    /// Trade-off: inline-painted containers don't participate in
-    /// `section_order_for`'s drag-reorder (their paint position is
-    /// fixed by declaration order). Other containers queued before
-    /// and after still reorder among themselves at the next
-    /// `render` / `finish`.
-    pub(crate) fn paint_inline_raw<F>(
-        &mut self,
-        id: impl Into<Id>,
-        title: impl Into<String>,
-        icon: &'static str,
-        body: F,
-    ) where
-        F: FnOnce(&mut Ui),
-    {
-        let _ = self.render();
-        let cid = id.into();
-        let title = title.into();
-        let accent = self.accent;
-        Normal::new(title.as_str(), self.anchor, accent, cid)
-            .icon(icon)
-            .show_raw(self.ui, body);
-
-        // Inter-container drag handle, with the same flow-update
-        // path `render_containers` uses for queued containers — so
-        // the user can drag-resize this container's flow extent the
-        // same way they would for `add_normal` / `add_tabbed`.
-        let containers_stack_horizontally = !self.anchor.title_side().is_horizontal_strip();
-        let dots_orient = if containers_stack_horizontally {
-            SeparatorOrient::Vertical
-        } else {
-            SeparatorOrient::Horizontal
-        };
-        let title_at_end = self.anchor.title_side().is_at_end();
-        let pane_horizontal_strip = self.anchor.title_side().is_horizontal_strip();
-        let dot_resp = paint_container_dots(self.ui, dots_orient, cid, accent);
-        let body_open: bool = self.ui.ctx().data_mut(|d| {
-            d.get_persisted::<bool>(cid.with("body_open"))
-                .unwrap_or(true)
-        });
-        if dot_resp.dragged() && body_open {
-            let cur = container_flow(self.ui.ctx(), cid, pane_horizontal_strip);
-            let raw = if containers_stack_horizontally {
-                dot_resp.drag_delta().x
-            } else {
-                dot_resp.drag_delta().y
-            };
-            let delta = if title_at_end { -raw } else { raw };
-            set_container_flow(self.ui.ctx(), cid, cur + delta, pane_horizontal_strip);
-        }
     }
 }
 
@@ -312,6 +254,39 @@ pub(crate) fn render_containers<'a>(
     let mut by_id: HashMap<Id, ContainerSpec<'a>> =
         containers.into_iter().map(|c| (c.id, c)).collect();
 
+    // ── Tab pool for cross-container tab transfer ──
+    //
+    // Drain every `SpecBody::Tabs` into a single pool keyed by
+    // `tab_id` so the tab-drag router can pull tabs out by id at
+    // render time regardless of which container originally declared
+    // them. Non-tab specs stay in `by_id` and render unchanged.
+    let mut tab_pool: HashMap<Id, crate::container::Tab> = HashMap::new();
+    let mut tabbed_specs: HashMap<Id, (String, &'static str)> = HashMap::new();
+    let mut declared_tabs_per_container: HashMap<Id, Vec<Id>> = HashMap::new();
+    let mut all_tabs_in_pane: Vec<(Id, Id)> = Vec::new();
+    let cids_with_tabs: Vec<Id> = by_id
+        .iter()
+        .filter_map(|(id, spec)| matches!(spec.body, SpecBody::Tabs(_)).then_some(*id))
+        .collect();
+    for cid in cids_with_tabs {
+        if let Some(spec) = by_id.remove(&cid) {
+            let ContainerSpec {
+                title, icon, body, ..
+            } = spec;
+            if let SpecBody::Tabs(tabs) = body {
+                tabbed_specs.insert(cid, (title, icon));
+                let mut ids = Vec::with_capacity(tabs.len());
+                for tab in tabs {
+                    let tid = tab.id();
+                    ids.push(tid);
+                    all_tabs_in_pane.push((tid, cid));
+                    tab_pool.insert(tid, tab);
+                }
+                declared_tabs_per_container.insert(cid, ids);
+            }
+        }
+    }
+
     let containers_stack_horizontally = !anchor.title_side().is_horizontal_strip();
     let dots_orient = if containers_stack_horizontally {
         SeparatorOrient::Vertical
@@ -323,13 +298,69 @@ pub(crate) fn render_containers<'a>(
 
     let mut responses: HashMap<Id, Vec<PodResponse>> = HashMap::new();
     for cid in order.into_iter() {
+        // Tabbed containers — pull routed tabs from the pool.
+        if let Some((title, icon)) = tabbed_specs.remove(&cid) {
+            let empty: Vec<Id> = Vec::new();
+            let defaults_here = declared_tabs_per_container.get(&cid).unwrap_or(&empty);
+            let routed_ids = super::tab_drag::route(
+                body_ui.ctx(),
+                pane_id,
+                cid,
+                defaults_here,
+                &all_tabs_in_pane,
+            );
+            let mut routed_tabs: Vec<crate::container::Tab> = Vec::with_capacity(routed_ids.len());
+            for tid in &routed_ids {
+                if let Some(tab) = tab_pool.remove(tid) {
+                    routed_tabs.push(tab);
+                }
+            }
+            if routed_tabs.is_empty() {
+                // No tabs land in this container after routing —
+                // skip render entirely so an empty strip doesn't
+                // paint a phantom container.
+                continue;
+            }
+            let normal = Normal::new(title.as_str(), anchor, accent, cid).icon(icon);
+            let resp = normal.show_tabs(body_ui, routed_tabs);
+            responses.insert(cid, resp);
+            let dragging_self = active_drag(body_ui.ctx())
+                .and_then(|(_, s)| s.item)
+                .map(|item| item == cid)
+                .unwrap_or(false);
+            if dragging_self {
+                continue;
+            }
+            let dot_resp = paint_container_dots(body_ui, dots_orient, cid, accent);
+            let body_open: bool = body_ui.ctx().data_mut(|d| {
+                d.get_persisted::<bool>(cid.with("body_open"))
+                    .unwrap_or(true)
+            });
+            if dot_resp.dragged() && body_open {
+                let cur = container_flow(body_ui.ctx(), cid, pane_horizontal_strip);
+                let raw = if containers_stack_horizontally {
+                    dot_resp.drag_delta().x
+                } else {
+                    dot_resp.drag_delta().y
+                };
+                let delta = if title_at_end { -raw } else { raw };
+                set_container_flow(body_ui.ctx(), cid, cur + delta, pane_horizontal_strip);
+            }
+            continue;
+        }
+
         let Some(spec) = by_id.remove(&cid) else {
             continue;
         };
         let normal = Normal::new(spec.title.as_str(), anchor, accent, cid).icon(spec.icon);
         let resp = match spec.body {
             SpecBody::Pods(pods) => normal.show(body_ui, pods),
-            SpecBody::Tabs(tabs) => normal.show_tabs(body_ui, tabs),
+            SpecBody::Tabs(_tabs) => {
+                // Tabs are handled by the tab-pool branch above; this
+                // arm is unreachable because the pool drained every
+                // `SpecBody::Tabs`. Keep the match exhaustive.
+                Vec::new()
+            }
             SpecBody::Raw(body) => {
                 normal.show_raw(body_ui, body);
                 // Raw bodies don't produce pod responses — return

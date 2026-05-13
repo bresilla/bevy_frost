@@ -1011,7 +1011,7 @@ const SCRAMBLE_CHARS: &[char] = &[
 /// (or while gated, so the random glyphs keep cycling).
 pub fn scramble_text(ctx: &egui::Context, id: egui::Id, current: &str, active: bool) -> String {
     /// Staggered delay between adjacent characters' lock times.
-    /// `0.07` was the frostcore default, but with `Pane2`'s
+    /// `0.07` was the frostcore default, but with `Pane`'s
     /// per-section staggered fade-in landing the last container at
     /// ~0.81 s, the first container's cipher finished too early —
     /// most letters had already locked by the time the user could
@@ -1490,6 +1490,21 @@ pub struct RibbonTheme {
     pub workspace: RibbonChromeTheme,
     pub slot_override_transition: f32,
     pub active_view_indicator: ActiveIndicatorTheme,
+}
+
+/// Theme-owned persistent Shelf geometry and chrome. Shelves are
+/// docked structural regions (left/right/bottom) that reserve
+/// viewport space, unlike floating ribbons/panes.
+#[derive(Copy, Clone, Debug)]
+pub struct ShelfTheme {
+    pub side_default_size: f32,
+    pub bottom_default_size: f32,
+    pub min_size: f32,
+    pub max_size: f32,
+    pub padding: f32,
+    pub resize_handle_thickness: f32,
+    pub background_alpha: u8,
+    pub border_width: f32,
 }
 
 /// Theme-owned container and section chrome. This mirrors the
@@ -2116,6 +2131,9 @@ pub struct Theme {
     /// Ribbon geometry/chrome group. Flat fields remain during the
     /// migration; new code should prefer this nested contract.
     pub ribbon: RibbonTheme,
+    /// Shelf geometry/chrome group. Shelves are structural chrome
+    /// that reserve viewport space.
+    pub shelf: ShelfTheme,
     /// Container/section chrome group. Flat fields remain during the
     /// migration; new code should prefer this nested contract.
     pub container: ContainerTheme,
@@ -2345,6 +2363,10 @@ impl Theme {
 
     pub fn ribbon(&self) -> &RibbonTheme {
         &self.ribbon
+    }
+
+    pub fn shelf(&self) -> &ShelfTheme {
+        &self.shelf
     }
 
     pub fn container(&self) -> &ContainerTheme {

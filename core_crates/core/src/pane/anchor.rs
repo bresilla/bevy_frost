@@ -1,4 +1,4 @@
-//! Anchor model for [`super::Pane2`] — where the pane sits on screen
+//! Anchor model for [`super::Pane`] — where the pane sits on screen
 //! and which side of itself it carries the title strip on.
 
 /// One of the 4 screen rails the pane can live on.
@@ -132,6 +132,6 @@ impl TitleSide {
 // revisions to compensate for what looked like layout bugs at
 // certain corner anchors. The actual cause was the flex
 // intrinsic-size pass double-painting title strips at the wrong
-// rect — fixed in `super::Pane2::lay_out_flex`. With the paint
+// rect — fixed in `super::Pane::lay_out_flex`. With the paint
 // fix, every anchor lands cleanly on a uniform `RAIL_INSET`, so
 // the per-anchor table got removed.

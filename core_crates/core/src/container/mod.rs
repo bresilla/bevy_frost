@@ -1,5 +1,5 @@
 //! In-pane container widgets — visual blocks the caller drops into a
-//! [`crate::pane::Pane2`] body to organise content. A container holds
+//! [`crate::pane::Pane`] body to organise content. A container holds
 //! [`crate::pod::Pod`]s and (between consecutive pods) separators —
 //! see [`SeparatorStyle`].
 //!
