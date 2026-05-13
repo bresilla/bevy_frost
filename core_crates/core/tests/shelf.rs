@@ -78,6 +78,33 @@ fn shelf_layout_uses_state_edge_override() {
 }
 
 #[test]
+fn shelf_layout_creates_edge_for_moved_container() {
+    let theme = *style::theme().shelf();
+    let shelf_id = Id::new("movable");
+    let container_id = Id::new("tools");
+    let mut state = ShelfState::default();
+    state.set_container_edge(container_id, ShelfEdge::Right);
+    let available = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 800.0));
+    let shelves = vec![
+        ShelfDef::new(shelf_id, ShelfEdge::Left, egui::Color32::WHITE)
+            .default_size(200.0)
+            .container(ShelfContainer::tabbed(
+                container_id,
+                "Tools",
+                "tools",
+                vec![],
+            )),
+    ];
+
+    let layout = layout_shelves(available, &shelves, &mut state, &theme);
+
+    assert!(layout.left.is_none());
+    assert!(layout.right.is_some());
+    assert_eq!(layout.right.unwrap().width(), 200.0);
+    assert_eq!(layout.viewport.max.x, 800.0);
+}
+
+#[test]
 fn shelf_container_api_is_typed_tabbed_only() {
     let _container = ShelfContainer::tabbed(Id::new("tabbed"), "Inspector", "settings", vec![]);
 }

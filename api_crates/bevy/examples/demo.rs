@@ -1750,6 +1750,51 @@ fn canvas_shelves(accent: egui::Color32) -> Vec<ShelfDef<'static>> {
                             .with_button("Export canvas", accent),
                     ]),
                 ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "history"),
+                "History",
+                "history",
+                vec![
+                    frost_core::container::Tab::new("paint.undo", "Undo", "arrow-undo").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "undo", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("last action", "Brush stroke"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "undo", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Revert action", accent),
+                    ]),
+                    frost_core::container::Tab::new("paint.timeline", "Timeline", "clock").pods(
+                        vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "timeline", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("scrub", 0.0, 0.0..=100.0, 0, " %", accent),
+                        ],
+                    ),
+                ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "properties"),
+                "Properties",
+                "settings",
+                vec![
+                    frost_core::container::Tab::new("paint.stroke", "Stroke", "pen").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "stroke", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_dropdown(
+                                vec![
+                                    "Round".to_owned(),
+                                    "Square".to_owned(),
+                                    "Calligraphy".to_owned(),
+                                ],
+                                0,
+                                accent,
+                            ),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "stroke", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_toggle_initial("pressure", accent, true),
+                    ]),
+                ],
             )),
     ]
 }

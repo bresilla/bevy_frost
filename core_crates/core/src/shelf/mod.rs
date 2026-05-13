@@ -181,14 +181,27 @@ struct ShelfResizeStart {
     pointer: Pos2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ShelfContainerMoveState {
+    container_id: Id,
+    source_edge: ShelfEdge,
+    cursor: Pos2,
+    target_edge: Option<ShelfEdge>,
+    target_pane: Option<Id>,
+    target_slot: Option<usize>,
+    container_size: Vec2,
+}
+
 /// Persistent Shelf UI state: user sizes and per-Shelf active group.
 #[derive(Debug, Default)]
 pub struct ShelfState {
     sizes: HashMap<Id, f32>,
     resize_starts: HashMap<Id, ShelfResizeStart>,
     edge_overrides: HashMap<Id, ShelfEdge>,
+    container_edges: HashMap<Id, ShelfEdge>,
     active_containers: HashMap<Id, Id>,
     drag: Option<ShelfDragState>,
+    container_move: Option<ShelfContainerMoveState>,
 }
 
 impl ShelfState {
@@ -218,6 +231,22 @@ impl ShelfState {
     }
 
     #[must_use]
+    pub fn container_edge(&self, container_id: Id, default: ShelfEdge) -> ShelfEdge {
+        self.container_edges
+            .get(&container_id)
+            .copied()
+            .unwrap_or(default)
+    }
+
+    pub fn set_container_edge(&mut self, container_id: Id, edge: ShelfEdge) {
+        self.container_edges.insert(container_id, edge);
+    }
+
+    pub fn clear_container_edge_override(&mut self, container_id: Id) {
+        self.container_edges.remove(&container_id);
+    }
+
+    #[must_use]
     pub fn active_container(&self, shelf_id: Id) -> Option<Id> {
         self.active_containers.get(&shelf_id).copied()
     }
@@ -226,12 +255,18 @@ impl ShelfState {
         self.active_containers.insert(shelf_id, container_id);
     }
 
-    fn extent_for(&mut self, shelf: &ShelfDef<'_>, edge: ShelfEdge, theme: &ShelfTheme) -> f32 {
+    fn extent_for_key(
+        &mut self,
+        size_key: Id,
+        shelf: &ShelfDef<'_>,
+        edge: ShelfEdge,
+        theme: &ShelfTheme,
+    ) -> f32 {
         let min = shelf.min_extent(theme);
         let max = shelf.max_extent(theme);
         let value = self
             .sizes
-            .entry(shelf.id)
+            .entry(size_key)
             .or_insert_with(|| shelf.default_extent_for(edge, theme).clamp(min, max));
         *value = value.clamp(min, max);
         *value
@@ -266,6 +301,36 @@ impl ShelfState {
 
     fn cancel_drag(&mut self) {
         self.drag = None;
+    }
+
+    fn update_container_move(
+        &mut self,
+        container_id: Id,
+        source_edge: ShelfEdge,
+        cursor: Pos2,
+        target_edge: Option<ShelfEdge>,
+        container_size: Vec2,
+    ) {
+        self.container_move = Some(ShelfContainerMoveState {
+            container_id,
+            source_edge,
+            cursor,
+            target_edge,
+            target_pane: None,
+            target_slot: None,
+            container_size,
+        });
+    }
+
+    fn update_container_move_target_slot(&mut self, target_pane: Id, target_slot: usize) {
+        if let Some(drag) = &mut self.container_move {
+            drag.target_pane = Some(target_pane);
+            drag.target_slot = Some(target_slot);
+        }
+    }
+
+    fn clear_container_move(&mut self) {
+        self.container_move = None;
     }
 }
 
@@ -313,9 +378,9 @@ pub fn layout_shelves(
     let mut right = None;
     let mut bottom = None;
 
-    for shelf in shelves {
-        let edge = state.edge(shelf.id, shelf.edge);
-        let extent = state.extent_for(shelf, edge, theme);
+    for (shelf_idx, edge) in shelf_layout_edges(shelves, state) {
+        let shelf = &shelves[shelf_idx];
+        let extent = state.extent_for_key(shelf.id.with(edge), shelf, edge, theme);
         match edge {
             ShelfEdge::Left => {
                 let rect =
@@ -346,6 +411,28 @@ pub fn layout_shelves(
     }
 }
 
+fn shelf_layout_edges(shelves: &[ShelfDef<'_>], state: &ShelfState) -> Vec<(usize, ShelfEdge)> {
+    let mut out = Vec::new();
+    for (idx, shelf) in shelves.iter().enumerate() {
+        let default_edge = state.edge(shelf.id, shelf.edge);
+        if shelf.containers.is_empty() {
+            push_unique_edge(&mut out, idx, default_edge);
+            continue;
+        }
+        for container in &shelf.containers {
+            let edge = state.container_edge(container.spec.container_id(), default_edge);
+            push_unique_edge(&mut out, idx, edge);
+        }
+    }
+    out
+}
+
+fn push_unique_edge(out: &mut Vec<(usize, ShelfEdge)>, shelf_idx: usize, edge: ShelfEdge) {
+    if !out.iter().any(|(_, existing)| *existing == edge) {
+        out.push((shelf_idx, edge));
+    }
+}
+
 /// Paint all Shelves and their typed tabbed containers.
 pub fn show_shelves<'a>(
     ctx: &egui::Context,
@@ -357,14 +444,15 @@ pub fn show_shelves<'a>(
     let theme = style::theme();
     let shelf_theme = *theme.shelf();
     let available = layout.available();
+    let shelves = split_shelf_render_groups(shelves, state);
 
-    for mut shelf in shelves {
-        shelf.edge = state.edge(shelf.id, shelf.edge);
+    for shelf in shelves {
         let Some(rect) = layout.rect_for(shelf.edge) else {
             continue;
         };
+        let render_id = shelf_render_id(&shelf);
 
-        let area = egui::Area::new(shelf.id.with("frost_shelf_area"))
+        let area = egui::Area::new(render_id.with("frost_shelf_area"))
             .order(egui::Order::Middle)
             .fixed_pos(rect.min)
             .interactable(true);
@@ -374,11 +462,12 @@ pub fn show_shelves<'a>(
             ui.set_min_size(rect.size());
             let move_response = ui.interact(
                 shelf_rect,
-                shelf.id.with("background_move"),
+                render_id.with("background_move"),
                 Sense::click_and_drag(),
             );
             paint_shelf_background(ui, shelf_rect, shelf.accent, &shelf_theme);
-            let resize_response = resize_shelf(ui, &shelf, state, &shelf_theme, shelf_rect);
+            let resize_response =
+                resize_shelf(ui, &shelf, render_id, state, &shelf_theme, shelf_rect);
 
             let content_rect = shelf_rect.shrink(shelf_theme.padding);
             if resize_response.drag_started() || resize_response.dragged() {
@@ -403,20 +492,100 @@ pub fn show_shelves<'a>(
                 );
             }
 
-            render_shelf_body(ui, content_rect, shelf, state);
+            render_shelf_body(
+                ui,
+                content_rect,
+                shelf_rect,
+                layout,
+                available,
+                shelf,
+                state,
+            );
         });
     }
 
     paint_shelf_move_ghost(ctx, layout, state, &shelf_theme);
+    paint_container_move_ghost(ctx, layout, state, &shelf_theme);
+}
+
+fn split_shelf_render_groups<'a>(
+    shelves: Vec<ShelfDef<'a>>,
+    state: &ShelfState,
+) -> Vec<ShelfDef<'a>> {
+    let mut groups = Vec::new();
+    for mut shelf in shelves {
+        let default_edge = state.edge(shelf.id, shelf.edge);
+        shelf.edge = default_edge;
+        if shelf.containers.is_empty() {
+            push_shelf_render_group(&mut groups, shelf, default_edge);
+            continue;
+        }
+        let base = ShelfDef {
+            id: shelf.id,
+            edge: default_edge,
+            accent: shelf.accent,
+            containers: Vec::new(),
+            default_size: shelf.default_size,
+            min_size: shelf.min_size,
+            max_size: shelf.max_size,
+            movable: shelf.movable,
+        };
+        for container in shelf.containers {
+            let edge = state.container_edge(container.spec.container_id(), default_edge);
+            push_container_render_group(&mut groups, &base, edge, container);
+        }
+    }
+    groups
+}
+
+fn push_shelf_render_group<'a>(
+    groups: &mut Vec<ShelfDef<'a>>,
+    mut shelf: ShelfDef<'a>,
+    edge: ShelfEdge,
+) {
+    shelf.edge = edge;
+    groups.push(shelf);
+}
+
+fn push_container_render_group<'a>(
+    groups: &mut Vec<ShelfDef<'a>>,
+    base: &ShelfDef<'a>,
+    edge: ShelfEdge,
+    container: ShelfContainer<'a>,
+) {
+    if let Some(group) = groups
+        .iter_mut()
+        .find(|group| group.id == base.id && group.edge == edge)
+    {
+        group.containers.push(container);
+        return;
+    }
+    groups.push(ShelfDef {
+        id: base.id,
+        edge,
+        accent: base.accent,
+        containers: vec![container],
+        default_size: base.default_size,
+        min_size: base.min_size,
+        max_size: base.max_size,
+        movable: base.movable,
+    });
+}
+
+fn shelf_render_id(shelf: &ShelfDef<'_>) -> Id {
+    shelf.id.with(shelf.edge)
 }
 
 fn render_shelf_body<'a>(
     ui: &mut egui::Ui,
     content_rect: Rect,
+    shelf_rect: Rect,
+    _layout: ShelfLayout,
+    available: Rect,
     shelf: ShelfDef<'a>,
     state: &mut ShelfState,
 ) {
-    let pane_id = shelf.id.with("shelf_pane_scope");
+    let pane_id = shelf_render_id(&shelf).with("shelf_pane_scope");
     let anchor = shelf.edge.container_anchor();
     // Container stack axis mirrors `Pane::lay_out_flex`: vertical-
     // strip title sides stack containers horizontally, horizontal-
@@ -426,7 +595,7 @@ fn render_shelf_body<'a>(
     // should flow horizontally — and the drag ghost-gap allocated
     // along the wrong axis as a result.
     let horizontal_stack = !anchor.title_side().is_horizontal_strip();
-    let layout = if horizontal_stack {
+    let stack_layout = if horizontal_stack {
         egui::Layout::left_to_right(egui::Align::Min)
     } else {
         egui::Layout::top_down(egui::Align::Min)
@@ -444,7 +613,7 @@ fn render_shelf_body<'a>(
     // trailing ghost gap, finalize, preview) runs on THIS ui so the
     // recorded rects, the ghost slot, and the cursor/release event
     // all share one coordinate space.
-    let mut viewport = ui.new_child(UiBuilder::new().max_rect(content_rect).layout(layout));
+    let mut viewport = ui.new_child(UiBuilder::new().max_rect(content_rect).layout(stack_layout));
     // Zero item spacing so the ghost gap sits flush against
     // neighbouring containers (matches `Pane::lay_out_flex`).
     viewport.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -502,16 +671,66 @@ fn render_shelf_body<'a>(
     }
 
     pane::finalize_snapshot(viewport.ctx(), pane_id);
+    update_container_move_target_slot(
+        &mut viewport,
+        pane_id,
+        shelf.edge,
+        horizontal_stack,
+        shelf.accent,
+        state,
+    );
 
     if let Some(dragged_id) = drag_state.item {
         let snap = pane::snapshot(viewport.ctx(), pane_id);
         let cursor = viewport.ctx().pointer_interact_pos().or(drag_state.cursor);
         if let Some(c) = cursor {
+            if let Some(entry) = pane::dragged_entry(&snap, dragged_id) {
+                let target_edge = if shelf_rect.expand(24.0).contains(c) {
+                    None
+                } else {
+                    container_move_target(c, available, shelf.edge)
+                };
+                let target_size = target_edge
+                    .map(|edge| {
+                        container_move_ghost_size_for_edge(
+                            viewport.ctx(),
+                            dragged_id,
+                            edge,
+                            content_rect,
+                        )
+                    })
+                    .unwrap_or_else(|| entry.rect.size());
+                state.update_container_move(dragged_id, shelf.edge, c, target_edge, target_size);
+            }
             pane::paint_drag_preview(viewport.ctx(), pane_id, &snap, dragged_id, c, shelf.accent);
             viewport.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
 
         if viewport.ctx().input(|i| i.pointer.any_released()) {
+            if let Some(target) = state
+                .container_move
+                .filter(|drag| drag.container_id == dragged_id)
+                .and_then(|drag| drag.target_edge)
+            {
+                state.set_container_edge(dragged_id, target);
+                if let (Some(target_pane), Some(target_slot)) = (
+                    state.container_move.and_then(|drag| drag.target_pane),
+                    state.container_move.and_then(|drag| drag.target_slot),
+                ) {
+                    let defaults: Vec<Id> = pane::snapshot(viewport.ctx(), target_pane)
+                        .iter()
+                        .map(|entry| entry.id)
+                        .collect();
+                    let mut order = pane::section_order_for(viewport.ctx(), target_pane, &defaults);
+                    order.retain(|cid| *cid != dragged_id);
+                    let clamped = target_slot.min(order.len());
+                    order.insert(clamped, dragged_id);
+                    pane::set_section_order(viewport.ctx(), target_pane, order);
+                }
+                state.clear_container_move();
+                pane::clear_drag(viewport.ctx(), pane_id);
+                return;
+            }
             if let Some(c) = cursor {
                 let cursor_axis = if horizontal_stack { c.x } else { c.y };
                 let target_idx =
@@ -524,6 +743,7 @@ fn render_shelf_body<'a>(
                 pane::set_section_order(viewport.ctx(), pane_id, order);
             }
             pane::clear_drag(viewport.ctx(), pane_id);
+            state.clear_container_move();
         }
     }
 
@@ -601,23 +821,25 @@ fn paint_shelf_background(ui: &mut egui::Ui, rect: Rect, accent: Color32, theme:
 fn resize_shelf(
     ui: &mut egui::Ui,
     shelf: &ShelfDef<'_>,
+    render_id: Id,
     state: &mut ShelfState,
     theme: &ShelfTheme,
     rect: Rect,
 ) -> egui::Response {
     let handle = resize_handle_rect(shelf.edge, rect, theme);
-    let resp = ui.interact(handle, shelf.id.with("resize"), Sense::drag());
+    let size_key = shelf.id.with(shelf.edge);
+    let resp = ui.interact(handle, render_id.with("resize"), Sense::drag());
     if resp.drag_started() {
         let cur = state
-            .size(shelf.id)
+            .size(size_key)
             .unwrap_or_else(|| shelf.default_extent_for(shelf.edge, theme));
         if let Some(pointer) = resp.interact_pointer_pos() {
             state
                 .resize_starts
-                .insert(shelf.id, ShelfResizeStart { size: cur, pointer });
+                .insert(size_key, ShelfResizeStart { size: cur, pointer });
         }
     }
-    if let Some(start) = state.resize_starts.get(&shelf.id).copied() {
+    if let Some(start) = state.resize_starts.get(&size_key).copied() {
         let pointer_down = ui.ctx().input(|i| i.pointer.primary_down());
         let pointer = ui
             .ctx()
@@ -633,14 +855,14 @@ fn resize_shelf(
             };
             let next =
                 (start.size + raw_delta).clamp(shelf.min_extent(theme), shelf.max_extent(theme));
-            state.set_size(shelf.id, next);
+            state.set_size(size_key, next);
             ui.ctx().request_repaint();
         } else {
-            state.resize_starts.remove(&shelf.id);
+            state.resize_starts.remove(&size_key);
         }
     } else if resp.dragged() {
         let start = state
-            .size(shelf.id)
+            .size(size_key)
             .unwrap_or_else(|| shelf.default_extent_for(shelf.edge, theme));
         let raw_delta = match shelf.edge {
             ShelfEdge::Left => resp.drag_delta().x,
@@ -648,13 +870,76 @@ fn resize_shelf(
             ShelfEdge::Bottom => -resp.drag_delta().y,
         };
         let next = (start + raw_delta).clamp(shelf.min_extent(theme), shelf.max_extent(theme));
-        state.set_size(shelf.id, next);
+        state.set_size(size_key, next);
         ui.ctx().request_repaint();
     }
     if resp.drag_stopped() {
-        state.resize_starts.remove(&shelf.id);
+        state.resize_starts.remove(&size_key);
     }
     resp
+}
+
+fn update_container_move_target_slot(
+    viewport: &mut egui::Ui,
+    pane_id: Id,
+    shelf_edge: ShelfEdge,
+    horizontal_stack: bool,
+    accent: Color32,
+    state: &mut ShelfState,
+) {
+    let Some(drag) = state.container_move else {
+        return;
+    };
+    if drag.target_edge != Some(shelf_edge) {
+        return;
+    }
+    let snap = pane::snapshot(viewport.ctx(), pane_id);
+    let cursor_axis = if horizontal_stack {
+        drag.cursor.x
+    } else {
+        drag.cursor.y
+    };
+    let target_slot = pane::compute_target(&snap, drag.container_id, cursor_axis, horizontal_stack);
+    state.update_container_move_target_slot(pane_id, target_slot);
+
+    if let Some(rect) = container_slot_ghost_rect(&snap, drag, target_slot, horizontal_stack) {
+        viewport.painter().rect(
+            rect,
+            egui::CornerRadius::same(style::theme().radius_md),
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 54),
+            Stroke::new(1.5, accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+fn container_slot_ghost_rect(
+    snap: &[pane::RectEntry],
+    drag: ShelfContainerMoveState,
+    slot: usize,
+    horizontal_stack: bool,
+) -> Option<Rect> {
+    let size = drag.container_size;
+    let others: Vec<&pane::RectEntry> = snap
+        .iter()
+        .filter(|entry| entry.id != drag.container_id)
+        .collect();
+    if let Some(next) = others.get(slot) {
+        let pos = if horizontal_stack {
+            pos2(next.rect.left() - size.x, next.rect.top())
+        } else {
+            pos2(next.rect.left(), next.rect.top() - size.y)
+        };
+        return Some(Rect::from_min_size(pos, size));
+    }
+    others.last().map(|last| {
+        let pos = if horizontal_stack {
+            pos2(last.rect.right(), last.rect.top())
+        } else {
+            pos2(last.rect.left(), last.rect.bottom())
+        };
+        Rect::from_min_size(pos, size)
+    })
 }
 
 fn resize_handle_rect(edge: ShelfEdge, rect: Rect, theme: &ShelfTheme) -> Rect {
@@ -748,6 +1033,23 @@ fn shelf_move_target(cursor: Pos2, available: Rect, occupied: ShelfOccupied) -> 
         .map(|(edge, _)| edge)
 }
 
+fn container_move_target(cursor: Pos2, available: Rect, source: ShelfEdge) -> Option<ShelfEdge> {
+    if !available.contains(cursor) {
+        return None;
+    }
+    let distances = [
+        (ShelfEdge::Left, (cursor.x - available.left()).abs()),
+        (ShelfEdge::Right, (available.right() - cursor.x).abs()),
+        (ShelfEdge::Bottom, (available.bottom() - cursor.y).abs()),
+    ];
+    let edge_band = (available.width().min(available.height()) * 0.28).max(96.0);
+    distances
+        .into_iter()
+        .filter(|(edge, dist)| *edge != source && *dist <= edge_band)
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(edge, _)| edge)
+}
+
 fn paint_shelf_move_ghost(
     ctx: &egui::Context,
     layout: ShelfLayout,
@@ -778,6 +1080,79 @@ fn paint_shelf_move_ghost(
                 egui::StrokeKind::Inside,
             );
         });
+}
+
+fn paint_container_move_ghost(
+    ctx: &egui::Context,
+    layout: ShelfLayout,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) {
+    let Some(drag) = state.container_move else {
+        return;
+    };
+    let Some(target) = drag.target_edge else {
+        return;
+    };
+    let Some(shelf_rect) = container_drop_rect(layout, drag.source_edge, target, theme) else {
+        return;
+    };
+    let accent = style::active_accent();
+    egui::Area::new(egui::Id::new("frost_shelf_container_move_ghost"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(shelf_rect.min)
+        .interactable(false)
+        .show(ctx, |ui| {
+            let (shelf_local, _) = ui.allocate_exact_size(shelf_rect.size(), Sense::hover());
+            ui.painter().rect(
+                shelf_local,
+                0.0,
+                style::fill_for(style::FillRole::DragGhost, accent),
+                style::stroke_for(style::StrokeRole::DragGhost, accent),
+                egui::StrokeKind::Inside,
+            );
+
+            let container_size = drag
+                .container_size
+                .min(shelf_local.shrink(style::theme().shelf().padding).size());
+            let pos = if target.is_side() {
+                pos2(
+                    shelf_local.center().x - container_size.x * 0.5,
+                    shelf_local.top() + style::theme().shelf().padding,
+                )
+            } else {
+                pos2(
+                    shelf_local.left() + style::theme().shelf().padding,
+                    shelf_local.center().y - container_size.y * 0.5,
+                )
+            };
+            let container_rect = Rect::from_min_size(pos, container_size);
+            ui.painter().rect(
+                container_rect,
+                egui::CornerRadius::same(style::theme().radius_md),
+                Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 72),
+                Stroke::new(1.5, accent),
+                egui::StrokeKind::Inside,
+            );
+        });
+}
+
+fn container_move_ghost_size_for_edge(
+    ctx: &egui::Context,
+    container_id: Id,
+    edge: ShelfEdge,
+    content_rect: Rect,
+) -> Vec2 {
+    let anchor = edge.container_anchor();
+    let horizontal_stack = !anchor.title_side().is_horizontal_strip();
+    let pane_horizontal_strip = anchor.title_side().is_horizontal_strip();
+    let flow = crate::container::container_flow(ctx, container_id, pane_horizontal_strip);
+    let title = style::theme().container().title_zone_thickness;
+    if horizontal_stack {
+        vec2(flow + title, content_rect.height())
+    } else {
+        vec2(content_rect.width(), flow + title)
+    }
 }
 
 fn shelf_drop_rect(
@@ -844,6 +1219,17 @@ fn shelf_drop_rect(
             pos2(available.right() - right_w, available.bottom()),
         ),
     })
+}
+
+fn container_drop_rect(
+    layout: ShelfLayout,
+    source: ShelfEdge,
+    target: ShelfEdge,
+    theme: &ShelfTheme,
+) -> Option<Rect> {
+    layout
+        .rect_for(target)
+        .or_else(|| shelf_drop_rect(layout, source, target, theme))
 }
 
 /// Shelf-reserved insets, useful for ribbon/pane placement code.
