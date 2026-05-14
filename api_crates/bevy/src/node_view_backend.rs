@@ -244,11 +244,11 @@ impl<'a> NodeViewBackend for BevyNodeViewBackend<'a> {
             .by_size
             .iter()
             .find_map(|(k, (_, tid))| if *tid == id { Some(*k) } else { None });
-        if let Some(k) = key {
-            if let Some((handle, _)) = self.slots.by_size.remove(&k) {
-                let _ = self.egui_textures.remove_image(handle.id());
-                self.images.remove(handle.id());
-            }
+        if let Some(k) = key
+            && let Some((handle, _)) = self.slots.by_size.remove(&k)
+        {
+            let _ = self.egui_textures.remove_image(handle.id());
+            self.images.remove(handle.id());
         }
     }
 

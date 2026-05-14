@@ -149,7 +149,7 @@ pub fn dropdown_h(
             chev_color,
         );
         crate::icons::paint_icon(
-            &ui.painter(),
+            ui.painter(),
             egui::pos2(cx, cy),
             egui::Align2::CENTER_CENTER,
             "chevron_down",

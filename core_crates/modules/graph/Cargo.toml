@@ -14,14 +14,15 @@ egui = { workspace = true, default-features = false }
 egui-wgpu = { workspace = true }
 wgpu = { workspace = true }
 egui-scale = "0.3"
-slab = "0.4"
+slab = { version = "0.4", features = ["serde"] }
 smallvec = { version = "1.15", features = ["const_new"] }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
-# Silent markers for upstream cfg gates that survived vendoring.
-# The crate compiles its public surface unconditionally; these
-# stay as opt-in no-ops for the `#[cfg(feature = "serde")]` /
-# `#[cfg(feature = "egui-probe")]` annotations on node + style
-# types.
-serde = []
+# Upstream cfg gates that survived vendoring.
+serde = ["dep:serde", "egui/serde"]
+# `egui-probe` stays as a no-op compatibility marker: the vendored
+# source keeps its annotations behind an impossible cfg predicate so
+# workspace `--all-features` remains a valid hardening gate without
+# pulling the optional upstream probe crate into Frost.
 egui-probe = []

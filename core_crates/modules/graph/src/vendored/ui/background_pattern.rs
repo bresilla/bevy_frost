@@ -6,13 +6,13 @@ use super::GraphStyle;
 ///Use `GraphStyle::background_pattern_stroke` for change stroke options
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 pub struct Grid {
     /// Spacing between grid lines.
     pub spacing: Vec2,
 
     /// Angle of the grid.
-    #[cfg_attr(feature = "egui-probe", egui_probe(as egui_probe::angle))]
+    #[cfg_attr(all(feature = "egui-probe", any()), egui_probe(as egui_probe::angle))]
     pub angle: f32,
 }
 
@@ -90,7 +90,7 @@ impl Grid {
 /// grid intersection. Matches Blender's node-editor dot grid.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 pub struct Dots {
     /// Spacing between dots.
     pub spacing: Vec2,
@@ -149,7 +149,7 @@ impl Dots {
 /// — Halo CE waypoint, Stellaris galaxy map, NMS scanner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 pub struct Hex {
     /// Hex circumradius in points (centre → vertex).
     pub size: f32,
@@ -217,22 +217,22 @@ impl Hex {
 /// Background pattern show beneath nodes and wires.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 pub enum BackgroundPattern {
     /// No pattern.
     NoPattern,
 
     /// Linear grid.
-    #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
+    #[cfg_attr(all(feature = "egui-probe", any()), egui_probe(transparent))]
     Grid(Grid),
 
     /// Dot grid (Blender-style) — a filled circle at each
     /// intersection of an invisible grid.
-    #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
+    #[cfg_attr(all(feature = "egui-probe", any()), egui_probe(transparent))]
     Dots(Dots),
 
     /// Pointy-top hex tiles — sci-fi HUD motif.
-    #[cfg_attr(feature = "egui-probe", egui_probe(transparent))]
+    #[cfg_attr(all(feature = "egui-probe", any()), egui_probe(transparent))]
     Hex(Hex),
 }
 

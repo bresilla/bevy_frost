@@ -14,8 +14,6 @@ use crate::style::{
     ViewTheme, WidgetTheme,
 };
 
-use super::pro::theme_pro;
-
 pub const FLAT_DARK_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x00, 0x00, 0x00);
 pub const FLAT_DARK_BG_PANEL: egui::Color32 = egui::Color32::from_rgb(0x10, 0x10, 0x10);
 pub const FLAT_DARK_BG_RAISED: egui::Color32 = egui::Color32::from_rgb(0x1C, 0x1C, 0x1C);
@@ -532,6 +530,5 @@ pub const fn theme_flat(mode: Mode) -> Theme {
         ghost_fill_alpha: 100,
         ghost_stroke_width: 2.0,
         pastel_accent: false,
-        ..theme_pro(mode)
     }
 }

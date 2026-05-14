@@ -87,6 +87,8 @@ fn container_initial_flow_key(cid: Id) -> Id {
 /// default in that case).
 pub fn container_initial_flow(ctx: &egui::Context, cid: Id) -> Option<f32> {
     ctx.data_mut(|d| d.get_persisted::<f32>(container_initial_flow_key(cid)))
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(CONTAINER_MIN_FLOW, CONTAINER_MAX_FLOW))
 }
 
 /// Write the per-container default-flow override. Called by
@@ -94,7 +96,11 @@ pub fn container_initial_flow(ctx: &egui::Context, cid: Id) -> Option<f32> {
 /// `initial_flow`. Subsequent calls overwrite — the most recent
 /// value wins.
 pub fn set_container_initial_flow(ctx: &egui::Context, cid: Id, value: f32) {
-    let v = value.clamp(CONTAINER_MIN_FLOW, CONTAINER_MAX_FLOW);
+    let v = if value.is_finite() {
+        value.clamp(CONTAINER_MIN_FLOW, CONTAINER_MAX_FLOW)
+    } else {
+        f32::NAN
+    };
     ctx.data_mut(|d| d.insert_persisted(container_initial_flow_key(cid), v));
 }
 
@@ -127,7 +133,16 @@ pub fn set_container_initial_flow(ctx: &egui::Context, cid: Id, value: f32) {
 pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -> f32 {
     let (min_v, max_v) = container_flow_bounds(is_horizontal_strip);
     if let Some(user) = ctx.data_mut(|d| d.get_persisted::<f32>(container_flow_key(cid))) {
-        return user.clamp(min_v, max_v);
+        let fallback = if is_horizontal_strip {
+            CONTAINER_DEFAULT_FLOW
+        } else {
+            CONTAINER_HORIZONTAL_DEFAULT_FLOW
+        };
+        let repaired = sanitize_flow(user, fallback, min_v, max_v);
+        if repaired != user {
+            ctx.data_mut(|d| d.insert_persisted(container_flow_key(cid), repaired));
+        }
+        return repaired;
     }
     // Per-container override set via `Normal::initial_flow` —
     // replaces the static "no measurement yet" default with a
@@ -142,7 +157,12 @@ pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -
         if let Some(intrinsic) =
             ctx.data_mut(|d| d.get_persisted::<f32>(container_intrinsic_key(cid)))
         {
-            return intrinsic.clamp(min_v, max_v);
+            let fallback = override_default.unwrap_or(CONTAINER_DEFAULT_FLOW);
+            let repaired = sanitize_flow(intrinsic, fallback, min_v, max_v);
+            if repaired != intrinsic {
+                ctx.data_mut(|d| d.insert_persisted(container_intrinsic_key(cid), repaired));
+            }
+            return repaired;
         }
         // No measurement yet → fall back to the override (if any)
         // or the static `CONTAINER_DEFAULT_FLOW`. This way the
@@ -164,7 +184,12 @@ pub fn container_flow(ctx: &egui::Context, cid: Id, is_horizontal_strip: bool) -
 /// drag below 12U on horizontally-stacked containers.
 pub fn set_container_flow(ctx: &egui::Context, cid: Id, value: f32, is_horizontal_strip: bool) {
     let (min_v, max_v) = container_flow_bounds(is_horizontal_strip);
-    let v = value.clamp(min_v, max_v);
+    let fallback = if is_horizontal_strip {
+        CONTAINER_DEFAULT_FLOW
+    } else {
+        CONTAINER_HORIZONTAL_DEFAULT_FLOW
+    };
+    let v = sanitize_flow(value, fallback, min_v, max_v);
     ctx.data_mut(|d| d.insert_persisted(container_flow_key(cid), v));
 }
 
@@ -184,6 +209,80 @@ pub fn container_flow_bounds(is_horizontal_strip: bool) -> (f32, f32) {
 /// Called by [`Normal::show`] every frame after the body renders.
 /// Read by [`container_flow`]'s auto-fit path on subsequent frames.
 pub fn record_container_intrinsic(ctx: &egui::Context, cid: Id, height: f32) {
-    let v = height.max(0.0);
+    let v = if height.is_finite() {
+        height.max(0.0)
+    } else {
+        CONTAINER_DEFAULT_FLOW
+    };
     ctx.data_mut(|d| d.insert_persisted(container_intrinsic_key(cid), v));
+}
+
+fn sanitize_flow(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback.clamp(min, max)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_flow_sanitizes_non_finite_user_values() {
+        let ctx = egui::Context::default();
+        let vertical = Id::new("vertical-container");
+        let horizontal = Id::new("horizontal-container");
+
+        set_container_flow(&ctx, vertical, f32::NAN, true);
+        set_container_flow(&ctx, horizontal, f32::INFINITY, false);
+
+        assert_eq!(container_flow(&ctx, vertical, true), CONTAINER_DEFAULT_FLOW);
+        assert_eq!(
+            container_flow(&ctx, horizontal, false),
+            CONTAINER_HORIZONTAL_DEFAULT_FLOW
+        );
+    }
+
+    #[test]
+    fn container_initial_flow_ignores_non_finite_overrides() {
+        let ctx = egui::Context::default();
+        let cid = Id::new("initial-flow-container");
+
+        set_container_initial_flow(&ctx, cid, f32::NAN);
+
+        assert_eq!(container_initial_flow(&ctx, cid), None);
+        assert_eq!(container_flow(&ctx, cid, true), CONTAINER_DEFAULT_FLOW);
+        assert_eq!(
+            container_flow(&ctx, cid, false),
+            CONTAINER_HORIZONTAL_DEFAULT_FLOW
+        );
+    }
+
+    #[test]
+    fn intrinsic_flow_sanitizes_non_finite_measurements() {
+        let ctx = egui::Context::default();
+        let cid = Id::new("intrinsic-container");
+
+        record_container_intrinsic(&ctx, cid, f32::NEG_INFINITY);
+
+        assert_eq!(container_flow(&ctx, cid, true), CONTAINER_DEFAULT_FLOW);
+    }
+
+    #[test]
+    fn container_flow_clamps_to_orientation_bounds() {
+        let ctx = egui::Context::default();
+        let vertical = Id::new("vertical-clamp-container");
+        let horizontal = Id::new("horizontal-clamp-container");
+
+        set_container_flow(&ctx, vertical, -100.0, true);
+        set_container_flow(&ctx, horizontal, -100.0, false);
+
+        assert_eq!(container_flow(&ctx, vertical, true), CONTAINER_MIN_FLOW);
+        assert_eq!(
+            container_flow(&ctx, horizontal, false),
+            CONTAINER_HORIZONTAL_MIN_FLOW
+        );
+    }
 }

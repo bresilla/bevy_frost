@@ -37,6 +37,7 @@ pub fn slider(
 
 /// Variable-height variant — `row_height` is the height of EACH
 /// row (caption + bar), so total widget height is `2 × row_height`.
+#[allow(clippy::too_many_arguments)]
 pub fn slider_h(
     ui: &mut egui::Ui,
     label: &str,
@@ -68,14 +69,14 @@ pub fn slider_h(
     let mut bar_resp = ui.interact(bar_rect, bar_id, egui::Sense::click_and_drag());
     let (lo, hi) = (*range.start(), *range.end());
     let denom = (hi - lo).max(f64::EPSILON);
-    if let Some(pos) = bar_resp.interact_pointer_pos() {
-        if bar_resp.dragged() || bar_resp.clicked() {
-            let t = ((pos.x - bar_rect.min.x) as f64 / bar_rect.width() as f64).clamp(0.0, 1.0);
-            let new_val = (lo + t * denom).clamp(lo, hi);
-            if (new_val - *value).abs() > f64::EPSILON {
-                *value = new_val;
-                bar_resp.mark_changed();
-            }
+    if let Some(pos) = bar_resp.interact_pointer_pos()
+        && (bar_resp.dragged() || bar_resp.clicked())
+    {
+        let t = ((pos.x - bar_rect.min.x) as f64 / bar_rect.width() as f64).clamp(0.0, 1.0);
+        let new_val = (lo + t * denom).clamp(lo, hi);
+        if (new_val - *value).abs() > f64::EPSILON {
+            *value = new_val;
+            bar_resp.mark_changed();
         }
     }
     let bar_resp = bar_resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);

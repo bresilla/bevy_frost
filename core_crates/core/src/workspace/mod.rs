@@ -10,6 +10,7 @@ mod level;
 mod policy;
 mod stack;
 
+pub(crate) use bar::validate_workspace_bar_item;
 pub use bar::{
     WorkspaceBar, WorkspaceBarCluster, WorkspaceBarEdge, WorkspaceBarItem, WorkspaceBarItemKind,
 };

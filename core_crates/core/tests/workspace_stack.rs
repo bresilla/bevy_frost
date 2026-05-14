@@ -1,4 +1,4 @@
-use frost_core::{WorkspaceOwner, WorkspaceStack, WorkspaceStackError};
+use frost_core::{WorkspaceLevelState, WorkspaceOwner, WorkspaceStack, WorkspaceStackError};
 
 #[test]
 fn workspace_stack_tracks_root_and_module_levels() {
@@ -36,4 +36,28 @@ fn workspace_stack_tracks_root_and_module_levels() {
     stack.pop().expect("L1 can pop");
     assert_eq!(stack.depth(), 0);
     assert_eq!(stack.pop(), Err(WorkspaceStackError::CannotPopRoot));
+}
+
+#[test]
+fn module_workspace_levels_must_be_l1_or_deeper() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = WorkspaceLevelState::module(egui::Id::new("bad-level"), 0, egui::Id::new("module"));
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn workspace_stack_rejects_depth_overflow() {
+    let mut stack = WorkspaceStack::new("root");
+    for index in 1..=u8::MAX {
+        let level = stack.push_module(egui::Id::new(("module", index)));
+        assert_eq!(level.depth, index);
+    }
+
+    let overflow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = stack.push_module(egui::Id::new("overflow"));
+    }));
+
+    assert!(overflow.is_err());
 }

@@ -25,6 +25,8 @@ impl ViewEntry {
         let id = view.id();
         let title = view.title().to_owned();
         let icon = view.icon();
+        assert!(!title.trim().is_empty(), "views require a non-empty title");
+        assert!(!icon.trim().is_empty(), "views require a non-empty icon");
         Self {
             id,
             title,
@@ -65,6 +67,10 @@ impl ViewRouter {
     {
         let entry = ViewEntry::new(view);
         let id = entry.id;
+        assert!(
+            !self.entries.iter().any(|entry| entry.id == id),
+            "view routers require unique view ids"
+        );
         if self.active.is_none() {
             self.active = Some(id);
         }

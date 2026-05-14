@@ -3,6 +3,7 @@ use frost_core::{
     RibbonOverridePolicy, RibbonScope, RibbonSlot, RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
     RibbonSlotOverride, ViewCtx, ViewId, ViewRouter, WindowControlsPolicy,
     dispatch_app_shell_action, permanent_system_control_slot, resolve_app_shell_ribbons,
+    resolve_app_shell_ribbons_with_workspace_chrome,
     resolve_app_shell_ribbons_with_workspace_layers,
 };
 
@@ -99,6 +100,67 @@ fn bottom_permanent_ribbon(id: &'static str) -> RibbonSlotDef {
 }
 
 #[test]
+fn app_shell_chrome_rejects_duplicate_permanent_slot_ids_when_merging() {
+    let slot_id = RibbonSlotId::new("shared.slot");
+    let first = RibbonSlotDef::new(
+        egui::Id::new("main.bar"),
+        RibbonScope::Permanent,
+        RibbonEdge::Top,
+        RibbonCluster::Middle,
+        vec![RibbonSlot::new(
+            slot_id,
+            Some(RibbonSlotItem::new(
+                egui::Id::new("first"),
+                "settings",
+                "First",
+                "First",
+                RibbonAction::Noop,
+            )),
+            RibbonOverridePolicy::Fixed,
+        )],
+    );
+    let second = RibbonSlotDef::new(
+        egui::Id::new("extra.bar"),
+        RibbonScope::Permanent,
+        RibbonEdge::Top,
+        RibbonCluster::Middle,
+        vec![RibbonSlot::new(
+            slot_id,
+            Some(RibbonSlotItem::new(
+                egui::Id::new("second"),
+                "info",
+                "Second",
+                "Second",
+                RibbonAction::Noop,
+            )),
+            RibbonOverridePolicy::Fixed,
+        )],
+    );
+
+    let result = std::panic::catch_unwind(|| {
+        let _ = frost_core::AppShellChrome::new(first).with_permanent_ribbon(second);
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn app_shell_chrome_rejects_non_permanent_merged_ribbon() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = frost_core::AppShellChrome::new(empty_permanent_ribbon("main.bar"))
+            .with_permanent_ribbon(RibbonSlotDef::new(
+                egui::Id::new("view.local.bar"),
+                RibbonScope::View(ViewId::new("canvas")),
+                RibbonEdge::Top,
+                RibbonCluster::Middle,
+                Vec::new(),
+            ));
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn app_shell_resolves_permanent_and_active_view_ribbons() {
     let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
     let permanent = permanent_main_with_system_control();
@@ -139,6 +201,95 @@ fn app_shell_rejects_bottom_permanent_ribbon() {
         AppShellError::PermanentRibbonOnBottom { id }
             if id == egui::Id::new("bottom.main.bar")
     ));
+}
+
+#[test]
+fn app_shell_rejects_active_view_ribbons_with_wrong_scope() {
+    struct WrongScopedView {
+        id: ViewId,
+        ribbon: RibbonSlotDef,
+    }
+
+    impl FrostView for WrongScopedView {
+        fn id(&self) -> ViewId {
+            self.id
+        }
+
+        fn title(&self) -> &str {
+            "Wrong Scoped"
+        }
+
+        fn icon(&self) -> &'static str {
+            "view"
+        }
+
+        fn ribbons(&mut self) -> Vec<RibbonSlotDef> {
+            vec![self.ribbon.clone()]
+        }
+
+        fn show(&mut self, _ctx: &mut ViewCtx<'_>) {}
+    }
+
+    let bad_ribbon_id = egui::Id::new("bad.view.ribbon.scope");
+    let mut router = ViewRouter::new(WrongScopedView {
+        id: ViewId::new("bevy"),
+        ribbon: RibbonSlotDef::new(
+            bad_ribbon_id,
+            RibbonScope::View(ViewId::new("canvas")),
+            RibbonEdge::Left,
+            RibbonCluster::Start,
+            Vec::new(),
+        ),
+    });
+
+    let error = resolve_app_shell_ribbons(&mut router, &permanent_main_with_system_control())
+        .expect_err("active views may only emit ribbons scoped to themselves");
+    assert!(matches!(
+        error,
+        AppShellError::ViewRibbonWrongScope { id } if id == bad_ribbon_id
+    ));
+}
+
+#[test]
+fn app_shell_rejects_workspace_ribbons_with_wrong_scope() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    router
+        .active_workspace_mut()
+        .unwrap()
+        .push_module(egui::Id::new("canvas-module"));
+    let bad_ribbon_id = egui::Id::new("bad.workspace.ribbon.scope");
+    let workspace_ribbon = RibbonSlotDef::new(
+        bad_ribbon_id,
+        RibbonScope::WorkspaceLevel(egui::Id::new("other-workspace")),
+        RibbonEdge::Right,
+        RibbonCluster::Middle,
+        Vec::new(),
+    );
+
+    let error = resolve_app_shell_ribbons_with_workspace_chrome(
+        &mut router,
+        &permanent_main_with_system_control(),
+        &[workspace_ribbon],
+        &[],
+    )
+    .expect_err("workspace ribbons must belong to the active workspace level");
+    assert!(matches!(
+        error,
+        AppShellError::WorkspaceRibbonWrongScope { id } if id == bad_ribbon_id
+    ));
+}
+
+#[test]
+fn app_shell_rejects_direct_invalid_ribbon_defs() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let mut permanent = permanent_main_with_system_control();
+    permanent[0].chrome_id = Some(" ");
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = resolve_app_shell_ribbons(&mut router, &permanent);
+    }));
+
+    assert!(rejected.is_err());
 }
 
 #[test]
@@ -328,7 +479,7 @@ fn app_shell_calls_workspace_renderer_for_l1() {
 fn main_bar_with_slots(slots: Vec<RibbonSlot>) -> frost_core::AppShellChrome {
     frost_core::AppShellChrome::new(RibbonSlotDef::new(
         egui::Id::new("main.bar"),
-        RibbonScope::View(ViewId::new("wrong-scope-is-forced-permanent")),
+        RibbonScope::Permanent,
         RibbonEdge::Top,
         RibbonCluster::Middle,
         slots,
@@ -363,6 +514,21 @@ fn app_shell_chrome_enforces_persistent_main_bar() {
 }
 
 #[test]
+fn app_shell_chrome_rejects_non_permanent_main_bar() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = frost_core::AppShellChrome::new(RibbonSlotDef::new(
+            egui::Id::new("main.view.scoped.bar"),
+            RibbonScope::View(ViewId::new("canvas")),
+            RibbonEdge::Top,
+            RibbonCluster::Middle,
+            Vec::new(),
+        ));
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn persistent_main_bar_slot_requires_explicit_hide_override() {
     let slot_id = RibbonSlotId::new("global.about");
     let slot = RibbonSlot::new(
@@ -382,7 +548,20 @@ fn persistent_main_bar_slot_requires_explicit_hide_override() {
     let chrome = main_bar_with_slots(vec![slot]);
 
     let resolved = frost_core::resolve_app_shell_chrome(&mut router, &chrome).unwrap();
-    assert!(resolved.ribbons[0].items.is_empty());
+    assert!(
+        resolved.ribbons[0]
+            .items
+            .iter()
+            .all(|item| item.id != egui::Id::new("global.about.item")),
+        "the view override should hide only the requested inherited slot"
+    );
+    assert!(
+        resolved.ribbons[0]
+            .items
+            .iter()
+            .any(|item| item.action == RibbonAction::CloseApp),
+        "mandatory window controls should remain unless the chrome opts out"
+    );
 }
 
 #[test]
@@ -413,6 +592,36 @@ fn app_shell_chrome_includes_mandatory_close_controls_by_default() {
             .iter()
             .any(|item| item.action == RibbonAction::CloseApp)
     );
+}
+
+#[test]
+fn app_shell_chrome_rejects_bottom_main_bar() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = frost_core::AppShellChrome::new(RibbonSlotDef::new(
+            egui::Id::new("main.bottom.bar"),
+            RibbonScope::Permanent,
+            RibbonEdge::Bottom,
+            RibbonCluster::Middle,
+            Vec::new(),
+        ));
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn app_shell_chrome_rejects_bottom_merged_permanent_ribbon() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = main_bar_with_slots(vec![]).with_permanent_ribbon(RibbonSlotDef::new(
+            egui::Id::new("bottom.extra.bar"),
+            RibbonScope::Permanent,
+            RibbonEdge::Bottom,
+            RibbonCluster::Middle,
+            Vec::new(),
+        ));
+    });
+
+    assert!(result.is_err());
 }
 
 #[test]

@@ -117,6 +117,7 @@ pub struct TreeRowResponse {
 /// literal text rendering when not bundled). `slots` is the
 /// fixed-width right gutter of action toggles — pass the same slice
 /// shape for every row in the tree.
+#[allow(clippy::too_many_arguments)]
 pub fn tree_row(
     ui: &mut egui::Ui,
     id_salt: impl Hash + Copy,
@@ -172,7 +173,7 @@ pub fn tree_row(
     // reserved slot.
     let any_slot_hovered = icon_responses.iter().any(|r| r.hovered());
     let hovered =
-        body.hovered() || chevron.as_ref().map_or(false, |c| c.hovered()) || any_slot_hovered;
+        body.hovered() || chevron.as_ref().is_some_and(|c| c.hovered()) || any_slot_hovered;
     let bg_shape = if selected {
         egui::Shape::rect_filled(
             rect,
@@ -220,14 +221,14 @@ pub fn tree_row(
             .ctx()
             .animate_bool_responsive(ui.id().with(("frost_tree_chev_anim", id_salt)), *exp);
         paint_chevron(ui, cr, how_open, glyph_col);
-        if let Some(ref cresp) = chevron {
-            if cresp.clicked() {
-                let shift_held = ui.ctx().input(|i| i.modifiers.shift);
-                if shift_held {
-                    chevron_shift_clicked = true;
-                } else {
-                    *exp = !*exp;
-                }
+        if let Some(ref cresp) = chevron
+            && cresp.clicked()
+        {
+            let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+            if shift_held {
+                chevron_shift_clicked = true;
+            } else {
+                *exp = !*exp;
             }
         }
     }
@@ -236,7 +237,7 @@ pub fn tree_row(
     if let (Some(name), Some(ir)) = (icon, icon_rect_opt) {
         if crate::icons::icon(name).is_some() {
             crate::icons::paint_icon(
-                &ui.painter(),
+                ui.painter(),
                 ir.center(),
                 egui::Align2::CENTER_CENTER,
                 name,

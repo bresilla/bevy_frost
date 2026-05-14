@@ -326,6 +326,7 @@ pub fn is_graph_fullscreen(ctx: &egui::Context) -> bool {
 
 /// picks where the fullscreen / minimize chip lands on the overlay
 /// (which edge + which cluster along that edge).
+#[allow(clippy::too_many_arguments)]
 pub fn frost_node_graph_with_opts<T, V: NodeViewer<T>>(
     ui: &mut egui::Ui,
     state: &mut NodeViewState,
@@ -497,6 +498,7 @@ impl<'ui, 'spec> crate::pane::PaneBody<'ui, 'spec> {
     /// `add_normal`/`add_tabbed` containers, but not against the
     /// graph. This is the only way to support the non-`'static`
     /// borrows the graph needs.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_node_graph<T, V>(
         &mut self,
         id: impl Into<egui::Id>,

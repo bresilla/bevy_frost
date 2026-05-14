@@ -56,7 +56,13 @@ pub(crate) fn paint_pane_title(
     } else {
         style::section_title_color(accent)
     };
-    let font = egui::FontId::new(title_size, style::title_font_family());
+    let title_family = style::title_font_family();
+    let title_family = if ui.fonts(|fonts| fonts.families().contains(&title_family)) {
+        title_family
+    } else {
+        egui::FontFamily::Proportional
+    };
+    let font = egui::FontId::new(title_size, title_family);
     let title_uc = if theme.pane.title_brackets {
         format!("[ {} ]", title.to_uppercase())
     } else {

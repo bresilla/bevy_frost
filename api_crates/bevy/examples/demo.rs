@@ -13,6 +13,14 @@
 //!
 //! Run: `cargo run -p bevy_frost --example demo`.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::doc_lazy_continuation,
+    clippy::explicit_auto_deref,
+    clippy::too_many_arguments,
+    clippy::upper_case_acronyms
+)]
+
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 use bevy::math::CompassOctant;
 use bevy::pbr::{DistanceFog, FogFalloff};

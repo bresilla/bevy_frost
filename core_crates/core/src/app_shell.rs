@@ -6,6 +6,8 @@
 //! contents and dispatches actions, while host crates decide how to
 //! paint the resolved items.
 
+use std::collections::HashSet;
+
 use egui::{Color32, Id};
 
 use crate::{
@@ -14,6 +16,7 @@ use crate::{
         ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult,
         RibbonOverrideLayer, RibbonScope, RibbonSlotDef, RibbonSlotItem, dispatch_ribbon_action,
         draw_slot_ribbons, resolve_slot_items, restore_workspace_slot_override,
+        slot::validate_ribbon_slot_def,
     },
     view::{ViewCtx, ViewRouter, ViewRouterError},
 };
@@ -41,16 +44,11 @@ pub struct AppShellResolution {
 ///
 /// Enabled is the default for windowed app UIs. Fullscreen/game-style
 /// shells can opt out explicitly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WindowControlsPolicy {
+    #[default]
     Enabled,
     Hidden,
-}
-
-impl Default for WindowControlsPolicy {
-    fn default() -> Self {
-        Self::Enabled
-    }
 }
 
 /// API-level app chrome contract.
@@ -66,8 +64,15 @@ pub struct AppShellChrome {
 
 impl AppShellChrome {
     #[must_use]
-    pub fn new(mut main_bar: RibbonSlotDef) -> Self {
-        main_bar.scope = RibbonScope::Permanent;
+    pub fn new(main_bar: RibbonSlotDef) -> Self {
+        assert!(
+            matches!(main_bar.scope, RibbonScope::Permanent),
+            "AppShellChrome::new requires a permanent main bar"
+        );
+        assert!(
+            !matches!(main_bar.edge, crate::ribbon::RibbonEdge::Bottom),
+            "the persistent main bar cannot be on the bottom edge"
+        );
         Self {
             main_bar,
             window_controls: WindowControlsPolicy::Enabled,
@@ -87,9 +92,22 @@ impl AppShellChrome {
     /// "view switcher" and "system controls" separately. It does NOT
     /// create a second permanent ribbon.
     pub fn push_permanent_ribbon(&mut self, ribbon: RibbonSlotDef) {
-        debug_assert!(
+        assert!(
             matches!(ribbon.scope, RibbonScope::Permanent),
             "only permanent declarations can be merged into AppShellChrome"
+        );
+        assert!(
+            !matches!(ribbon.edge, crate::ribbon::RibbonEdge::Bottom),
+            "permanent declarations cannot be on the bottom edge"
+        );
+        let mut seen = HashSet::with_capacity(self.main_bar.slots.len() + ribbon.slots.len());
+        assert!(
+            self.main_bar
+                .slots
+                .iter()
+                .chain(ribbon.slots.iter())
+                .all(|slot| seen.insert(slot.id)),
+            "app shell chrome requires unique permanent slot ids"
         );
         self.main_bar.slots.extend(ribbon.slots);
     }
@@ -142,6 +160,8 @@ pub enum AppShellError {
     Action(RibbonActionError),
     MultiplePermanentRibbons { count: usize },
     PermanentRibbonOnBottom { id: Id },
+    ViewRibbonWrongScope { id: Id },
+    WorkspaceRibbonWrongScope { id: Id },
 }
 
 impl From<ViewRouterError> for AppShellError {
@@ -268,6 +288,12 @@ pub fn resolve_app_shell_ribbons_with_workspace_chrome(
         let entry = router.active_entry_mut()?;
         (entry.view.ribbons(), entry.view.ribbon_overrides())
     };
+    permanent_ribbons.iter().for_each(validate_ribbon_slot_def);
+    view_ribbons.iter().for_each(validate_ribbon_slot_def);
+    workspace_ribbons.iter().for_each(validate_ribbon_slot_def);
+    validate_view_ribbons(active_view_id, &view_ribbons)?;
+    let active_workspace_id = router.active_workspace()?.current().id;
+    validate_workspace_ribbons(active_workspace_id, workspace_ribbons)?;
 
     let mut layers = Vec::new();
     layers.push(view_overrides);
@@ -327,6 +353,31 @@ fn validate_single_permanent_ribbon(ribbons: &[RibbonSlotDef]) -> Result<(), App
             && matches!(ribbon.edge, crate::ribbon::RibbonEdge::Bottom)
     }) {
         return Err(AppShellError::PermanentRibbonOnBottom { id: ribbon.id });
+    }
+    Ok(())
+}
+
+fn validate_view_ribbons(
+    active_view: crate::ViewId,
+    ribbons: &[RibbonSlotDef],
+) -> Result<(), AppShellError> {
+    if let Some(ribbon) = ribbons
+        .iter()
+        .find(|ribbon| !matches!(ribbon.scope, RibbonScope::View(id) if id == active_view))
+    {
+        return Err(AppShellError::ViewRibbonWrongScope { id: ribbon.id });
+    }
+    Ok(())
+}
+
+fn validate_workspace_ribbons(
+    active_workspace: Id,
+    ribbons: &[RibbonSlotDef],
+) -> Result<(), AppShellError> {
+    if let Some(ribbon) = ribbons.iter().find(
+        |ribbon| !matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == active_workspace),
+    ) {
+        return Err(AppShellError::WorkspaceRibbonWrongScope { id: ribbon.id });
     }
     Ok(())
 }

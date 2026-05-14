@@ -262,9 +262,13 @@ impl Normal {
     /// through them.
     ///
     /// 0 tabs: no-op (returns empty `Vec`).
-    /// 1 tab : delegates to [`Normal::show`] with that tab's pods, no
-    ///         strip is drawn (single tab → no choice to present).
-    /// ≥2    : strip rendered, active tab's pods drive the body.
+    /// ≥1    : strip rendered, active tab's pods drive the body.
+    ///
+    /// Even a single-tab container paints its tab affordance. Shelves
+    /// and panes rely on tab buttons as structural chrome, so hiding
+    /// the strip for the one-tab case makes a tabbed container look
+    /// like a different container kind and breaks drag/drop affordance
+    /// consistency.
     ///
     /// The active index persists per-container (keyed on `pane_id`)
     /// across frames.
@@ -275,16 +279,6 @@ impl Normal {
     pub fn show_tabs(self, ui: &mut Ui, tabs: Vec<super::Tab>) -> Vec<crate::pod::PodResponse> {
         if tabs.is_empty() {
             return Vec::new();
-        }
-        if tabs.len() == 1 {
-            let mut tabs = tabs;
-            let only = tabs.pop().unwrap();
-            let me = Self {
-                title: only.title,
-                icon: Some(only.icon),
-                ..self
-            };
-            return me.show(ui, only.pods);
         }
         let pane_id = self.pane_id;
         ui.push_id(pane_id, |ui| self.show_inner_tabbed(ui, tabs))
@@ -317,19 +311,11 @@ impl Normal {
             TitleSide::Left | TitleSide::Right => TitleSide::Top,
         };
 
-        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
-        let active_idx: usize = ui.ctx().data_mut(|d| {
-            let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
-            let clamped = stored.min(tabs.len() - 1);
-            if clamped != stored {
-                d.insert_persisted(active_idx_key, clamped);
-            }
-            clamped
-        });
-
         let tab_meta: Vec<(String, Icon<'static>)> =
             tabs.iter().map(|t| (t.title.clone(), t.icon)).collect();
         let tab_ids: Vec<Id> = tabs.iter().map(|t| t.id).collect();
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx = resolve_active_tab_idx(ui.ctx(), active_idx_key, &tab_ids);
         let active_pods = std::mem::take(&mut tabs[active_idx].pods);
         let active_title = tab_meta[active_idx].0.clone();
         let active_icon = tab_meta[active_idx].1;
@@ -534,18 +520,11 @@ impl Normal {
         // doesn't resize the container — see `show_inner_tabbed` for
         // the same logic.
         let max_tab_body_h = max_tab_natural_body_h(&tabs);
-        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
-        let active_idx: usize = ui.ctx().data_mut(|d| {
-            let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
-            let clamped = stored.min(tabs.len() - 1);
-            if clamped != stored {
-                d.insert_persisted(active_idx_key, clamped);
-            }
-            clamped
-        });
         let tab_meta: Vec<(String, Icon<'static>)> =
             tabs.iter().map(|t| (t.title.clone(), t.icon)).collect();
         let tab_ids: Vec<Id> = tabs.iter().map(|t| t.id).collect();
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx = resolve_active_tab_idx(ui.ctx(), active_idx_key, &tab_ids);
         let active_pods = std::mem::take(&mut tabs[active_idx].pods);
 
         // Render the container with NO title text and NO floating
@@ -1069,19 +1048,19 @@ impl Normal {
         // allocate + paint a ghost rect of the dragged size
         // BEFORE rendering. Pushes this container (and the rest)
         // along the stack axis so the drop slot is visible.
-        if let Some((parent_pane_id, drag_state)) = active {
-            if let (Some(dragged_id), Some(cursor)) = (drag_state.item, drag_state.cursor) {
-                let snap = pane::snapshot(ui.ctx(), parent_pane_id);
-                let horizontal_stack = !title_side.is_horizontal_strip();
-                let cursor_axis = if horizontal_stack { cursor.x } else { cursor.y };
-                let target_idx =
-                    pane::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
-                let cur_idx = pane::current_cache(ui.ctx(), parent_pane_id).len();
-                if cur_idx == target_idx {
-                    if let Some(entry) = pane::dragged_entry(&snap, dragged_id) {
-                        pane::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
-                    }
-                }
+        if let Some((parent_pane_id, drag_state)) = active
+            && let (Some(dragged_id), Some(cursor)) = (drag_state.item, drag_state.cursor)
+            && !pane::ghost_gap_suppressed(ui.ctx(), parent_pane_id)
+        {
+            let snap = pane::snapshot(ui.ctx(), parent_pane_id);
+            let horizontal_stack = !title_side.is_horizontal_strip();
+            let cursor_axis = if horizontal_stack { cursor.x } else { cursor.y };
+            let target_idx = pane::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
+            let cur_idx = pane::current_cache(ui.ctx(), parent_pane_id).len();
+            if cur_idx == target_idx
+                && let Some(entry) = pane::dragged_entry(&snap, dragged_id)
+            {
+                pane::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
             }
         }
 
@@ -1141,19 +1120,18 @@ impl Normal {
                 if resp.clicked() {
                     pane::toggle_body(ui.ctx(), pane_id);
                 }
-                if resp.drag_started() {
-                    if let Some(active_pane_id) =
+                if resp.drag_started()
+                    && let Some(active_pane_id) =
                         ui.ctx().data(|d| d.get_temp::<Id>(pane::active_pane_key()))
-                    {
-                        pane::set_drag(
-                            ui.ctx(),
-                            active_pane_id,
-                            pane::DragState {
-                                item: Some(pane_id),
-                                cursor: ui.ctx().pointer_interact_pos(),
-                            },
-                        );
-                    }
+                {
+                    pane::set_drag(
+                        ui.ctx(),
+                        active_pane_id,
+                        pane::DragState {
+                            item: Some(pane_id),
+                            cursor: ui.ctx().pointer_interact_pos(),
+                        },
+                    );
                 }
                 paint_title(
                     ui,
@@ -1480,6 +1458,30 @@ impl Normal {
     }
 }
 
+fn active_tab_id_key(active_idx_key: Id) -> Id {
+    active_idx_key.with("tab_id")
+}
+
+fn resolve_active_tab_idx(ctx: &egui::Context, active_idx_key: Id, tab_ids: &[Id]) -> usize {
+    debug_assert!(!tab_ids.is_empty());
+    ctx.data_mut(|d| {
+        if let Some(active_id) = d.get_persisted::<Id>(active_tab_id_key(active_idx_key))
+            && let Some(idx) = tab_ids.iter().position(|id| *id == active_id)
+        {
+            d.insert_persisted(active_idx_key, idx);
+            return idx;
+        }
+
+        let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
+        let clamped = stored.min(tab_ids.len() - 1);
+        if clamped != stored {
+            d.insert_persisted(active_idx_key, clamped);
+        }
+        d.insert_persisted(active_tab_id_key(active_idx_key), tab_ids[clamped]);
+        clamped
+    })
+}
+
 /// Paint folder-style tabs into `strip_rect`, projecting from
 /// `strip_side` of the container.
 ///
@@ -1495,6 +1497,7 @@ impl Normal {
 ///   visible seam between tab and body — they read as one shape.
 /// * **Inactive tab**: 1 px stroke around all four sides, no fill.
 ///   Pane bg shows through. Hover adds a faint accent overlay.
+#[allow(clippy::too_many_arguments)]
 fn paint_folder_tabs(
     ui: &mut Ui,
     strip_rect: egui::Rect,
@@ -1551,7 +1554,9 @@ fn paint_folder_tabs(
     let drag = pane::tab_drag::drag_state(ui.ctx(), parent_pane_id);
     let cursor_pos = ui.ctx().pointer_latest_pos();
     let drop_target = match (drag, cursor_pos) {
-        (Some(_), Some(p)) => pane::tab_drag::find_drop_target(ui.ctx(), parent_pane_id, p),
+        (Some(drag), Some(p)) => {
+            pane::tab_drag::find_drop_target_for_drag(ui.ctx(), parent_pane_id, p, drag)
+        }
         _ => None,
     };
     pane::tab_drag::reset_container_buttons(ui.ctx(), parent_pane_id, pane_id);
@@ -1702,7 +1707,10 @@ fn paint_folder_tabs(
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if resp.clicked() && drag.is_none() {
-            ui.ctx().data_mut(|d| d.insert_persisted(active_idx_key, i));
+            ui.ctx().data_mut(|d| {
+                d.insert_persisted(active_idx_key, i);
+                d.insert_persisted(active_tab_id_key(active_idx_key), tab_id);
+            });
         }
         if resp.drag_started() {
             pane::tab_drag::set_drag(
@@ -1712,6 +1720,7 @@ fn paint_folder_tabs(
                     tab_id,
                     source_container: pane_id,
                     cursor: ui.ctx().pointer_latest_pos(),
+                    icon: Some(*icn),
                 },
             );
         }
@@ -1767,6 +1776,7 @@ fn paint_folder_tabs(
 /// out of the surrounding accent banner; inactive slots stay
 /// transparent and let the banner show through. Click on any slot
 /// persists the new active idx for next frame.
+#[allow(clippy::too_many_arguments)]
 fn paint_top_tabs(
     ui: &mut Ui,
     title_rect: egui::Rect,
@@ -1788,7 +1798,9 @@ fn paint_top_tabs(
     let drag = pane::tab_drag::drag_state(ui.ctx(), parent_pane_id);
     let cursor_pos = ui.ctx().pointer_latest_pos();
     let drop_target = match (drag, cursor_pos) {
-        (Some(_), Some(p)) => pane::tab_drag::find_drop_target(ui.ctx(), parent_pane_id, p),
+        (Some(drag), Some(p)) => {
+            pane::tab_drag::find_drop_target_for_drag(ui.ctx(), parent_pane_id, p, drag)
+        }
         _ => None,
     };
     pane::tab_drag::reset_container_buttons(ui.ctx(), parent_pane_id, pane_id);
@@ -1885,7 +1897,10 @@ fn paint_top_tabs(
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if resp.clicked() && drag.is_none() {
-            ui.ctx().data_mut(|d| d.insert_persisted(active_idx_key, i));
+            ui.ctx().data_mut(|d| {
+                d.insert_persisted(active_idx_key, i);
+                d.insert_persisted(active_tab_id_key(active_idx_key), tab_id);
+            });
         }
         if resp.drag_started() {
             pane::tab_drag::set_drag(
@@ -1895,6 +1910,7 @@ fn paint_top_tabs(
                     tab_id,
                     source_container: pane_id,
                     cursor: ui.ctx().pointer_latest_pos(),
+                    icon: Some(*icn),
                 },
             );
         }
@@ -1978,6 +1994,7 @@ fn paint_top_tabs(
 /// * Chevron prefix when `theme.show_section_chevron` (PRO).
 /// * Hairline divider on the body-facing edge in PRO; banner cover
 ///   in GAME (painted by caller).
+#[allow(clippy::too_many_arguments)]
 fn paint_title(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -2010,7 +2027,13 @@ fn paint_title(
     let title_painter = ui.painter_at(rect);
     let painter = ui.painter();
 
-    let title_font = FontId::new(theme.section_title_size, style::title_font_family());
+    let title_family = style::title_font_family();
+    let title_family = if ui.fonts(|fonts| fonts.families().contains(&title_family)) {
+        title_family
+    } else {
+        egui::FontFamily::Proportional
+    };
+    let title_font = FontId::new(theme.section_title_size, title_family);
     let bracket_visible = theme.section_title_brackets && !open;
     let any_brackets = theme.section_title_brackets;
     let title_uc = title.to_uppercase();
@@ -2096,9 +2119,10 @@ fn paint_title(
     let icon_after_title = title_side.is_horizontal_strip() && anchor.title_reversed();
     let inline_glyph: Option<(String, egui::FontFamily)> = if inline_icon {
         match icon {
-            Some(Icon::Name(name)) => {
-                crate::icons::icon(name).map(|(g, family)| (g.to_string(), family))
-            }
+            Some(Icon::Name(name)) => crate::icons::icon(name).and_then(|(g, family)| {
+                ui.fonts(|fonts| fonts.families().contains(&family))
+                    .then(|| (g.to_string(), family))
+            }),
             _ => None,
         }
     } else {
@@ -2118,10 +2142,8 @@ fn paint_title(
         color: title_col,
         ..Default::default()
     };
-    if !icon_after_title {
-        if let Some((glyph, family)) = &inline_glyph {
-            job.append(glyph, 0.0, icon_format_for(family.clone()));
-        }
+    if !icon_after_title && let Some((glyph, family)) = &inline_glyph {
+        job.append(glyph, 0.0, icon_format_for(family.clone()));
     }
     let title_lead = if !icon_after_title && inline_glyph.is_some() {
         icon_theme.section_icon_title_gap
@@ -2129,14 +2151,12 @@ fn paint_title(
         0.0
     };
     job.append(&displayed, title_lead, default_format.clone());
-    if icon_after_title {
-        if let Some((glyph, family)) = &inline_glyph {
-            job.append(
-                glyph,
-                icon_theme.section_icon_title_gap,
-                icon_format_for(family.clone()),
-            );
-        }
+    if icon_after_title && let Some((glyph, family)) = &inline_glyph {
+        job.append(
+            glyph,
+            icon_theme.section_icon_title_gap,
+            icon_format_for(family.clone()),
+        );
     }
     if any_brackets {
         job.append(" ]", 0.0, bracket_format);
@@ -2256,10 +2276,8 @@ fn paint_title(
     // banner, big when open so it overflows the strip and reads as a
     // floating ornament. The growth is `smoothstep`-eased so it pops
     // through `cubic-bezier(0.42, 0, 0.58, 1)` rather than linear.
-    if !inline_icon {
-        if let Some(icon_src) = icon {
-            paint_floating_icon(ui, rect, anchor, title_col, openness, icon_src);
-        }
+    if !inline_icon && let Some(icon_src) = icon {
+        paint_floating_icon(ui, rect, anchor, title_col, openness, icon_src);
     }
 }
 
@@ -2762,4 +2780,44 @@ fn max_tab_natural_body_h(tabs: &[super::Tab]) -> f32 {
             pods_h + sep_total
         })
         .fold(0.0_f32, f32::max)
+}
+
+#[cfg(test)]
+mod active_tab_tests {
+    use super::*;
+
+    #[test]
+    fn active_tab_resolution_prefers_stable_tab_id_over_stale_index() {
+        let ctx = egui::Context::default();
+        let key = Id::new("active-tabs");
+        let first = Id::new("first");
+        let moved = Id::new("moved");
+        let last = Id::new("last");
+        ctx.data_mut(|d| {
+            d.insert_persisted(key, 0usize);
+            d.insert_persisted(active_tab_id_key(key), moved);
+        });
+
+        let idx = resolve_active_tab_idx(&ctx, key, &[first, moved, last]);
+
+        assert_eq!(idx, 1);
+        assert_eq!(ctx.data_mut(|d| d.get_persisted::<usize>(key)), Some(1));
+    }
+
+    #[test]
+    fn active_tab_resolution_clamps_index_and_repairs_active_id() {
+        let ctx = egui::Context::default();
+        let key = Id::new("active-tabs");
+        let only = Id::new("only");
+        ctx.data_mut(|d| d.insert_persisted(key, 99usize));
+
+        let idx = resolve_active_tab_idx(&ctx, key, &[only]);
+
+        assert_eq!(idx, 0);
+        assert_eq!(ctx.data_mut(|d| d.get_persisted::<usize>(key)), Some(0));
+        assert_eq!(
+            ctx.data_mut(|d| d.get_persisted::<Id>(active_tab_id_key(key))),
+            Some(only)
+        );
+    }
 }

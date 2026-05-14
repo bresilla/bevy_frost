@@ -873,7 +873,7 @@ pub fn srgb_to_egui(rgb: [f32; 3]) -> egui::Color32 {
 ///
 /// Pops against the Light body font via `.strong()` (darker render)
 /// + caps + accent colour. Per-weight font selection isn't available:
-/// see the comment on the embedded-font block above for why.
+///   see the comment on the embedded-font block above for why.
 ///
 /// Size: 12 pt body baseline + 15 % bump so section titles read
 /// clearly larger than body copy inside the same card.
@@ -917,13 +917,15 @@ pub fn body_accent(accent: egui::Color32) -> egui::Color32 {
 /// saturation are touched, so the user's hue is preserved exactly
 /// (yellow stays yellow, red stays red, etc.).
 pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
+    type HighContrastAccentCache =
+        std::sync::OnceLock<std::sync::RwLock<Option<((u32, bool), u32)>>>;
+
     // Single-slot memo: if the (accent, is_light) input matches the
     // last call, skip the HSL roundtrip and return the cached
     // output. Frostcore's section bracket paint calls this on
     // every section every frame; with N sections at 60 fps that's
     // N × 60 pastel conversions / second otherwise.
-    static CACHE: std::sync::OnceLock<std::sync::RwLock<Option<((u32, bool), u32)>>> =
-        std::sync::OnceLock::new();
+    static CACHE: HighContrastAccentCache = std::sync::OnceLock::new();
     fn pack(c: egui::Color32) -> u32 {
         ((c.r() as u32) << 24) | ((c.g() as u32) << 16) | ((c.b() as u32) << 8) | (c.a() as u32)
     }
@@ -938,10 +940,10 @@ pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
     let is_light = theme().is_light;
     let key = (pack(accent), is_light);
     let lock = CACHE.get_or_init(|| std::sync::RwLock::new(None));
-    if let Some((k, v)) = *lock.read().unwrap() {
-        if k == key {
-            return unpack(v);
-        }
+    if let Some((k, v)) = *read_unpoisoned(lock)
+        && k == key
+    {
+        return unpack(v);
     }
 
     use pastel::Color as PastelColor;
@@ -953,7 +955,7 @@ pub fn high_contrast_accent(accent: egui::Color32) -> egui::Color32 {
     let adjusted = PastelColor::from_hsla(hsl.h, new_s, new_l, 1.0);
     let rgba = adjusted.to_rgba();
     let out = egui::Color32::from_rgb(rgba.r, rgba.g, rgba.b);
-    *lock.write().unwrap() = Some((key, pack(out)));
+    *write_unpoisoned(lock) = Some((key, pack(out)));
     out
 }
 
@@ -973,10 +975,7 @@ pub fn appearance_session(ctx: &egui::Context, id: egui::Id) -> u64 {
     let now = ctx.cumulative_pass_nr();
     let last: Option<u64> = ctx.data(|d| d.get_temp(key_seen));
     let mut sess: u64 = ctx.data(|d| d.get_temp(key_sess)).unwrap_or(0);
-    let bumped = match last {
-        Some(p) if p + 1 == now => false,
-        _ => true,
-    };
+    let bumped = !matches!(last, Some(p) if p + 1 == now);
     if bumped {
         sess = sess.wrapping_add(1);
     }
@@ -1025,7 +1024,7 @@ pub fn scramble_text(ctx: &egui::Context, id: egui::Id, current: &str, active: b
     const MIN_DUR: f64 = 0.65;
 
     let now = ctx.input(|i| i.time);
-    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9);
+    let id_seed = id.value().wrapping_mul(0x9E37_79B9);
     let frame_phase = (now * 70.0) as u64;
 
     // Gated path — paint random glyphs continuously, never touch
@@ -1145,7 +1144,7 @@ pub fn glitch_text(ctx: &egui::Context, id: egui::Id, base: &str) -> String {
 
     // Per-id random bucket period in [3.0, 9.0] s — so multiple
     // titles glitch on independent cadences and never sync up.
-    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let id_seed = id.value().wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let period_h = id_seed.wrapping_mul(0xC229_6164_8C84_38AB);
     let bucket_period = 3.0 + ((period_h as f64) / (u64::MAX as f64)) * 6.0;
 
@@ -1210,7 +1209,7 @@ pub fn chromatic_aberration_offset(ctx: &egui::Context, id: egui::Id) -> f32 {
     /// screen-Y for vertical / rotated text).
     const PEAK: f32 = 8.0;
 
-    let id_seed = (id.value() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let id_seed = id.value().wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let period_h = id_seed.wrapping_mul(0xC229_6164_8C84_38AB);
     // 5 + [0, 8) seconds → 5–13 s between firings, deterministic per id.
     let bucket_period = 5.0 + ((period_h as f64) / (u64::MAX as f64)) * 8.0;
@@ -2451,12 +2450,21 @@ fn theme_lock() -> &'static std::sync::RwLock<Theme> {
     ACTIVE_THEME.get_or_init(|| std::sync::RwLock::new(theme_pro(Mode::Dark)))
 }
 
+fn read_unpoisoned<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_unpoisoned<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Replace the active theme. Takes effect on the next paint —
 /// frostcore's de-dup cache in [`apply_theme`] uses `theme.name` to
 /// detect the switch and re-push the egui style. Call this when the
 /// user picks a profile from a settings UI.
 pub fn set_theme(t: Theme) {
-    *theme_lock().write().unwrap() = t;
+    *write_unpoisoned(theme_lock()) = t;
 }
 
 /// Return a copy of the active theme. `Theme` is `Copy`, so widgets
@@ -2464,7 +2472,7 @@ pub fn set_theme(t: Theme) {
 /// `RwLock::read`; under typical UI contention (none) the cost is a
 /// single relaxed atomic.
 pub fn theme() -> Theme {
-    *theme_lock().read().unwrap()
+    *read_unpoisoned(theme_lock())
 }
 
 /// Paint a "do-not-cross" diagonal stripe pattern over `rect` —
@@ -2931,7 +2939,7 @@ pub fn surface_lift_target(accent: egui::Color32) -> egui::Color32 {
 /// accent-tinted GAME panels reading as a single colour family.
 pub fn row_alt_fill(accent: egui::Color32, row_index: u32) -> Option<egui::Color32> {
     let th = theme();
-    if !th.row_alternation || row_index % 2 == 0 {
+    if !th.row_alternation || row_index.is_multiple_of(2) {
         return None;
     }
     let base = pane_fill(accent);
@@ -3183,4 +3191,27 @@ pub fn caption(label: &str) -> egui::RichText {
 /// real contrast.
 pub fn contrast_text_for(_fill: egui::Color32) -> egui::Color32 {
     theme().palette.text_primary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_access_recovers_from_poisoned_lock() {
+        let poisoned = std::thread::spawn(|| {
+            let _guard = theme_lock().write().expect("theme lock should be writable");
+            panic!("intentionally poison the theme lock");
+        })
+        .join()
+        .is_err();
+        assert!(poisoned);
+
+        let recovered = theme();
+        assert_eq!(recovered.name, "PRO_DARK");
+
+        set_theme(theme_flat(Mode::Light));
+        assert_eq!(theme().name, "FLAT_LIGHT");
+        set_theme(theme_pro(Mode::Dark));
+    }
 }

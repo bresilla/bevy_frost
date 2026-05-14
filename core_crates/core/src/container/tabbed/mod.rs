@@ -34,6 +34,11 @@ impl Tab {
         title: impl Into<String>,
         icon: impl Into<Icon<'static>>,
     ) -> Self {
+        let title = title.into();
+        assert!(
+            !title.trim().is_empty(),
+            "tab containers require every tab to have a non-empty title"
+        );
         let icon = icon.into();
         assert!(
             tab_icon_is_present(icon),
@@ -41,7 +46,7 @@ impl Tab {
         );
         Self {
             id: id.into(),
-            title: title.into(),
+            title,
             icon,
             pods: Vec::new(),
         }
@@ -62,5 +67,35 @@ impl Tab {
 fn tab_icon_is_present(icon: Icon<'_>) -> bool {
     match icon {
         Icon::Name(name) | Icon::Svg(name) => !name.trim().is_empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_new_requires_non_empty_icon() {
+        let result = std::panic::catch_unwind(|| {
+            let _ = Tab::new("tab-without-icon", "Broken", "");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tab_new_requires_non_empty_title() {
+        let result = std::panic::catch_unwind(|| {
+            let _ = Tab::new("tab-without-title", " ", "settings");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tab_new_accepts_named_icon() {
+        let tab = Tab::new("tab-with-icon", "Valid", "settings");
+
+        assert_eq!(tab.title, "Valid");
     }
 }

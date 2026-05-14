@@ -104,25 +104,23 @@ impl CanvasSurface {
 
         if response.drag_started() {
             let mut stroke = CanvasStroke::new(accent, self.pen_width);
-            if let Some(pos) = response.interact_pointer_pos() {
-                if rect.contains(pos) {
-                    stroke.points.push(pos);
-                }
+            if let Some(pos) = response.interact_pointer_pos()
+                && rect.contains(pos)
+            {
+                stroke.points.push(pos);
             }
             self.doc.strokes.push(stroke);
-        } else if response.dragged() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                if rect.contains(pos) {
-                    if let Some(stroke) = self.doc.strokes.last_mut() {
-                        let should_push = stroke
-                            .points
-                            .last()
-                            .is_none_or(|last| last.distance(pos) >= 1.5);
-                        if should_push {
-                            stroke.points.push(pos);
-                        }
-                    }
-                }
+        } else if response.dragged()
+            && let Some(pos) = response.interact_pointer_pos()
+            && rect.contains(pos)
+            && let Some(stroke) = self.doc.strokes.last_mut()
+        {
+            let should_push = stroke
+                .points
+                .last()
+                .is_none_or(|last| last.distance(pos) >= 1.5);
+            if should_push {
+                stroke.points.push(pos);
             }
         }
 

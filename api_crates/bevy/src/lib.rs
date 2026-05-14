@@ -177,6 +177,7 @@ fn debug_toggle_system(mut contexts: EguiContexts) {
 /// forwarder has already copied events into egui's own
 /// `EguiInput`. The UI keeps responding to clicks / scrolls
 /// normally; only the Bevy-side polled state is masked.
+#[allow(clippy::too_many_arguments)]
 fn consume_egui_input_system(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut contexts: EguiContexts,

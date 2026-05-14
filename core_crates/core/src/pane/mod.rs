@@ -23,17 +23,21 @@ mod layout;
 pub(crate) mod tab_drag;
 mod title;
 
-pub(crate) use body::render_containers;
 pub use body::{ContainerSpec, PaneBody};
+pub(crate) use body::{TabRoutingScope, render_containers_with_tab_scope};
 pub use dots::paint_container_dots;
 
 pub use anchor::{PaneAnchor, RailZone, TitleSide};
+#[cfg(test)]
+pub(crate) use dots::record_container_dot_rect;
+pub(crate) use dots::{clear_container_dot_rects, pointer_over_container_dots};
 pub use drag::{
     DragState, RectEntry, active_drag, begin_frame as begin_drag_frame, clear_drag, compute_target,
     current_cache, dragged_entry, dragged_size, finalize_snapshot, paint_drag_preview,
     paint_ghost_gap_entry_inline, paint_ghost_gap_inline, push_rect, push_rect_with_frame,
-    section_order_for, set_drag, set_section_order, snapshot, state as drag_state,
+    section_order_for, set_drag, set_section_order, snapshot, state as drag_state, target_cache,
 };
+pub(crate) use drag::{ghost_gap_suppressed, set_ghost_gap_suppressed, set_snapshot};
 
 use egui::{Color32, Id, Sense, vec2};
 
@@ -113,17 +117,21 @@ pub fn body_openness(ctx: &egui::Context, pane_id: Id) -> f32 {
 /// -strip panes (TOP/BOTTOM rails) as the pane HEIGHT — the handle
 /// always grows the pane along its flow axis.
 pub fn user_flow(ctx: &egui::Context, pane_id: Id) -> f32 {
-    ctx.data_mut(|d| {
-        d.get_persisted::<f32>(pane_id.with("frost_pane_user_body_main"))
-            .unwrap_or(DEFAULT_FLOW_OPEN)
-    })
-    .clamp(MIN_USER_FLOW, MAX_USER_FLOW)
+    sanitize_user_extent(
+        ctx.data_mut(|d| {
+            d.get_persisted::<f32>(pane_id.with("frost_pane_user_body_main"))
+                .unwrap_or(DEFAULT_FLOW_OPEN)
+        }),
+        DEFAULT_FLOW_OPEN,
+        MIN_USER_FLOW,
+        MAX_USER_FLOW,
+    )
 }
 
 /// Persist the user-set body main extent for `pane_id`. Clamped to
 /// [`MIN_USER_FLOW`] .. [`MAX_USER_FLOW`].
 pub fn set_user_flow(ctx: &egui::Context, pane_id: Id, value: f32) {
-    let clamped = value.clamp(MIN_USER_FLOW, MAX_USER_FLOW);
+    let clamped = sanitize_user_extent(value, DEFAULT_FLOW_OPEN, MIN_USER_FLOW, MAX_USER_FLOW);
     ctx.data_mut(|d| {
         d.insert_persisted(pane_id.with("frost_pane_user_body_main"), clamped);
     });
@@ -134,20 +142,32 @@ pub fn set_user_flow(ctx: &egui::Context, pane_id: Id, value: f32) {
 /// enables `PaneResize::cross` on the builder; otherwise the pane
 /// keeps its baseline cross size.
 pub fn user_span(ctx: &egui::Context, pane_id: Id) -> f32 {
-    ctx.data_mut(|d| {
-        d.get_persisted::<f32>(pane_id.with("frost_pane_user_cross_main"))
-            .unwrap_or(PANE_OUTER_SPAN)
-    })
-    .clamp(MIN_USER_SPAN, MAX_USER_SPAN)
+    sanitize_user_extent(
+        ctx.data_mut(|d| {
+            d.get_persisted::<f32>(pane_id.with("frost_pane_user_cross_main"))
+                .unwrap_or(PANE_OUTER_SPAN)
+        }),
+        PANE_OUTER_SPAN,
+        MIN_USER_SPAN,
+        MAX_USER_SPAN,
+    )
 }
 
 /// Persist the user-set CROSS extent for `pane_id`. Clamped to
 /// [`MIN_USER_SPAN`] .. [`MAX_USER_SPAN`].
 pub fn set_user_span(ctx: &egui::Context, pane_id: Id, value: f32) {
-    let clamped = value.clamp(MIN_USER_SPAN, MAX_USER_SPAN);
+    let clamped = sanitize_user_extent(value, PANE_OUTER_SPAN, MIN_USER_SPAN, MAX_USER_SPAN);
     ctx.data_mut(|d| {
         d.insert_persisted(pane_id.with("frost_pane_user_cross_main"), clamped);
     });
+}
+
+fn sanitize_user_extent(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback.clamp(min, max)
+    }
 }
 
 /// Per-pane resize affordance — opt-in via [`Pane::resize`].
@@ -326,6 +346,10 @@ pub fn publish_container_cid(ctx: &egui::Context, pane_id: Id, cid: Id) {
     ctx.data_mut(|d| {
         let key = container_cids_key(pane_id);
         let mut acc: Vec<Id> = d.get_temp(key).unwrap_or_default();
+        assert!(
+            !acc.contains(&cid),
+            "pane containers require unique container ids per pane frame"
+        );
         acc.push(cid);
         d.insert_temp(key, acc);
     });
@@ -348,6 +372,7 @@ pub fn published_body_extra_flow(ctx: &egui::Context, pane_id: Id) -> f32 {
 /// [`paint_container_dots`] uses this to make sure the pane
 /// auto-grows to include each handle's strip height.
 pub fn publish_body_extra_flow(ctx: &egui::Context, pane_id: Id, flow: f32) {
+    let flow = if flow.is_finite() { flow.max(0.0) } else { 0.0 };
     ctx.data_mut(|d| {
         let key = body_extra_flow_key(pane_id);
         let cur: f32 = d.get_temp(key).unwrap_or(0.0);
@@ -478,9 +503,11 @@ impl Pane {
         anchor: PaneAnchor,
         accent: Color32,
     ) -> Self {
+        let title = title.into();
+        assert!(!title.trim().is_empty(), "panes require a non-empty title");
         Self {
             id: id.into(),
-            title: title.into(),
+            title,
             anchor,
             accent,
             resize: PaneResize::NONE,
@@ -1145,6 +1172,7 @@ impl Pane {
         // idx counter). Snapshot from prev frame stays available
         // for size lookups.
         drag::begin_frame(ui.ctx(), id);
+        dots::clear_container_dot_rects(ui.ctx(), id);
 
         // Update cursor BEFORE body runs so `Normal::show`'s
         // target_idx computation sees this frame's cursor.
@@ -1181,18 +1209,20 @@ impl Pane {
         // gap inline at the end of the body layout. The inline gaps
         // inside `Normal::show` handle every other position.
         let drag_state = drag::state(ui.ctx(), id);
-        if let Some(dragged_id) = drag_state.item {
-            let snap = drag::snapshot(ui.ctx(), id);
+        if let Some(dragged_id) = drag_state.item
+            && !drag::ghost_gap_suppressed(ui.ctx(), id)
+        {
+            let snap = drag::target_cache(ui.ctx(), id);
             let total = drag::current_cache(ui.ctx(), id).len();
             let cursor = ui.ctx().pointer_interact_pos().or(drag_state.cursor);
             if let Some(c) = cursor {
                 let cursor_axis = if horizontal_stack { c.x } else { c.y };
                 let target_idx =
                     drag::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
-                if target_idx >= total {
-                    if let Some(entry) = drag::dragged_entry(&snap, dragged_id) {
-                        drag::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
-                    }
+                if target_idx >= total
+                    && let Some(entry) = drag::dragged_entry(&snap, dragged_id)
+                {
+                    drag::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
                 }
             }
         }
@@ -1205,7 +1235,7 @@ impl Pane {
 
         // ── Floating preview + cursor + release commit ──
         if let Some(dragged_id) = drag_state.item {
-            let snap = drag::snapshot(ui.ctx(), id);
+            let snap = drag::target_cache(ui.ctx(), id);
             let cursor = ui.ctx().pointer_interact_pos().or(drag_state.cursor);
             if let Some(c) = cursor {
                 drag::paint_drag_preview(ui.ctx(), id, &snap, dragged_id, c, accent);
@@ -1242,26 +1272,34 @@ impl Pane {
                         ..tab_drag_state
                     },
                 );
-                // Floating preview at the cursor — best-effort sized
-                // button. The exact tab title/icon isn't threaded
-                // through here (would need a tab_pool), but a plain
-                // accent-tinted card is enough signal.
+                // Floating preview at the cursor, carrying the tab's
+                // own icon so the drag affordance doesn't turn into a
+                // blank accent card while crossing containers.
                 let preview_size = egui::vec2(28.0, 28.0);
-                tab_drag::paint_drag_preview(ui.ctx(), id, preview_size, c, accent, "", None);
+                tab_drag::paint_drag_preview(
+                    ui.ctx(),
+                    id,
+                    preview_size,
+                    c,
+                    accent,
+                    "",
+                    tab_drag_state.icon,
+                );
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
             if ui.ctx().input(|i| i.pointer.any_released()) {
-                if let Some(c) = cursor {
-                    if let Some((tgt_cid, slot)) = tab_drag::find_drop_target(ui.ctx(), id, c) {
-                        tab_drag::commit_drop(
-                            ui.ctx(),
-                            id,
-                            tab_drag_state.tab_id,
-                            tab_drag_state.source_container,
-                            tgt_cid,
-                            slot,
-                        );
-                    }
+                if let Some(c) = cursor
+                    && let Some((tgt_cid, slot)) =
+                        tab_drag::find_drop_target_for_drag(ui.ctx(), id, c, tab_drag_state)
+                {
+                    tab_drag::commit_drop(
+                        ui.ctx(),
+                        id,
+                        tab_drag_state.tab_id,
+                        tab_drag_state.source_container,
+                        tgt_cid,
+                        slot,
+                    );
                 }
                 tab_drag::clear_drag(ui.ctx(), id);
             }
@@ -1368,6 +1406,7 @@ fn paint_resize_handles_inline(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_resize_handles_inner(
     ui: &mut egui::Ui,
     pane_id: Id,
@@ -1584,5 +1623,110 @@ fn paint_resize_handles_inner(
                 handle_one(span_min_rect, "frost_pane_resize_cross_min", -1.0, 2.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_extents_sanitize_non_finite_values() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+
+        set_user_flow(&ctx, pane_id, f32::NAN);
+        assert_eq!(user_flow(&ctx, pane_id), DEFAULT_FLOW_OPEN);
+        set_user_flow(&ctx, pane_id, f32::INFINITY);
+        assert_eq!(user_flow(&ctx, pane_id), DEFAULT_FLOW_OPEN);
+
+        set_user_span(&ctx, pane_id, f32::NAN);
+        assert_eq!(user_span(&ctx, pane_id), PANE_OUTER_SPAN);
+        set_user_span(&ctx, pane_id, f32::NEG_INFINITY);
+        assert_eq!(user_span(&ctx, pane_id), PANE_OUTER_SPAN);
+    }
+
+    #[test]
+    fn user_extents_clamp_to_safe_bounds() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+
+        set_user_flow(&ctx, pane_id, -100.0);
+        assert_eq!(user_flow(&ctx, pane_id), MIN_USER_FLOW);
+        set_user_flow(&ctx, pane_id, MAX_USER_FLOW * 2.0);
+        assert_eq!(user_flow(&ctx, pane_id), MAX_USER_FLOW);
+
+        set_user_span(&ctx, pane_id, -100.0);
+        assert_eq!(user_span(&ctx, pane_id), MIN_USER_SPAN);
+        set_user_span(&ctx, pane_id, MAX_USER_SPAN * 2.0);
+        assert_eq!(user_span(&ctx, pane_id), MAX_USER_SPAN);
+    }
+
+    #[test]
+    fn body_extra_flow_accumulates_and_clears_per_pane() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+
+        publish_body_extra_flow(&ctx, pane_id, 6.0);
+        publish_body_extra_flow(&ctx, pane_id, 4.0);
+        assert_eq!(published_body_extra_flow(&ctx, pane_id), 10.0);
+
+        clear_container_min_widths(&ctx, pane_id);
+        assert_eq!(published_body_extra_flow(&ctx, pane_id), 0.0);
+    }
+
+    #[test]
+    fn body_extra_flow_sanitizes_invalid_values() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+
+        publish_body_extra_flow(&ctx, pane_id, f32::NAN);
+        publish_body_extra_flow(&ctx, pane_id, f32::INFINITY);
+        publish_body_extra_flow(&ctx, pane_id, -42.0);
+        publish_body_extra_flow(&ctx, pane_id, 12.0);
+
+        assert_eq!(published_body_extra_flow(&ctx, pane_id), 12.0);
+    }
+
+    #[test]
+    fn published_container_cids_are_frame_local() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+        let first = Id::new("first");
+        let second = Id::new("second");
+
+        publish_container_cid(&ctx, pane_id, first);
+        publish_container_cid(&ctx, pane_id, second);
+        assert_eq!(published_container_cids(&ctx, pane_id), vec![first, second]);
+
+        clear_container_min_widths(&ctx, pane_id);
+        assert!(published_container_cids(&ctx, pane_id).is_empty());
+    }
+
+    #[test]
+    fn published_container_cids_reject_duplicates_in_one_frame() {
+        let ctx = egui::Context::default();
+        let pane_id = Id::new("pane");
+        let container = Id::new("container");
+
+        publish_container_cid(&ctx, pane_id, container);
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            publish_container_cid(&ctx, pane_id, container);
+        }));
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn pane_titles_must_be_visible() {
+        let result = std::panic::catch_unwind(|| {
+            let _ = Pane::new(
+                egui::Id::new("blank-pane-title"),
+                " ",
+                PaneAnchor::TopRail(RailZone::Middle),
+                Color32::WHITE,
+            );
+        });
+
+        assert!(result.is_err());
     }
 }

@@ -57,6 +57,10 @@ impl WorkspaceStack {
     }
 
     pub fn push_module(&mut self, module_id: Id) -> WorkspaceLevelState {
+        assert!(
+            self.levels.len() <= u8::MAX as usize,
+            "workspace stack depth cannot exceed L255"
+        );
         let depth = self.levels.len().min(u8::MAX as usize) as u8;
         let level_id = Id::new(("frost_module_workspace", module_id, depth));
         let level = WorkspaceLevelState::module(level_id, depth, module_id);

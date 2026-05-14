@@ -347,14 +347,14 @@ fn max_button_overlay(
                 .on_hover_text(if maximized { "Restore" } else { "Maximize" });
             if ui.is_rect_visible(rect) {
                 paint_ribbon_style_chip(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* active */ maximized,
                     /* hovered */ resp.hovered(),
                 );
                 paint_fullscreen_arrows(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* inward */ maximized,
@@ -460,19 +460,19 @@ fn fullscreen_minimize_button(
             // each frame the chip is being dragged. On release,
             // snap to the nearest anchor and persist it.
             let mut ghost_target: Option<egui::Rect> = None;
-            if resp.dragged() {
-                if let Some(p) = ui.ctx().pointer_interact_pos() {
-                    ui.ctx().data_mut(|d| d.insert_temp(drag_pos_key, p));
-                    // Compute the live snap target so we can paint
-                    // a ghost outline showing where the chip WILL
-                    // land on release.
-                    let snap = nearest_anchor(screen, p, btn_size, edge_gap);
-                    let snap_pos = compute_chip_pos(screen, snap.0, snap.1, btn_size, edge_gap);
-                    ghost_target = Some(egui::Rect::from_min_size(
-                        snap_pos,
-                        egui::vec2(btn_size, btn_size),
-                    ));
-                }
+            if resp.dragged()
+                && let Some(p) = ui.ctx().pointer_interact_pos()
+            {
+                ui.ctx().data_mut(|d| d.insert_temp(drag_pos_key, p));
+                // Compute the live snap target so we can paint
+                // a ghost outline showing where the chip WILL
+                // land on release.
+                let snap = nearest_anchor(screen, p, btn_size, edge_gap);
+                let snap_pos = compute_chip_pos(screen, snap.0, snap.1, btn_size, edge_gap);
+                ghost_target = Some(egui::Rect::from_min_size(
+                    snap_pos,
+                    egui::vec2(btn_size, btn_size),
+                ));
             }
             if resp.drag_stopped() {
                 let cursor = ui
@@ -487,7 +487,7 @@ fn fullscreen_minimize_button(
             }
             if ui.is_rect_visible(rect) {
                 paint_ribbon_style_chip(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* active */ true,
@@ -499,7 +499,7 @@ fn fullscreen_minimize_button(
                     egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220)
                 };
                 crate::icons::paint_icon(
-                    &ui.painter(),
+                    ui.painter(),
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "arrow-minimize",

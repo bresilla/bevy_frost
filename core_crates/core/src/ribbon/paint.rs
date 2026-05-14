@@ -47,7 +47,7 @@ pub(crate) fn paint_ribbon_glyph(
         }
         RibbonGlyph::Icon(name) => {
             crate::icons::paint_icon(
-                &ui.painter(),
+                ui.painter(),
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 name,

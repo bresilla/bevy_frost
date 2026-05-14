@@ -52,6 +52,197 @@ fn item(id: &'static str, icon: &'static str) -> RibbonSlotItem {
 }
 
 #[test]
+fn ribbon_slot_items_require_non_empty_icons() {
+    let result = std::panic::catch_unwind(|| {
+        let _ = RibbonSlotItem::new(
+            egui::Id::new("missing-icon"),
+            "  ",
+            "Missing icon",
+            "Missing icon",
+            RibbonAction::Noop,
+        );
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn ribbon_slot_items_require_label_and_tooltip() {
+    let missing_label = std::panic::catch_unwind(|| {
+        let _ = RibbonSlotItem::new(
+            egui::Id::new("missing-label"),
+            "info",
+            " ",
+            "Tooltip",
+            RibbonAction::Noop,
+        );
+    });
+    let missing_tooltip = std::panic::catch_unwind(|| {
+        let _ = RibbonSlotItem::new(
+            egui::Id::new("missing-tooltip"),
+            "info",
+            "Info",
+            " ",
+            RibbonAction::Noop,
+        );
+    });
+
+    assert!(missing_label.is_err());
+    assert!(missing_tooltip.is_err());
+}
+
+#[test]
+fn slot_resolution_rejects_direct_invalid_slot_items() {
+    let slot = RibbonSlot {
+        id: RibbonSlotId::new("direct.invalid.item"),
+        default_item: Some(RibbonSlotItem {
+            id: egui::Id::new("direct.invalid.item"),
+            chrome_id: None,
+            chrome_tooltip: None,
+            icon: " ",
+            label: "Invalid".to_owned(),
+            tooltip: "Invalid".to_owned(),
+            action: RibbonAction::Noop,
+            active: false,
+            role: None,
+            child_ribbon: None,
+        }),
+        override_policy: RibbonOverridePolicy::Fixed,
+    };
+
+    let rejected = std::panic::catch_unwind(|| {
+        let _ = resolve_slot_item(&slot, &[]);
+    });
+
+    assert!(rejected.is_err());
+}
+
+#[test]
+fn featureful_ribbon_items_require_chrome_metadata() {
+    let blank_chrome_id = std::panic::catch_unwind(|| {
+        let _ = item("blank-chrome-id", "info").with_chrome_id(" ");
+    });
+    let blank_chrome_tooltip = std::panic::catch_unwind(|| {
+        let _ = item("blank-chrome-tooltip", "info").with_chrome_tooltip(" ");
+    });
+    let blank_child_ribbon = std::panic::catch_unwind(|| {
+        let _ = item("blank-child-ribbon", "info").with_child_ribbon(" ");
+    });
+
+    assert!(blank_chrome_id.is_err());
+    assert!(blank_chrome_tooltip.is_err());
+    assert!(blank_child_ribbon.is_err());
+}
+
+#[test]
+fn featureful_ribbon_defs_require_chrome_metadata() {
+    let blank_chrome_id = std::panic::catch_unwind(|| {
+        let _ = frost_core::RibbonSlotDef::new(
+            egui::Id::new("blank-chrome-ribbon"),
+            frost_core::RibbonScope::Permanent,
+            frost_core::RibbonEdge::Top,
+            frost_core::RibbonCluster::Start,
+            Vec::new(),
+        )
+        .with_chrome_id(" ");
+    });
+    let blank_accept_tag = std::panic::catch_unwind(|| {
+        let _ = frost_core::RibbonSlotDef::new(
+            egui::Id::new("blank-accept-ribbon"),
+            frost_core::RibbonScope::Permanent,
+            frost_core::RibbonEdge::Top,
+            frost_core::RibbonCluster::Start,
+            Vec::new(),
+        )
+        .accepts(&["panel", " "]);
+    });
+
+    assert!(blank_chrome_id.is_err());
+    assert!(blank_accept_tag.is_err());
+}
+
+#[test]
+fn ribbon_definitions_reject_duplicate_slot_ids() {
+    let slot_id = RibbonSlotId::new("duplicate");
+    let result = std::panic::catch_unwind(|| {
+        let _ = frost_core::RibbonSlotDef::new(
+            egui::Id::new("broken-ribbon"),
+            frost_core::RibbonScope::Permanent,
+            frost_core::RibbonEdge::Top,
+            frost_core::RibbonCluster::Start,
+            vec![
+                RibbonSlot::new(
+                    slot_id,
+                    Some(item("first", "settings")),
+                    RibbonOverridePolicy::Fixed,
+                ),
+                RibbonSlot::new(
+                    slot_id,
+                    Some(item("second", "info")),
+                    RibbonOverridePolicy::Fixed,
+                ),
+            ],
+        );
+    });
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn ribbon_override_layers_reject_duplicate_slot_ids() {
+    let slot_id = RibbonSlotId::new("duplicate.override");
+    let duplicate_layer = std::panic::catch_unwind(|| {
+        let _ = RibbonOverrideLayer::new(vec![
+            RibbonSlotOverride::new(slot_id, item("first-override", "settings")),
+            RibbonSlotOverride::hidden(slot_id),
+        ]);
+    });
+    let duplicate_builder = std::panic::catch_unwind(|| {
+        let _ = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
+            slot_id,
+            item("builder-override", "info"),
+        )])
+        .with_hidden_slot(slot_id);
+    });
+
+    assert!(duplicate_layer.is_err());
+    assert!(duplicate_builder.is_err());
+}
+
+#[test]
+fn slot_resolution_rejects_direct_invalid_override_layers() {
+    let slot_id = RibbonSlotId::new("direct.invalid.layer");
+    let slot = RibbonSlot::new(
+        slot_id,
+        Some(item("default", "settings")),
+        RibbonOverridePolicy::LayerOverride,
+    );
+    let layer = RibbonOverrideLayer {
+        overrides: vec![RibbonSlotOverride {
+            slot: slot_id,
+            item: Some(RibbonSlotItem {
+                id: egui::Id::new("direct.invalid.override.item"),
+                chrome_id: None,
+                chrome_tooltip: None,
+                icon: "info",
+                label: String::new(),
+                tooltip: "Invalid override".to_owned(),
+                action: RibbonAction::Noop,
+                active: false,
+                role: None,
+                child_ribbon: None,
+            }),
+        }],
+    };
+
+    let rejected = std::panic::catch_unwind(|| {
+        let _ = resolve_slot_item(&slot, &[layer]);
+    });
+
+    assert!(rejected.is_err());
+}
+
+#[test]
 fn fixed_slot_ignores_layer_overrides() {
     let slot_id = RibbonSlotId::new("system.close_or_restore");
     let slot = RibbonSlot::new(

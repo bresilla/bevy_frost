@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use egui::Id;
 
 use crate::view::ViewId;
@@ -64,13 +66,27 @@ impl RibbonSlotItem {
         tooltip: impl Into<String>,
         action: RibbonAction,
     ) -> Self {
+        let label = label.into();
+        let tooltip = tooltip.into();
+        assert!(
+            !icon.trim().is_empty(),
+            "ribbon slot items require a non-empty icon"
+        );
+        assert!(
+            !label.trim().is_empty(),
+            "ribbon slot items require a non-empty label"
+        );
+        assert!(
+            !tooltip.trim().is_empty(),
+            "ribbon slot items require a non-empty tooltip"
+        );
         Self {
             id: id.into(),
             chrome_id: None,
             chrome_tooltip: None,
             icon,
-            label: label.into(),
-            tooltip: tooltip.into(),
+            label,
+            tooltip,
             action,
             active: false,
             role: None,
@@ -100,12 +116,20 @@ impl RibbonSlotItem {
 
     #[must_use]
     pub fn with_chrome_id(mut self, id: &'static str) -> Self {
+        assert!(
+            !id.trim().is_empty(),
+            "featureful ribbon items require a non-empty chrome id"
+        );
         self.chrome_id = Some(id);
         self
     }
 
     #[must_use]
     pub fn with_chrome_tooltip(mut self, tooltip: &'static str) -> Self {
+        assert!(
+            !tooltip.trim().is_empty(),
+            "featureful ribbon items require a non-empty chrome tooltip"
+        );
         self.chrome_tooltip = Some(tooltip);
         self
     }
@@ -130,6 +154,10 @@ impl RibbonSlotItem {
 
     #[must_use]
     pub fn with_child_ribbon(mut self, child: &'static str) -> Self {
+        assert!(
+            !child.trim().is_empty(),
+            "featureful ribbon items require a non-empty child ribbon id"
+        );
         self.child_ribbon = Some(child);
         self
     }
@@ -149,6 +177,9 @@ impl RibbonSlot {
         default_item: Option<RibbonSlotItem>,
         override_policy: RibbonOverridePolicy,
     ) -> Self {
+        if let Some(item) = &default_item {
+            validate_ribbon_slot_item(item);
+        }
         Self {
             id,
             default_item,
@@ -166,6 +197,7 @@ pub struct RibbonSlotOverride {
 impl RibbonSlotOverride {
     #[must_use]
     pub fn new(slot: RibbonSlotId, item: RibbonSlotItem) -> Self {
+        validate_ribbon_slot_item(&item);
         Self {
             slot,
             item: Some(item),
@@ -196,6 +228,7 @@ pub struct RibbonOverrideLayer {
 impl RibbonOverrideLayer {
     #[must_use]
     pub fn new(overrides: Vec<RibbonSlotOverride>) -> Self {
+        validate_ribbon_override_layer_parts(&overrides);
         Self { overrides }
     }
 
@@ -208,6 +241,12 @@ impl RibbonOverrideLayer {
 
     #[must_use]
     pub fn with_hidden_slot(mut self, slot: RibbonSlotId) -> Self {
+        assert!(
+            self.overrides
+                .iter()
+                .all(|candidate| candidate.slot != slot),
+            "ribbon override layers require unique slot ids"
+        );
         self.overrides.push(RibbonSlotOverride::hidden(slot));
         self
     }
@@ -240,6 +279,7 @@ impl RibbonSlotDef {
         cluster: RibbonCluster,
         slots: Vec<RibbonSlot>,
     ) -> Self {
+        validate_ribbon_slots(&slots);
         Self {
             id: id.into(),
             chrome_id: None,
@@ -270,6 +310,10 @@ impl RibbonSlotDef {
 
     #[must_use]
     pub fn with_chrome_id(mut self, id: &'static str) -> Self {
+        assert!(
+            !id.trim().is_empty(),
+            "featureful ribbon definitions require a non-empty chrome id"
+        );
         self.chrome_id = Some(id);
         self
     }
@@ -294,7 +338,98 @@ impl RibbonSlotDef {
 
     #[must_use]
     pub fn accepts(mut self, accepts: &'static [&'static str]) -> Self {
+        assert!(
+            accepts.iter().all(|accept| !accept.trim().is_empty()),
+            "featureful ribbon definitions require non-empty accepted payload tags"
+        );
         self.accepts = accepts;
         self
     }
+}
+
+fn assert_unique_slot_ids(slots: &[RibbonSlot]) {
+    let mut seen = HashSet::with_capacity(slots.len());
+    assert!(
+        slots.iter().all(|slot| seen.insert(slot.id)),
+        "ribbon definitions require unique slot ids"
+    );
+}
+
+pub(crate) fn validate_ribbon_slot_item(item: &RibbonSlotItem) {
+    assert!(
+        !item.icon.trim().is_empty(),
+        "ribbon slot items require a non-empty icon"
+    );
+    assert!(
+        !item.label.trim().is_empty(),
+        "ribbon slot items require a non-empty label"
+    );
+    assert!(
+        !item.tooltip.trim().is_empty(),
+        "ribbon slot items require a non-empty tooltip"
+    );
+    if let Some(chrome_id) = item.chrome_id {
+        assert!(
+            !chrome_id.trim().is_empty(),
+            "featureful ribbon items require a non-empty chrome id"
+        );
+    }
+    if let Some(chrome_tooltip) = item.chrome_tooltip {
+        assert!(
+            !chrome_tooltip.trim().is_empty(),
+            "featureful ribbon items require a non-empty chrome tooltip"
+        );
+    }
+    if let Some(child) = item.child_ribbon {
+        assert!(
+            !child.trim().is_empty(),
+            "featureful ribbon items require a non-empty child ribbon id"
+        );
+    }
+}
+
+pub(crate) fn validate_ribbon_slot(slot: &RibbonSlot) {
+    if let Some(item) = &slot.default_item {
+        validate_ribbon_slot_item(item);
+    }
+}
+
+pub(crate) fn validate_ribbon_slots(slots: &[RibbonSlot]) {
+    assert_unique_slot_ids(slots);
+    slots.iter().for_each(validate_ribbon_slot);
+}
+
+pub(crate) fn validate_ribbon_override_layer(layer: &RibbonOverrideLayer) {
+    validate_ribbon_override_layer_parts(&layer.overrides);
+}
+
+pub(crate) fn validate_ribbon_slot_def(ribbon: &RibbonSlotDef) {
+    if let Some(chrome_id) = ribbon.chrome_id {
+        assert!(
+            !chrome_id.trim().is_empty(),
+            "featureful ribbon definitions require a non-empty chrome id"
+        );
+    }
+    assert!(
+        ribbon
+            .accepts
+            .iter()
+            .all(|accept| !accept.trim().is_empty()),
+        "featureful ribbon definitions require non-empty accepted payload tags"
+    );
+    validate_ribbon_slots(&ribbon.slots);
+}
+
+fn validate_ribbon_override_layer_parts(overrides: &[RibbonSlotOverride]) {
+    let mut seen = HashSet::with_capacity(overrides.len());
+    assert!(
+        overrides
+            .iter()
+            .all(|slot_override| seen.insert(slot_override.slot)),
+        "ribbon override layers require unique slot ids"
+    );
+    overrides
+        .iter()
+        .filter_map(|slot_override| slot_override.item.as_ref())
+        .for_each(validate_ribbon_slot_item);
 }
