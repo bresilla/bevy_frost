@@ -30,7 +30,6 @@ pub struct ResolvedRibbon {
     pub role: crate::ribbon::RibbonRole,
     pub mode: crate::ribbon::RibbonMode,
     pub cluster: crate::ribbon::RibbonCluster,
-    pub draggable: bool,
     pub accepts: &'static [&'static str],
     pub items: Vec<RibbonSlotItem>,
 }
@@ -74,8 +73,8 @@ impl AppShellChrome {
             "the persistent main bar must be on the top edge"
         );
         assert!(
-            !main_bar.draggable && main_bar.accepts.is_empty(),
-            "the persistent main bar is fixed and cannot be dragged"
+            main_bar.accepts.is_empty(),
+            "the persistent main bar is fixed and cannot accept icon drops"
         );
         Self {
             main_bar,
@@ -105,7 +104,7 @@ impl AppShellChrome {
             "permanent declarations can only be merged into the top main bar"
         );
         assert!(
-            !ribbon.draggable && ribbon.accepts.is_empty(),
+            ribbon.accepts.is_empty(),
             "permanent declarations merge into the fixed top main bar"
         );
         let mut seen = HashSet::with_capacity(self.main_bar.slots.len() + ribbon.slots.len());
@@ -207,7 +206,6 @@ impl From<ResolvedRibbon> for ResolvedSlotRibbon {
             role: value.role,
             mode: value.mode,
             cluster: value.cluster,
-            draggable: value.draggable,
             accepts: value.accepts,
             items: value.items,
         }
@@ -353,7 +351,6 @@ pub fn resolve_app_shell_ribbons_with_workspace_chrome(
             role: ribbon.role,
             mode: ribbon.mode,
             cluster: ribbon.cluster,
-            draggable: ribbon.draggable,
             accepts: ribbon.accepts,
             items,
         });
@@ -381,7 +378,7 @@ fn validate_single_permanent_ribbon(ribbons: &[RibbonSlotDef]) -> Result<(), App
             edge: ribbon.edge,
         });
     }
-    if ribbon.draggable || !ribbon.accepts.is_empty() {
+    if !ribbon.accepts.is_empty() {
         return Err(AppShellError::PermanentRibbonMustBeFixed { id: ribbon.id });
     }
     Ok(())

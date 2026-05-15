@@ -16,7 +16,6 @@ pub struct ResolvedSlotRibbon {
     pub role: super::RibbonRole,
     pub mode: super::RibbonMode,
     pub cluster: RibbonCluster,
-    pub draggable: bool,
     pub accepts: &'static [&'static str],
     pub items: Vec<RibbonSlotItem>,
 }

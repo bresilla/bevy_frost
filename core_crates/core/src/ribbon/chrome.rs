@@ -276,44 +276,89 @@ fn insets_for_ribbon(
     if is_main_ribbon(ribbons, ribbon) && ribbon.edge == RibbonEdge::Top {
         out.left = EDGE_GAP;
         out.right = EDGE_GAP;
+        return out;
+    }
+
+    let with_rail = EDGE_GAP + SIDE_BTN_SIZE + SIDE_BTN_GAP;
+    let claimed_by = |edge: RibbonEdge| {
+        let Some(current_id) = ribbon_id(ribbon) else {
+            return false;
+        };
+        let current_idx = ribbons
+            .iter()
+            .position(|candidate| ribbon_id(candidate) == Some(current_id))
+            .unwrap_or(usize::MAX);
+        ribbons
+            .iter()
+            .position(|candidate| candidate.edge == edge)
+            .is_some_and(|edge_idx| edge_idx < current_idx)
+    };
+    let corner_inset = |edge: RibbonEdge| {
+        if claimed_by(edge) {
+            with_rail
+        } else {
+            EDGE_GAP
+        }
+    };
+
+    match ribbon.edge {
+        RibbonEdge::Left | RibbonEdge::Right => {
+            out.top = corner_inset(RibbonEdge::Top);
+            out.bottom = corner_inset(RibbonEdge::Bottom);
+        }
+        RibbonEdge::Bottom => {
+            out.left = corner_inset(RibbonEdge::Left);
+            out.right = corner_inset(RibbonEdge::Right);
+        }
+        RibbonEdge::Top => {
+            out.left = EDGE_GAP;
+            out.right = EDGE_GAP;
+        }
     }
     out
 }
 
 fn strip_rect(ribbon: &ResolvedSlotRibbon, ctx: &egui::Context, insets: SideInsets) -> egui::Rect {
     let screen = chrome_rect(ctx);
+    let strip_inset = |inset: f32| {
+        if inset > EDGE_GAP {
+            inset + EDGE_GAP
+        } else {
+            EDGE_GAP
+        }
+    };
     match ribbon.edge {
         RibbonEdge::Left => egui::Rect::from_min_max(
-            screen.min + egui::vec2(EDGE_GAP, insets.top + EDGE_GAP),
+            screen.min + egui::vec2(EDGE_GAP, strip_inset(insets.top)),
             egui::pos2(
                 screen.min.x + EDGE_GAP + SIDE_BTN_SIZE,
-                screen.max.y - insets.bottom - EDGE_GAP,
+                screen.max.y - strip_inset(insets.bottom),
             ),
         ),
         RibbonEdge::Right => egui::Rect::from_min_max(
             egui::pos2(
                 screen.max.x - EDGE_GAP - SIDE_BTN_SIZE,
-                screen.min.y + insets.top + EDGE_GAP,
+                screen.min.y + strip_inset(insets.top),
             ),
             egui::pos2(
                 screen.max.x - EDGE_GAP,
-                screen.max.y - insets.bottom - EDGE_GAP,
+                screen.max.y - strip_inset(insets.bottom),
             ),
         ),
         RibbonEdge::Top => egui::Rect::from_min_max(
-            screen.min + egui::vec2(insets.left + EDGE_GAP, EDGE_GAP),
+            screen.min + egui::vec2(strip_inset(insets.left), EDGE_GAP),
             egui::pos2(
-                screen.max.x - insets.right - EDGE_GAP,
+                screen.max.x - strip_inset(insets.right),
                 screen.min.y + EDGE_GAP + SIDE_BTN_SIZE,
             ),
         ),
         RibbonEdge::Bottom => egui::Rect::from_min_max(
             egui::pos2(
-                screen.min.x + insets.left + EDGE_GAP,
+                screen.min.x + strip_inset(insets.left),
                 screen.max.y - EDGE_GAP - SIDE_BTN_SIZE,
             ),
             egui::pos2(
-                screen.max.x - insets.right - EDGE_GAP,
+                screen.max.x - strip_inset(insets.right),
                 screen.max.y - EDGE_GAP,
             ),
         ),
@@ -520,11 +565,15 @@ fn screen_rect(ctx: &egui::Context, placement: ButtonPlacement) -> egui::Rect {
     egui::Rect::from_min_size(min, size)
 }
 
-fn accepts_drop(source: &ResolvedSlotRibbon, target: &ResolvedSlotRibbon) -> bool {
+fn accepts_drop(
+    source_item: &RibbonSlotItem,
+    source: &ResolvedSlotRibbon,
+    target: &ResolvedSlotRibbon,
+) -> bool {
     let Some(src) = ribbon_id(source) else {
         return false;
     };
-    source.draggable
+    source_item.draggable
         && (target.accepts.contains(&"*")
             || target.accepts.contains(&src)
             || ribbon_id(target) == Some(src))
@@ -589,18 +638,20 @@ pub fn draw_unified_ribbon_chrome(
 
     let mut target: Option<(&'static str, RibbonCluster, u32)> = None;
     if let (Some(dragged_id), Some(cursor), Some(_source)) = (drag.item, drag.cursor, drag.source) {
-        let src_ribbon = flat
+        let source = flat
             .iter()
             .position(|(_, _, _, iid, _, _)| *iid == dragged_id)
             .and_then(|idx| {
                 let current_rid = resolved[idx].0;
-                ribbons
+                let source_ribbon = ribbons
                     .iter()
-                    .find(|ribbon| ribbon_id(ribbon) == Some(current_rid))
+                    .find(|ribbon| ribbon_id(ribbon) == Some(current_rid))?;
+                let (base_r_idx, item_idx, _, _, _, _) = flat[idx];
+                Some((&ribbons[base_r_idx].items[item_idx], source_ribbon))
             });
-        if let Some(src_ribbon) = src_ribbon {
+        if let Some((source_item, src_ribbon)) = source {
             'hit: for ribbon in ribbons {
-                if !accepts_drop(src_ribbon, ribbon) {
+                if !accepts_drop(source_item, src_ribbon, ribbon) {
                     continue;
                 }
                 let Some(rid) = ribbon_id(ribbon) else {
@@ -790,7 +841,7 @@ pub fn draw_unified_ribbon_chrome(
             .fixed_pos(paint_pos)
             .interactable(true)
             .show(ctx, |ui| {
-                let sense = if ribbon.draggable {
+                let sense = if item.draggable {
                     egui::Sense::click_and_drag()
                 } else {
                     egui::Sense::click()
@@ -816,7 +867,7 @@ pub fn draw_unified_ribbon_chrome(
             });
         ctx.move_to_top(area_response.response.layer_id);
         let response = area_response.inner;
-        if ribbon.draggable && response.drag_started() {
+        if item.draggable && response.drag_started() {
             drag_started_idx = Some(idx);
         }
         if dragging_this && response.dragged() {
@@ -924,7 +975,8 @@ pub fn draw_unified_ribbon_chrome(
         if !fired {
             continue;
         }
-        let (base_r_idx, i_idx, rid, iid, _, _) = flat[idx];
+        let (base_r_idx, i_idx, _, iid, _, _) = flat[idx];
+        let (rid, _, _) = resolved[idx];
         let item = &ribbons[base_r_idx].items[i_idx];
         let role = item_role(item, &ribbons[base_r_idx]);
         if role == RibbonRole::Panel {
@@ -1045,24 +1097,62 @@ mod tests {
     }
 
     fn ribbon(edge: RibbonEdge) -> ResolvedSlotRibbon {
+        ribbon_with_id("test_ribbon", edge)
+    }
+
+    fn ribbon_with_id(id: &'static str, edge: RibbonEdge) -> ResolvedSlotRibbon {
         ResolvedSlotRibbon {
-            id: egui::Id::new(("test_ribbon", edge)),
-            chrome_id: Some("test_ribbon"),
+            id: egui::Id::new((id, edge)),
+            chrome_id: Some(id),
             scope: RibbonScope::Permanent,
             edge,
             role: RibbonRole::Icon,
             mode: RibbonMode::ThreeSided,
             cluster: RibbonCluster::Middle,
-            draggable: true,
             accepts: &["*"],
-            items: vec![RibbonSlotItem::featureful(
-                "test_item",
-                "icon",
-                "Test",
-                "Test",
-                RibbonAction::Noop,
-            )],
+            items: vec![
+                RibbonSlotItem::featureful("test_item", "icon", "Test", "Test", RibbonAction::Noop)
+                    .draggable(true),
+            ],
         }
+    }
+
+    #[test]
+    fn bottom_corner_claims_follow_ribbon_initialization_order() {
+        let chrome = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 480.0));
+        let ctx = test_ctx_with_chrome(chrome);
+        let left = ribbon_with_id("left", RibbonEdge::Left);
+        let bottom = ribbon_with_id("bottom", RibbonEdge::Bottom);
+
+        let side_first = vec![left.clone(), bottom.clone()];
+        let side_first_base = compute_side_insets(&side_first);
+        let side_first_left = strip_rect(
+            &side_first[0],
+            &ctx,
+            insets_for_ribbon(&side_first, &side_first[0], side_first_base),
+        );
+        let side_first_bottom = strip_rect(
+            &side_first[1],
+            &ctx,
+            insets_for_ribbon(&side_first, &side_first[1], side_first_base),
+        );
+        assert_eq!(side_first_left.bottom(), chrome.bottom() - EDGE_GAP);
+        assert!(side_first_bottom.left() > side_first_left.right());
+
+        let bottom_first = vec![bottom, left];
+        let bottom_first_base = compute_side_insets(&bottom_first);
+        let bottom_first_bottom = strip_rect(
+            &bottom_first[0],
+            &ctx,
+            insets_for_ribbon(&bottom_first, &bottom_first[0], bottom_first_base),
+        );
+        let bottom_first_left = strip_rect(
+            &bottom_first[1],
+            &ctx,
+            insets_for_ribbon(&bottom_first, &bottom_first[1], bottom_first_base),
+        );
+        assert_eq!(bottom_first_bottom.left(), chrome.left() + EDGE_GAP);
+        assert!(bottom_first_left.bottom() < bottom_first_bottom.top());
     }
 
     #[test]

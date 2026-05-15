@@ -38,7 +38,6 @@ impl eframe::App for DemoApp {
             role: egui_frost::RibbonRole::Panel,
             mode: egui_frost::RibbonMode::ThreeSided,
             cluster: RibbonCluster::Start,
-            draggable: false,
             accepts: &[],
             items: vec![about],
         }];

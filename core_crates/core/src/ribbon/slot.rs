@@ -53,6 +53,7 @@ pub struct RibbonSlotItem {
     pub tooltip: String,
     pub action: RibbonAction,
     pub active: bool,
+    pub draggable: bool,
     pub role: Option<RibbonRole>,
     pub child_ribbon: Option<&'static str>,
 }
@@ -89,6 +90,7 @@ impl RibbonSlotItem {
             tooltip,
             action,
             active: false,
+            draggable: false,
             role: None,
             child_ribbon: None,
         }
@@ -137,6 +139,12 @@ impl RibbonSlotItem {
     #[must_use]
     pub fn with_role(mut self, role: RibbonRole) -> Self {
         self.role = Some(role);
+        self
+    }
+
+    #[must_use]
+    pub fn draggable(mut self, draggable: bool) -> Self {
+        self.draggable = draggable;
         self
     }
 
@@ -265,7 +273,6 @@ pub struct RibbonSlotDef {
     pub role: RibbonRole,
     pub mode: RibbonMode,
     pub cluster: RibbonCluster,
-    pub draggable: bool,
     pub accepts: &'static [&'static str],
     pub slots: Vec<RibbonSlot>,
 }
@@ -288,7 +295,6 @@ impl RibbonSlotDef {
             role: RibbonRole::Panel,
             mode: RibbonMode::ThreeSided,
             cluster,
-            draggable: false,
             accepts: &[],
             slots,
         }
@@ -327,12 +333,6 @@ impl RibbonSlotDef {
     #[must_use]
     pub fn with_mode(mut self, mode: RibbonMode) -> Self {
         self.mode = mode;
-        self
-    }
-
-    #[must_use]
-    pub fn draggable(mut self, draggable: bool) -> Self {
-        self.draggable = draggable;
         self
     }
 

@@ -218,15 +218,15 @@ fn app_shell_rejects_non_top_permanent_ribbons() {
 }
 
 #[test]
-fn app_shell_rejects_movable_permanent_ribbon() {
+fn app_shell_rejects_permanent_ribbon_that_accepts_icon_drops() {
     let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
-    let permanent = vec![empty_permanent_ribbon("main.movable.bar").draggable(true)];
+    let permanent = vec![empty_permanent_ribbon("main.drop.target.bar").accepts(&["*"])];
 
     let error = resolve_app_shell_ribbons(&mut router, &permanent).unwrap_err();
     assert!(matches!(
         error,
         AppShellError::PermanentRibbonMustBeFixed { id }
-            if id == egui::Id::new("main.movable.bar")
+            if id == egui::Id::new("main.drop.target.bar")
     ));
 }
 
@@ -639,17 +639,17 @@ fn app_shell_chrome_rejects_non_top_main_bars() {
 }
 
 #[test]
-fn app_shell_chrome_rejects_movable_main_bar() {
+fn app_shell_chrome_rejects_main_bar_that_accepts_icon_drops() {
     let result = std::panic::catch_unwind(|| {
         let _ = frost_core::AppShellChrome::new(
             RibbonSlotDef::new(
-                egui::Id::new("main.movable.bar"),
+                egui::Id::new("main.drop.target.bar"),
                 RibbonScope::Permanent,
                 RibbonEdge::Top,
                 RibbonCluster::Middle,
                 Vec::new(),
             )
-            .draggable(true),
+            .accepts(&["*"]),
         );
     });
 
