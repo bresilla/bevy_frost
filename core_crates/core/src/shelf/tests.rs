@@ -122,6 +122,39 @@ fn publish_shelf_layout_sets_chrome_bounds_to_reserved_viewport() {
 }
 
 #[test]
+fn side_shelf_content_is_lowered_but_shelf_rect_keeps_full_height() {
+    let shelf_rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(240.0, 600.0));
+    let theme = *style::theme().shelf();
+
+    let paint = shelf_paint_rect(ShelfEdge::Left, shelf_rect);
+    let content = shelf_content_rect(ShelfEdge::Left, shelf_rect, &theme);
+
+    assert_eq!(shelf_rect.top(), 0.0, "layout keeps the shelf full-height");
+    assert!(
+        paint.top() > shelf_rect.top(),
+        "background leaves the top ribbon clear"
+    );
+    assert!(
+        content.top() > shelf_rect.top() + theme.padding,
+        "containers/content start below the top ribbon"
+    );
+    assert_eq!(paint.bottom(), shelf_rect.bottom());
+    assert_eq!(content.bottom(), shelf_rect.bottom() - theme.padding);
+}
+
+#[test]
+fn bottom_shelf_content_is_not_lowered_for_top_ribbon() {
+    let shelf_rect = Rect::from_min_max(pos2(0.0, 420.0), pos2(800.0, 600.0));
+    let theme = *style::theme().shelf();
+
+    assert_eq!(shelf_paint_rect(ShelfEdge::Bottom, shelf_rect), shelf_rect);
+    assert_eq!(
+        shelf_content_rect(ShelfEdge::Bottom, shelf_rect, &theme),
+        shelf_rect.shrink(theme.padding)
+    );
+}
+
+#[test]
 fn show_shelves_sets_public_active_container_for_default_visible_container() {
     let ctx = egui::Context::default();
     let shelf_id = Id::new("active-shelf");

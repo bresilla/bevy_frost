@@ -484,11 +484,12 @@ pub fn show_shelves<'a>(
                 render_id.with("background_move"),
                 Sense::click_and_drag(),
             );
-            paint_shelf_background(ui, shelf_rect, shelf.accent, &shelf_theme);
+            let paint_rect = shelf_paint_rect(shelf_edge, shelf_rect);
+            paint_shelf_background(ui, paint_rect, shelf.accent, &shelf_theme);
             let resize_response =
                 resize_shelf(ui, &shelf, render_id, state, &shelf_theme, shelf_rect);
 
-            let content_rect = shelf_rect.shrink(shelf_theme.padding);
+            let content_rect = shelf_content_rect(shelf_edge, shelf_rect, &shelf_theme);
             if resize_response.drag_started() || resize_response.dragged() {
                 state.cancel_drag();
             }
@@ -532,6 +533,27 @@ pub fn show_shelves<'a>(
     finish_container_move_if_released(ctx, state);
     paint_shelf_move_ghost(ctx, layout, state, &shelf_theme);
     paint_container_move_ghost(ctx, layout, state, &shelf_theme);
+}
+
+fn top_ribbon_clearance() -> f32 {
+    crate::ribbon::EDGE_GAP + crate::ribbon::SIDE_BTN_SIZE + crate::ribbon::SIDE_BTN_GAP
+}
+
+fn shelf_paint_rect(edge: ShelfEdge, shelf_rect: Rect) -> Rect {
+    if !edge.is_side() {
+        return shelf_rect;
+    }
+    let mut rect = shelf_rect;
+    rect.min.y = (rect.min.y + top_ribbon_clearance()).min(rect.max.y);
+    rect
+}
+
+fn shelf_content_rect(edge: ShelfEdge, shelf_rect: Rect, theme: &ShelfTheme) -> Rect {
+    let mut rect = shelf_rect.shrink(theme.padding);
+    if edge.is_side() {
+        rect.min.y = (rect.min.y + top_ribbon_clearance()).min(rect.max.y);
+    }
+    rect
 }
 
 fn assert_unique_shelf_ids(shelves: &[ShelfDef<'_>]) {
@@ -1119,12 +1141,7 @@ fn commit_shelf_container_reorder(
 fn paint_shelf_background(ui: &mut egui::Ui, rect: Rect, accent: Color32, theme: &ShelfTheme) {
     let active = style::theme();
     let fill = style::glass_fill(active.bg_panel, accent, theme.background_alpha);
-    let stroke = Stroke::new(theme.border_width, style::widget_border(accent));
     ui.painter().rect_filled(rect, 0.0, fill);
-    if theme.border_width > 0.0 {
-        ui.painter()
-            .rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
-    }
 }
 
 fn resize_shelf(

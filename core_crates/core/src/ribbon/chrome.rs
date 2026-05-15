@@ -185,6 +185,14 @@ fn chrome_rect(ctx: &egui::Context) -> egui::Rect {
         .unwrap_or_else(|| ctx.content_rect())
 }
 
+fn ribbon_rect(ctx: &egui::Context, ribbon: &ResolvedSlotRibbon) -> egui::Rect {
+    if ribbon.edge == RibbonEdge::Top {
+        ctx.content_rect()
+    } else {
+        chrome_rect(ctx)
+    }
+}
+
 fn main_bar_empty_drag_started_id() -> egui::Id {
     egui::Id::new("frost_main_bar_empty_drag_started")
 }
@@ -319,7 +327,7 @@ fn insets_for_ribbon(
 }
 
 fn strip_rect(ribbon: &ResolvedSlotRibbon, ctx: &egui::Context, insets: SideInsets) -> egui::Rect {
-    let screen = chrome_rect(ctx);
+    let screen = ribbon_rect(ctx, ribbon);
     let strip_inset = |inset: f32| {
         if inset > EDGE_GAP {
             inset + EDGE_GAP
@@ -437,6 +445,7 @@ fn cluster_region(
 
 #[derive(Clone, Copy)]
 struct ButtonPlacement {
+    screen: egui::Rect,
     anchor: egui::Align2,
     offset: egui::Vec2,
 }
@@ -449,6 +458,7 @@ fn place_button(
     total: u32,
     insets: SideInsets,
 ) -> ButtonPlacement {
+    let screen = ribbon_rect(ctx, ribbon);
     let step = SIDE_BTN_SIZE + SIDE_BTN_GAP;
     let len = total as f32 * SIDE_BTN_SIZE + total.saturating_sub(1) as f32 * SIDE_BTN_GAP;
     match ribbon.edge {
@@ -457,7 +467,7 @@ fn place_button(
             let y = match cluster {
                 RibbonCluster::Start => insets.top + slot as f32 * step,
                 RibbonCluster::Middle => {
-                    let screen_h = chrome_rect(ctx).height();
+                    let screen_h = screen.height();
                     (screen_h - len) * 0.5 + slot as f32 * step
                 }
                 RibbonCluster::End => -SIDE_BTN_SIZE - insets.bottom - slot as f32 * step,
@@ -468,6 +478,7 @@ fn place_button(
                 egui::Align2::LEFT_TOP
             };
             ButtonPlacement {
+                screen,
                 anchor,
                 offset: egui::vec2(x, y),
             }
@@ -477,7 +488,7 @@ fn place_button(
             let y = match cluster {
                 RibbonCluster::Start => insets.top + slot as f32 * step,
                 RibbonCluster::Middle => {
-                    let screen_h = chrome_rect(ctx).height();
+                    let screen_h = screen.height();
                     (screen_h - len) * 0.5 + slot as f32 * step
                 }
                 RibbonCluster::End => -SIDE_BTN_SIZE - insets.bottom - slot as f32 * step,
@@ -488,6 +499,7 @@ fn place_button(
                 egui::Align2::RIGHT_TOP
             };
             ButtonPlacement {
+                screen,
                 anchor,
                 offset: egui::vec2(x, y),
             }
@@ -505,6 +517,7 @@ fn place_button(
                 RibbonCluster::End => egui::Align2::RIGHT_TOP,
             };
             ButtonPlacement {
+                screen,
                 anchor,
                 offset: egui::vec2(x, y),
             }
@@ -522,6 +535,7 @@ fn place_button(
                 RibbonCluster::End => egui::Align2::RIGHT_BOTTOM,
             };
             ButtonPlacement {
+                screen,
                 anchor,
                 offset: egui::vec2(x, y),
             }
@@ -530,7 +544,8 @@ fn place_button(
 }
 
 fn screen_rect(ctx: &egui::Context, placement: ButtonPlacement) -> egui::Rect {
-    let screen = chrome_rect(ctx);
+    let _ = ctx;
+    let screen = placement.screen;
     let size = egui::vec2(SIDE_BTN_SIZE, SIDE_BTN_SIZE);
     let min = match placement.anchor {
         egui::Align2::LEFT_TOP => egui::pos2(
@@ -1096,6 +1111,16 @@ mod tests {
         ctx
     }
 
+    fn test_ctx_with_screen_and_chrome(screen: egui::Rect, chrome: egui::Rect) -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        });
+        ctx.data_mut(|data| data.insert_temp(chrome_bounds_key(), chrome));
+        ctx
+    }
+
     fn ribbon(edge: RibbonEdge) -> ResolvedSlotRibbon {
         ribbon_with_id("test_ribbon", edge)
     }
@@ -1153,6 +1178,32 @@ mod tests {
         );
         assert_eq!(bottom_first_bottom.left(), chrome.left() + EDGE_GAP);
         assert!(bottom_first_left.bottom() < bottom_first_bottom.top());
+    }
+
+    #[test]
+    fn top_ribbon_uses_full_window_even_when_chrome_bounds_are_reserved() {
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 480.0));
+        let chrome = egui::Rect::from_min_max(egui::pos2(220.0, 0.0), egui::pos2(620.0, 480.0));
+        let ctx = test_ctx_with_screen_and_chrome(screen, chrome);
+        let top = ribbon_with_id("top", RibbonEdge::Top);
+        let left = ribbon_with_id("left", RibbonEdge::Left);
+        let ribbons = vec![top, left];
+        let base = compute_side_insets(&ribbons);
+
+        let top_strip = strip_rect(
+            &ribbons[0],
+            &ctx,
+            insets_for_ribbon(&ribbons, &ribbons[0], base),
+        );
+        assert_eq!(top_strip.left(), screen.left() + EDGE_GAP);
+        assert_eq!(top_strip.right(), screen.right() - EDGE_GAP);
+
+        let left_strip = strip_rect(
+            &ribbons[1],
+            &ctx,
+            insets_for_ribbon(&ribbons, &ribbons[1], base),
+        );
+        assert_eq!(left_strip.left(), chrome.left() + EDGE_GAP);
     }
 
     #[test]
