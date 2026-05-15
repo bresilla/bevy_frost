@@ -1150,6 +1150,13 @@ fn render_shelf_body(input: ShelfBodyInput<'_, '_, '_, '_>) {
             if target_idx >= total
                 && let Some(entry) = pane::dragged_entry(&snap, dragged_id)
             {
+                let entry = source_shelf_gap_entry(
+                    viewport.ctx(),
+                    dragged_id,
+                    shelf.edge,
+                    content_rect,
+                    entry,
+                );
                 pane::paint_ghost_gap_entry_inline(
                     &mut viewport,
                     entry,
@@ -1625,6 +1632,25 @@ fn should_render_external_container_gap(
                 && drag.source_edge != shelf_edge
                 && screen_shelf_rect.expand(24.0).contains(cursor)
         })
+}
+
+fn source_shelf_gap_entry(
+    ctx: &egui::Context,
+    dragged_id: Id,
+    shelf_edge: ShelfEdge,
+    content_rect: Rect,
+    entry: pane::RectEntry,
+) -> pane::RectEntry {
+    if content_rect.contains(entry.rect.center()) {
+        return entry;
+    }
+
+    let size = container_move_ghost_size_for_edge(ctx, dragged_id, shelf_edge, content_rect)
+        .min(content_rect.size());
+    pane::RectEntry {
+        rect: Rect::from_min_size(content_rect.min, size),
+        ..entry
+    }
 }
 
 fn finish_container_move_if_released(ctx: &egui::Context, state: &mut ShelfState) {
@@ -3611,6 +3637,54 @@ mod tests {
             ),
             "same-source dragging/reordering can still paint the normal held-container preview"
         );
+    }
+
+    #[test]
+    fn source_shelf_gap_entry_reanchors_stale_right_shelf_rect() {
+        let ctx = egui::Context::default();
+        let dragged = Id::new("dragged");
+        let right_content = Rect::from_min_size(pos2(1660.0, 80.0), vec2(280.0, 820.0));
+        let stale_left_rect = pane::RectEntry {
+            id: dragged,
+            rect: Rect::from_min_size(pos2(16.0, 280.0), vec2(280.0, 160.0)),
+            frame: None,
+        };
+
+        let fixed = source_shelf_gap_entry(
+            &ctx,
+            dragged,
+            ShelfEdge::Right,
+            right_content,
+            stale_left_rect,
+        );
+
+        assert_eq!(fixed.rect.min, right_content.min);
+        assert_eq!(fixed.rect.width(), right_content.width());
+        assert!(right_content.contains(fixed.rect.center()));
+    }
+
+    #[test]
+    fn source_shelf_gap_entry_reanchors_stale_bottom_shelf_rect() {
+        let ctx = egui::Context::default();
+        let dragged = Id::new("dragged");
+        let bottom_content = Rect::from_min_size(pos2(280.0, 910.0), vec2(1320.0, 220.0));
+        let stale_left_rect = pane::RectEntry {
+            id: dragged,
+            rect: Rect::from_min_size(pos2(16.0, 280.0), vec2(280.0, 160.0)),
+            frame: None,
+        };
+
+        let fixed = source_shelf_gap_entry(
+            &ctx,
+            dragged,
+            ShelfEdge::Bottom,
+            bottom_content,
+            stale_left_rect,
+        );
+
+        assert_eq!(fixed.rect.min, bottom_content.min);
+        assert_eq!(fixed.rect.height(), bottom_content.height());
+        assert!(bottom_content.contains(fixed.rect.center()));
     }
 
     #[test]
