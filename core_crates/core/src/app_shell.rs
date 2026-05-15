@@ -53,7 +53,7 @@ pub enum WindowControlsPolicy {
 
 /// API-level app chrome contract.
 ///
-/// Frost has exactly one persistent main bar. Active views/workspaces
+/// Frost has exactly one persistent top main bar. Active views/workspaces
 /// may override or explicitly hide individual slots, but they do not
 /// rebuild the main bar by passing additional permanent ribbons.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,8 +70,12 @@ impl AppShellChrome {
             "AppShellChrome::new requires a permanent main bar"
         );
         assert!(
-            !matches!(main_bar.edge, crate::ribbon::RibbonEdge::Bottom),
-            "the persistent main bar cannot be on the bottom edge"
+            matches!(main_bar.edge, crate::ribbon::RibbonEdge::Top),
+            "the persistent main bar must be on the top edge"
+        );
+        assert!(
+            !main_bar.draggable && main_bar.accepts.is_empty(),
+            "the persistent main bar is fixed and cannot be dragged"
         );
         Self {
             main_bar,
@@ -97,8 +101,12 @@ impl AppShellChrome {
             "only permanent declarations can be merged into AppShellChrome"
         );
         assert!(
-            !matches!(ribbon.edge, crate::ribbon::RibbonEdge::Bottom),
-            "permanent declarations cannot be on the bottom edge"
+            matches!(ribbon.edge, crate::ribbon::RibbonEdge::Top),
+            "permanent declarations can only be merged into the top main bar"
+        );
+        assert!(
+            !ribbon.draggable && ribbon.accepts.is_empty(),
+            "permanent declarations merge into the fixed top main bar"
         );
         let mut seen = HashSet::with_capacity(self.main_bar.slots.len() + ribbon.slots.len());
         assert!(
@@ -158,10 +166,23 @@ impl AppShellChrome {
 pub enum AppShellError {
     View(ViewRouterError),
     Action(RibbonActionError),
-    MultiplePermanentRibbons { count: usize },
-    PermanentRibbonOnBottom { id: Id },
-    ViewRibbonWrongScope { id: Id },
-    WorkspaceRibbonWrongScope { id: Id },
+    MissingPermanentRibbon,
+    MultiplePermanentRibbons {
+        count: usize,
+    },
+    PermanentRibbonNotTop {
+        id: Id,
+        edge: crate::ribbon::RibbonEdge,
+    },
+    PermanentRibbonMustBeFixed {
+        id: Id,
+    },
+    ViewRibbonWrongScope {
+        id: Id,
+    },
+    WorkspaceRibbonWrongScope {
+        id: Id,
+    },
 }
 
 impl From<ViewRouterError> for AppShellError {
@@ -200,7 +221,8 @@ impl AppShellResolution {
     }
 }
 
-/// Resolve permanent + active view ribbons into concrete slot items.
+/// Resolve the mandatory top persistent ribbon + active view ribbons
+/// into concrete slot items.
 ///
 /// Override priority follows the PLAN:
 ///
@@ -341,18 +363,26 @@ pub fn resolve_app_shell_ribbons_with_workspace_chrome(
 }
 
 fn validate_single_permanent_ribbon(ribbons: &[RibbonSlotDef]) -> Result<(), AppShellError> {
-    let count = ribbons
+    let permanent: Vec<_> = ribbons
         .iter()
         .filter(|ribbon| matches!(ribbon.scope, RibbonScope::Permanent))
-        .count();
+        .collect();
+    let count = permanent.len();
+    if count == 0 {
+        return Err(AppShellError::MissingPermanentRibbon);
+    }
     if count > 1 {
         return Err(AppShellError::MultiplePermanentRibbons { count });
     }
-    if let Some(ribbon) = ribbons.iter().find(|ribbon| {
-        matches!(ribbon.scope, RibbonScope::Permanent)
-            && matches!(ribbon.edge, crate::ribbon::RibbonEdge::Bottom)
-    }) {
-        return Err(AppShellError::PermanentRibbonOnBottom { id: ribbon.id });
+    let ribbon = permanent[0];
+    if !matches!(ribbon.edge, crate::ribbon::RibbonEdge::Top) {
+        return Err(AppShellError::PermanentRibbonNotTop {
+            id: ribbon.id,
+            edge: ribbon.edge,
+        });
+    }
+    if ribbon.draggable || !ribbon.accepts.is_empty() {
+        return Err(AppShellError::PermanentRibbonMustBeFixed { id: ribbon.id });
     }
     Ok(())
 }

@@ -77,10 +77,17 @@ const PANE_EDITOR: &str = "demo_pane_editor";
 const PANE_THEME: &str = "demo_pane_theme";
 const PANE_KEYS: &str = "demo_pane_keys";
 const PANE_ABOUT: &str = "demo_pane_about";
+const PANE_CANVAS_BRUSH: &str = "demo_canvas_pane_brush";
+const PANE_CANVAS_LAYERS: &str = "demo_canvas_pane_layers";
+const PANE_CANVAS_ASSETS: &str = "demo_canvas_pane_assets";
+const PANE_CANVAS_INSPECTOR: &str = "demo_canvas_pane_inspector";
+const PANE_CANVAS_HISTORY: &str = "demo_canvas_pane_history";
+const PANE_CANVAS_EXPORT: &str = "demo_canvas_pane_export";
 const CANVAS_SHELF_LEFT: &str = "demo_canvas_shelf_left";
 
 const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
+const ACTION_CANVAS_CLEAR: &str = "demo_action_canvas_clear";
 const ACTION_VIEW_BEVY: &str = "demo_action_view_bevy";
 const ACTION_VIEW_CANVAS: &str = "demo_action_view_canvas";
 const ACTION_CLOSE_APP: &str = "demo_action_close_app";
@@ -150,6 +157,42 @@ const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
         PaneAnchor::BottomRail(RailZone::Start),
         "Editor",
     ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_BRUSH,
+        PaneAnchor::LeftRail(RailZone::Start),
+        "Brush",
+    ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_LAYERS,
+        PaneAnchor::LeftRail(RailZone::Middle),
+        "Layers",
+    ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_ASSETS,
+        PaneAnchor::LeftRail(RailZone::End),
+        "Assets",
+    ),
+    (
+        RIBBON_RIGHT,
+        PANE_CANVAS_INSPECTOR,
+        PaneAnchor::RightRail(RailZone::Start),
+        "Inspector",
+    ),
+    (
+        RIBBON_RIGHT,
+        PANE_CANVAS_HISTORY,
+        PaneAnchor::RightRail(RailZone::Middle),
+        "History",
+    ),
+    (
+        RIBBON_BOTTOM,
+        PANE_CANVAS_EXPORT,
+        PaneAnchor::BottomRail(RailZone::Start),
+        "Export",
+    ),
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -182,8 +225,8 @@ const RIBBONS: &[RibbonSpec] = &[
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
+        draggable: false,
+        accepts: &[],
     },
     RibbonSpec {
         id: RIBBON_LEFT,
@@ -191,7 +234,7 @@ const RIBBONS: &[RibbonSpec] = &[
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
         draggable: true,
-        accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM],
+        accepts: &[RIBBON_RIGHT, RIBBON_BOTTOM],
     },
     RibbonSpec {
         id: RIBBON_RIGHT,
@@ -199,7 +242,7 @@ const RIBBONS: &[RibbonSpec] = &[
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
         draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
+        accepts: &[RIBBON_LEFT, RIBBON_BOTTOM],
     },
     RibbonSpec {
         id: RIBBON_BOTTOM,
@@ -207,7 +250,7 @@ const RIBBONS: &[RibbonSpec] = &[
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
         draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP],
+        accepts: &[RIBBON_LEFT, RIBBON_RIGHT],
     },
 ];
 
@@ -343,9 +386,7 @@ const RIBBON_ITEMS: &[RibbonButtonSpec] = &[
 ];
 
 const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
-    // Canvas view opts out of the Bevy-specific side/bottom rails,
-    // but it does NOT opt out of the persistent main top bar. Keep
-    // every top-bar item that should remain global.
+    // TOP rail — the only persistent/shared bar.
     RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
@@ -383,6 +424,79 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
         slot: 0,
         glyph: RibbonGlyph::Icon("dismiss"),
         tooltip: "Close application",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    // Canvas LEFT rail — canvas-specific tools.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_BRUSH,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("paint-brush"),
+        tooltip: "Canvas brush settings",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_LAYERS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("square-multiple"),
+        tooltip: "Canvas layers",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_ASSETS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 2,
+        glyph: RibbonGlyph::Icon("image"),
+        tooltip: "Canvas assets",
+        child_ribbon: None,
+        role: None,
+    },
+    // Canvas RIGHT rail — canvas-specific state.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_INSPECTOR,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("sliders"),
+        tooltip: "Canvas inspector",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_HISTORY,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Start,
+        slot: 1,
+        glyph: RibbonGlyph::Icon("history"),
+        tooltip: "Canvas history",
+        child_ribbon: None,
+        role: None,
+    },
+    // Canvas BOTTOM rail — canvas actions.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_EXPORT,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("download"),
+        tooltip: "Canvas export",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: ACTION_CANVAS_CLEAR,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        glyph: RibbonGlyph::Icon("delete"),
+        tooltip: "Clear canvas strokes",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
@@ -1313,12 +1427,10 @@ fn ui_system(
     // happens during that paint; pane `open` state is read one
     // frame later (~16 ms — imperceptible).
     //
-    // IMPORTANT: persistent-bar pane buttons must resolve against
-    // the CURRENT root view's item set. Canvas opts out of the
-    // Bevy-specific side/bottom buttons, but it keeps persistent
-    // top-bar buttons like About. If we hard-skip all panes in
-    // Canvas, the persistent bar toggles state but its UI never
-    // appears over the current view.
+    // IMPORTANT: pane buttons must resolve against the CURRENT root
+    // view's item set. Canvas now carries the same four-edge demo
+    // ribbon layout as the Bevy view, with only the top ribbon being
+    // persistent.
     let current_ribbon_items: &[RibbonButtonSpec] = if fs_active && graph_fs {
         RIBBON_ITEMS_FS_GRAPH
     } else if fs_active && code_fs {
@@ -1486,6 +1598,12 @@ fn ui_system(
                 ),
                 PANE_KEYS => keys_pane(body),
                 PANE_ABOUT => about_pane(body),
+                PANE_CANVAS_BRUSH => canvas_brush_pane(body),
+                PANE_CANVAS_LAYERS => canvas_layers_pane(body),
+                PANE_CANVAS_ASSETS => canvas_assets_pane(body),
+                PANE_CANVAS_INSPECTOR => canvas_inspector_pane(body),
+                PANE_CANVAS_HISTORY => canvas_history_pane(body),
+                PANE_CANVAS_EXPORT => canvas_export_pane(body),
                 _ => {}
             });
     }
@@ -1568,6 +1686,10 @@ fn ui_system(
         }
         if click.item == egui::Id::new(ACTION_CLOSE_APP) {
             app_exit.write(AppExit::Success);
+            continue;
+        }
+        if click.item == egui::Id::new(ACTION_CANVAS_CLEAR) {
+            canvas_view.strokes.clear();
             continue;
         }
         if click.item == egui::Id::new(ACTION_PREV_CUBE)
@@ -2347,6 +2469,124 @@ fn about_pane(body: &mut PaneBody) {
                     ],
                     accent,
                 ),
+        ],
+    );
+}
+
+fn canvas_brush_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_BRUSH, "brush"),
+        "Brush",
+        "paint-brush",
+        vec![
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_slider("size", 6.0, 1.0..=32.0, 1, " px", accent),
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 1))
+                .with_separator(SeparatorStyle::Line)
+                .with_slider("opacity", 1.0, 0.05..=1.0, 2, "", accent),
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 2))
+                .with_separator(SeparatorStyle::None)
+                .with_toggle_initial("pressure", accent, true),
+        ],
+    );
+}
+
+fn canvas_layers_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_LAYERS, "layers"),
+        "Layers",
+        "square-multiple",
+        vec![
+            Pod::new(pid(PANE_CANVAS_LAYERS, "layers", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_select_list(
+                    vec![
+                        "Sketch".to_owned(),
+                        "Ink".to_owned(),
+                        "Annotations".to_owned(),
+                    ],
+                    None::<Vec<String>>,
+                    accent,
+                ),
+            Pod::new(pid(PANE_CANVAS_LAYERS, "layers", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_toggle_initial("show grid", accent, true),
+        ],
+    );
+}
+
+fn canvas_assets_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_ASSETS, "assets"),
+        "Assets",
+        "image",
+        vec![
+            Pod::new(pid(PANE_CANVAS_ASSETS, "assets", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_search("search images…", accent),
+            Pod::new(pid(PANE_CANVAS_ASSETS, "assets", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_button("Import image", accent),
+        ],
+    );
+}
+
+fn canvas_inspector_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_INSPECTOR, "selection"),
+        "Selection",
+        "sliders",
+        vec![
+            Pod::new(pid(PANE_CANVAS_INSPECTOR, "selection", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_readout("selection", "none"),
+            Pod::new(pid(PANE_CANVAS_INSPECTOR, "selection", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_slider("scale", 1.0, 0.25..=4.0, 2, "x", accent),
+        ],
+    );
+}
+
+fn canvas_history_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_HISTORY, "history"),
+        "History",
+        "history",
+        vec![
+            Pod::new(pid(PANE_CANVAS_HISTORY, "history", 0))
+                .with_separator(SeparatorStyle::None)
+                .with_select_list(
+                    vec![
+                        "New stroke".to_owned(),
+                        "Brush changed".to_owned(),
+                        "Layer toggled".to_owned(),
+                    ],
+                    None::<Vec<String>>,
+                    accent,
+                ),
+        ],
+    );
+}
+
+fn canvas_export_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_EXPORT, "export"),
+        "Export",
+        "download",
+        vec![
+            Pod::new(pid(PANE_CANVAS_EXPORT, "export", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_readout("format", "PNG"),
+            Pod::new(pid(PANE_CANVAS_EXPORT, "export", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_button("Export canvas", accent),
         ],
     );
 }

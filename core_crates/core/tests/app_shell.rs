@@ -89,11 +89,11 @@ fn empty_permanent_ribbon(id: &'static str) -> RibbonSlotDef {
     )
 }
 
-fn bottom_permanent_ribbon(id: &'static str) -> RibbonSlotDef {
+fn permanent_ribbon_on_edge(id: &'static str, edge: RibbonEdge) -> RibbonSlotDef {
     RibbonSlotDef::new(
         egui::Id::new(id),
         RibbonScope::Permanent,
-        RibbonEdge::Bottom,
+        edge,
         RibbonCluster::Middle,
         Vec::new(),
     )
@@ -191,15 +191,42 @@ fn app_shell_rejects_more_than_one_permanent_ribbon() {
 }
 
 #[test]
-fn app_shell_rejects_bottom_permanent_ribbon() {
+fn app_shell_rejects_missing_permanent_ribbon() {
     let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
-    let permanent = vec![bottom_permanent_ribbon("bottom.main.bar")];
+
+    let error = resolve_app_shell_ribbons(&mut router, &[]).unwrap_err();
+    assert!(matches!(error, AppShellError::MissingPermanentRibbon));
+}
+
+#[test]
+fn app_shell_rejects_non_top_permanent_ribbons() {
+    for (name, edge) in [
+        ("left.main.bar", RibbonEdge::Left),
+        ("right.main.bar", RibbonEdge::Right),
+        ("bottom.main.bar", RibbonEdge::Bottom),
+    ] {
+        let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+        let permanent = vec![permanent_ribbon_on_edge(name, edge)];
+
+        let error = resolve_app_shell_ribbons(&mut router, &permanent).unwrap_err();
+        assert!(matches!(
+            error,
+            AppShellError::PermanentRibbonNotTop { id, edge: actual_edge }
+                if id == egui::Id::new(name) && actual_edge == edge
+        ));
+    }
+}
+
+#[test]
+fn app_shell_rejects_movable_permanent_ribbon() {
+    let mut router = ViewRouter::new(ShellView::new("bevy", "Bevy"));
+    let permanent = vec![empty_permanent_ribbon("main.movable.bar").draggable(true)];
 
     let error = resolve_app_shell_ribbons(&mut router, &permanent).unwrap_err();
     assert!(matches!(
         error,
-        AppShellError::PermanentRibbonOnBottom { id }
-            if id == egui::Id::new("bottom.main.bar")
+        AppShellError::PermanentRibbonMustBeFixed { id }
+            if id == egui::Id::new("main.movable.bar")
     ));
 }
 
@@ -412,7 +439,7 @@ fn workspace_local_ribbons_participate_in_shell_resolution() {
 
     let resolved = frost_core::resolve_app_shell_ribbons_with_workspace_chrome(
         &mut router,
-        &[],
+        &permanent_main_with_system_control(),
         &[workspace_ribbon],
         &[],
     )
@@ -444,7 +471,7 @@ fn app_shell_calls_workspace_renderer_for_l1() {
     let (resolved, _) = frost_core::show_app_shell_with_workspace_renderer(
         &egui_ctx,
         &mut router,
-        &[],
+        &permanent_main_with_system_control(),
         egui::Color32::WHITE,
         |_ctx, ws| {
             called = true;
@@ -595,33 +622,55 @@ fn app_shell_chrome_includes_mandatory_close_controls_by_default() {
 }
 
 #[test]
-fn app_shell_chrome_rejects_bottom_main_bar() {
+fn app_shell_chrome_rejects_non_top_main_bars() {
+    for edge in [RibbonEdge::Left, RibbonEdge::Right, RibbonEdge::Bottom] {
+        let result = std::panic::catch_unwind(|| {
+            let _ = frost_core::AppShellChrome::new(RibbonSlotDef::new(
+                egui::Id::new(("main.non.top.bar", format!("{edge:?}"))),
+                RibbonScope::Permanent,
+                edge,
+                RibbonCluster::Middle,
+                Vec::new(),
+            ));
+        });
+
+        assert!(result.is_err());
+    }
+}
+
+#[test]
+fn app_shell_chrome_rejects_movable_main_bar() {
     let result = std::panic::catch_unwind(|| {
-        let _ = frost_core::AppShellChrome::new(RibbonSlotDef::new(
-            egui::Id::new("main.bottom.bar"),
-            RibbonScope::Permanent,
-            RibbonEdge::Bottom,
-            RibbonCluster::Middle,
-            Vec::new(),
-        ));
+        let _ = frost_core::AppShellChrome::new(
+            RibbonSlotDef::new(
+                egui::Id::new("main.movable.bar"),
+                RibbonScope::Permanent,
+                RibbonEdge::Top,
+                RibbonCluster::Middle,
+                Vec::new(),
+            )
+            .draggable(true),
+        );
     });
 
     assert!(result.is_err());
 }
 
 #[test]
-fn app_shell_chrome_rejects_bottom_merged_permanent_ribbon() {
-    let result = std::panic::catch_unwind(|| {
-        let _ = main_bar_with_slots(vec![]).with_permanent_ribbon(RibbonSlotDef::new(
-            egui::Id::new("bottom.extra.bar"),
-            RibbonScope::Permanent,
-            RibbonEdge::Bottom,
-            RibbonCluster::Middle,
-            Vec::new(),
-        ));
-    });
+fn app_shell_chrome_rejects_non_top_merged_permanent_ribbons() {
+    for edge in [RibbonEdge::Left, RibbonEdge::Right, RibbonEdge::Bottom] {
+        let result = std::panic::catch_unwind(|| {
+            let _ = main_bar_with_slots(vec![]).with_permanent_ribbon(RibbonSlotDef::new(
+                egui::Id::new(("non.top.extra.bar", format!("{edge:?}"))),
+                RibbonScope::Permanent,
+                edge,
+                RibbonCluster::Middle,
+                Vec::new(),
+            ));
+        });
 
-    assert!(result.is_err());
+        assert!(result.is_err());
+    }
 }
 
 #[test]
