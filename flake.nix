@@ -73,10 +73,21 @@
           packages = [
             (pkgs.rust-bin.stable.latest.default.override {
               extensions = [ "rust-src" "rustfmt" "clippy" ];
+              # `wasm32-unknown-unknown` std for the `egui_frost_web`
+              # browser host (`api_crates/web`). Without it `trunk` /
+              # `cargo --target wasm32-unknown-unknown` fail with
+              # "can't find crate for `core`".
+              targets = [ "wasm32-unknown-unknown" ];
             })
             pkgs.clang
             pkgs.mold
             pkgs.pkg-config
+
+            # `trunk` — bundles the `egui_frost_web` crate to wasm and
+            # serves it in a browser (`make serve-web`). Drives cargo
+            # for the `wasm32-unknown-unknown` target and fetches a
+            # matching `wasm-bindgen-cli` itself.
+            pkgs.trunk
 
             # Font tooling — `pyftsubset` (fontTools + brotli) is used to
             # extract a single face from an Iosevka `.ttc` collection
