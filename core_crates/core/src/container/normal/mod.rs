@@ -221,6 +221,15 @@ impl Normal {
         self
     }
 
+    /// Override which edge hosts the folder-tab strip for tabbed
+    /// containers. This is used by structural shelves so the right
+    /// shelf can mirror the left shelf instead of sharing the same
+    /// left-side tab strip.
+    pub(crate) fn tabbed_strip_side(mut self, side: TitleSide) -> Self {
+        self.tabbed_strip_side = Some(side);
+        self
+    }
+
     /// Override the body slot's flow-axis size. Use when stacking
     /// multiple containers in a pane so each gets a slice of the
     /// available main extent instead of all claiming the full pane.
@@ -306,10 +315,10 @@ impl Normal {
         //   Left/Right title (vertical title)   → strip on Top.
         // The strip projects FROM that container edge, so corner
         // squaring + outer-margin zeroing live on the same edge.
-        let strip_side = match title_side {
+        let strip_side = self.tabbed_strip_side.unwrap_or(match title_side {
             TitleSide::Top | TitleSide::Bottom => TitleSide::Left,
             TitleSide::Left | TitleSide::Right => TitleSide::Top,
-        };
+        });
 
         let tab_meta: Vec<(String, Icon<'static>)> =
             tabs.iter().map(|t| (t.title.clone(), t.icon)).collect();
@@ -377,24 +386,8 @@ impl Normal {
                 (theme_now.section_outer_margin_span as f32) + (theme_now.section_pad_x as f32)
             }
         };
-        let container_max_rect = match strip_side {
-            TitleSide::Left => egui::Rect::from_min_max(
-                pos2(
-                    avail.left() + strip_outer_inset + strip_thickness,
-                    avail.top(),
-                ),
-                avail.right_bottom(),
-            ),
-            TitleSide::Top => egui::Rect::from_min_max(
-                pos2(
-                    avail.left(),
-                    avail.top() + strip_outer_inset + strip_thickness,
-                ),
-                avail.right_bottom(),
-            ),
-            // strip_side is always Left or Top under the match above.
-            _ => avail,
-        };
+        let container_max_rect =
+            tabbed_container_max_rect(avail, strip_side, strip_thickness, strip_outer_inset);
         ui.ctx().data_mut(|d| {
             let key = pane::active_container_frame_rect_key();
             d.remove::<egui::Rect>(key);
@@ -437,6 +430,14 @@ impl Normal {
             (TitleSide::Left, TitleSide::Bottom) => egui::Rect::from_min_max(
                 pos2(used.left() - strip_thickness, used.top()),
                 pos2(used.left(), used.bottom() - title_offset),
+            ),
+            (TitleSide::Right, TitleSide::Top) => egui::Rect::from_min_max(
+                pos2(used.right(), used.top() + title_offset),
+                pos2(used.right() + strip_thickness, used.bottom()),
+            ),
+            (TitleSide::Right, TitleSide::Bottom) => egui::Rect::from_min_max(
+                pos2(used.right(), used.top()),
+                pos2(used.right() + strip_thickness, used.bottom() - title_offset),
             ),
             (TitleSide::Top, TitleSide::Left) => egui::Rect::from_min_max(
                 pos2(used.left() + title_offset, used.top() - strip_thickness),
@@ -1455,6 +1456,33 @@ impl Normal {
                 .inner_margin(style::section_padding())
                 .outer_margin(outer)
         }
+    }
+}
+
+fn tabbed_container_max_rect(
+    avail: egui::Rect,
+    strip_side: TitleSide,
+    strip_thickness: f32,
+    strip_outer_inset: f32,
+) -> egui::Rect {
+    let reserved = strip_outer_inset + strip_thickness;
+    match strip_side {
+        TitleSide::Left => egui::Rect::from_min_max(
+            pos2((avail.left() + reserved).min(avail.right()), avail.top()),
+            avail.right_bottom(),
+        ),
+        TitleSide::Right => egui::Rect::from_min_max(
+            avail.left_top(),
+            pos2((avail.right() - reserved).max(avail.left()), avail.bottom()),
+        ),
+        TitleSide::Top => egui::Rect::from_min_max(
+            pos2(avail.left(), (avail.top() + reserved).min(avail.bottom())),
+            avail.right_bottom(),
+        ),
+        TitleSide::Bottom => egui::Rect::from_min_max(
+            avail.left_top(),
+            pos2(avail.right(), (avail.bottom() - reserved).max(avail.top())),
+        ),
     }
 }
 
@@ -2785,6 +2813,28 @@ fn max_tab_natural_body_h(tabs: &[super::Tab]) -> f32 {
 #[cfg(test)]
 mod active_tab_tests {
     use super::*;
+
+    #[test]
+    fn tabbed_container_max_rect_reserves_right_strip_inside_available_rect() {
+        let avail = egui::Rect::from_min_max(pos2(10.0, 20.0), pos2(310.0, 620.0));
+        let rect = tabbed_container_max_rect(avail, TitleSide::Right, 26.0, 14.0);
+
+        assert_eq!(rect.left(), avail.left());
+        assert_eq!(rect.right(), avail.right() - 40.0);
+        assert_eq!(rect.top(), avail.top());
+        assert_eq!(rect.bottom(), avail.bottom());
+    }
+
+    #[test]
+    fn tabbed_container_max_rect_mirrors_left_and_right_strip_reservation() {
+        let avail = egui::Rect::from_min_max(pos2(10.0, 20.0), pos2(310.0, 620.0));
+        let left = tabbed_container_max_rect(avail, TitleSide::Left, 26.0, 14.0);
+        let right = tabbed_container_max_rect(avail, TitleSide::Right, 26.0, 14.0);
+
+        assert_eq!(left.width(), right.width());
+        assert_eq!(left.left(), avail.left() + 40.0);
+        assert_eq!(right.right(), avail.right() - 40.0);
+    }
 
     #[test]
     fn active_tab_resolution_prefers_stable_tab_id_over_stale_index() {

@@ -1,7 +1,7 @@
 use egui::{Id, Rect, pos2};
 use frost_core::{
     RibbonEdge, ShelfContainer, ShelfDef, ShelfEdge, ShelfEdgeError, ShelfState, layout_shelves,
-    pane::{PaneAnchor, RailZone},
+    pane::{PaneAnchor, RailZone, TitleSide},
     shelf_insets, style,
 };
 
@@ -37,6 +37,12 @@ fn shelf_edges_choose_expected_container_tab_orientation() {
         ShelfEdge::Bottom.container_anchor(),
         PaneAnchor::LeftRail(RailZone::Middle)
     );
+    assert_eq!(ShelfEdge::Left.container_tab_strip_side(), TitleSide::Left);
+    assert_eq!(
+        ShelfEdge::Right.container_tab_strip_side(),
+        TitleSide::Right
+    );
+    assert_eq!(ShelfEdge::Bottom.container_tab_strip_side(), TitleSide::Top);
 }
 
 #[test]

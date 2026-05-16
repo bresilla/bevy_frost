@@ -331,7 +331,7 @@ fn l1_workspace_overrides_permanent_close_slot_with_restore() {
     let resolved = resolve_app_shell_ribbons(&mut router, &permanent).unwrap();
     let system = &resolved.ribbons[0].items[0];
     assert_eq!(system.action, RibbonAction::PopWorkspace);
-    assert_eq!(system.icon, "arrow_minimize");
+    assert_eq!(system.icon, "arrow-minimize");
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn workspace_supplied_layers_can_override_active_l1_slots() {
         frost_core::system_close_or_restore_slot_id(),
         RibbonSlotItem::new(
             egui::Id::new("module.custom.restore"),
-            "module_restore",
+            "arrow-minimize",
             "Back",
             "Back from module",
             RibbonAction::PopWorkspace,
@@ -404,7 +404,7 @@ fn workspace_supplied_layers_can_override_active_l1_slots() {
         &[workspace_layer],
     )
     .unwrap();
-    assert_eq!(resolved.ribbons[0].items[0].icon, "module_restore");
+    assert_eq!(resolved.ribbons[0].items[0].icon, "arrow-minimize");
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn workspace_local_ribbons_participate_in_shell_resolution() {
             RibbonSlotId::new("workspace.tool"),
             Some(RibbonSlotItem::new(
                 egui::Id::new("workspace.pen"),
-                "draw",
+                "pen",
                 "Pen",
                 "Use pen",
                 RibbonAction::Command(egui::Id::new("workspace.pen.command")),
@@ -450,7 +450,7 @@ fn workspace_local_ribbons_participate_in_shell_resolution() {
         .iter()
         .find(|ribbon| matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == level.id))
         .unwrap();
-    assert_eq!(workspace.items[0].icon, "draw");
+    assert_eq!(workspace.items[0].icon, "pen");
 }
 
 #[test]
@@ -484,7 +484,7 @@ fn app_shell_calls_workspace_renderer_for_l1() {
                     RibbonSlotId::new("workspace.rendered.tool"),
                     Some(RibbonSlotItem::new(
                         egui::Id::new("workspace.rendered.item"),
-                        "node_tree",
+                        "flowchart",
                         "Graph",
                         "Graph tool",
                         RibbonAction::Command(egui::Id::new("workspace.rendered.command")),
@@ -499,7 +499,7 @@ fn app_shell_calls_workspace_renderer_for_l1() {
     assert!(called);
     assert!(resolved.ribbons.iter().any(
         |ribbon| matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == level.id)
-            && ribbon.items[0].icon == "node_tree"
+            && ribbon.items[0].icon == "flowchart"
     ));
 }
 

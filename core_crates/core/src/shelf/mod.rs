@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use egui::{Color32, Id, Pos2, Rect, Sense, Stroke, UiBuilder, Vec2, pos2, vec2};
 
 use crate::container::Tab;
-use crate::pane::{self, PaneAnchor, RailZone, active_pane_key};
+use crate::pane::{self, PaneAnchor, RailZone, TitleSide, active_pane_key};
 use crate::ribbon::RibbonEdge;
 use crate::style::{self, ShelfTheme};
 
@@ -41,6 +41,15 @@ impl ShelfEdge {
             // Bottom shelves should expose each container's tabs
             // along the top edge of the docked pane.
             ShelfEdge::Bottom => PaneAnchor::LeftRail(RailZone::Middle),
+        }
+    }
+
+    #[must_use]
+    pub fn container_tab_strip_side(self) -> TitleSide {
+        match self {
+            ShelfEdge::Left => TitleSide::Left,
+            ShelfEdge::Right => TitleSide::Right,
+            ShelfEdge::Bottom => TitleSide::Top,
         }
     }
 }
@@ -531,6 +540,7 @@ pub fn show_shelves<'a>(
 
     update_container_move_target_from_published(ctx, state);
     finish_container_move_if_released(ctx, state);
+    publish_container_move_preview_layout(ctx, layout, state, &shelf_theme);
     paint_shelf_move_ghost(ctx, layout, state, &shelf_theme);
     paint_container_move_ghost(ctx, layout, state, &shelf_theme);
 }
@@ -869,6 +879,7 @@ fn render_shelf_body(input: ShelfBodyInput<'_, '_, '_, '_>) {
         shelf.accent,
         specs,
         tab_scope,
+        Some(shelf.edge.container_tab_strip_side()),
     );
 
     let effective_active = resolve_visible_active_container(
@@ -1110,6 +1121,21 @@ pub fn publish_shelf_layout(ctx: &egui::Context, layout: ShelfLayout) {
     ctx.data_mut(|d| {
         d.insert_temp(crate::ribbon::chrome::chrome_bounds_key(), layout.viewport);
     });
+}
+
+fn publish_container_move_preview_layout(
+    ctx: &egui::Context,
+    layout: ShelfLayout,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) {
+    let Some(drag) = state.container_move else {
+        return;
+    };
+    let Some(preview) = container_move_preview_layout(ctx, layout, drag, theme) else {
+        return;
+    };
+    publish_shelf_layout(ctx, preview);
 }
 
 fn shelf_display_order<'a>(
@@ -1759,13 +1785,7 @@ fn paint_shelf_move_ghost(
         .interactable(false)
         .show(ctx, |ui| {
             let (local, _) = ui.allocate_exact_size(rect.size(), Sense::hover());
-            ui.painter().rect(
-                local,
-                0.0,
-                style::fill_for(style::FillRole::DragGhost, style::active_accent()),
-                style::stroke_for(style::StrokeRole::DragGhost, style::active_accent()),
-                egui::StrokeKind::Inside,
-            );
+            paint_shelf_reservation_ghost(ui, local, target, style::active_accent());
         });
 }
 
@@ -1811,13 +1831,7 @@ fn paint_container_move_ghost(
         .interactable(false)
         .show(ctx, |ui| {
             let (shelf_local, _) = ui.allocate_exact_size(shelf_rect.size(), Sense::hover());
-            ui.painter().rect(
-                shelf_local,
-                0.0,
-                style::fill_for(style::FillRole::DragGhost, accent),
-                style::stroke_for(style::StrokeRole::DragGhost, accent),
-                egui::StrokeKind::Inside,
-            );
+            paint_shelf_reservation_ghost(ui, shelf_local, target, accent);
 
             let container_rect =
                 new_shelf_container_ghost_rect(ctx, drag.container_id, target, shelf_local);
@@ -1829,6 +1843,35 @@ fn paint_container_move_ghost(
                 egui::StrokeKind::Inside,
             );
         });
+}
+
+fn paint_shelf_reservation_ghost(ui: &mut egui::Ui, rect: Rect, edge: ShelfEdge, accent: Color32) {
+    ui.painter().rect_filled(
+        rect,
+        0.0,
+        style::fill_for(style::FillRole::DragGhost, accent),
+    );
+    ui.painter().line_segment(
+        shelf_center_border_segment(edge, rect),
+        style::stroke_for(style::StrokeRole::DragGhost, accent),
+    );
+}
+
+fn shelf_center_border_segment(edge: ShelfEdge, rect: Rect) -> [Pos2; 2] {
+    match edge {
+        ShelfEdge::Left => [
+            pos2(rect.right(), rect.top()),
+            pos2(rect.right(), rect.bottom()),
+        ],
+        ShelfEdge::Right => [
+            pos2(rect.left(), rect.top()),
+            pos2(rect.left(), rect.bottom()),
+        ],
+        ShelfEdge::Bottom => [
+            pos2(rect.left(), rect.top()),
+            pos2(rect.right(), rect.top()),
+        ],
+    }
 }
 
 fn existing_shelf_container_slot_ghost(
@@ -1866,7 +1909,7 @@ fn new_shelf_container_ghost_rect(
     target: ShelfEdge,
     shelf_rect: Rect,
 ) -> Rect {
-    let content_rect = shelf_rect.shrink(style::theme().shelf().padding);
+    let content_rect = shelf_content_rect(target, shelf_rect, style::theme().shelf());
     let container_size =
         container_move_ghost_size_for_edge(ctx, container_id, target, content_rect)
             .min(content_rect.size());
@@ -1951,6 +1994,99 @@ fn container_drop_rect_for_drag(
         drop_extent_for(layout, drag.source_edge, target, theme),
         occupied,
     ))
+}
+
+fn container_move_preview_layout(
+    ctx: &egui::Context,
+    layout: ShelfLayout,
+    drag: ShelfContainerMoveState,
+    theme: &ShelfTheme,
+) -> Option<ShelfLayout> {
+    let target = drag.target_edge?;
+    if layout.rect_for(target).is_some() {
+        return None;
+    }
+    let target_rect = container_drop_rect_for_drag(ctx, layout, drag, target, theme)?;
+    let source_remains = source_shelf_has_other_containers(ctx, drag);
+    let mut left = layout.left;
+    let mut right = layout.right;
+    let mut bottom = layout.bottom;
+
+    if !source_remains {
+        match drag.source_edge {
+            ShelfEdge::Left => left = None,
+            ShelfEdge::Right => right = None,
+            ShelfEdge::Bottom => bottom = None,
+        }
+    }
+    match target {
+        ShelfEdge::Left => left = Some(target_rect),
+        ShelfEdge::Right => right = Some(target_rect),
+        ShelfEdge::Bottom => bottom = Some(target_rect),
+    }
+
+    Some(layout_from_reserved_shelves(
+        layout.available(),
+        left,
+        right,
+        bottom,
+    ))
+}
+
+fn layout_from_reserved_shelves(
+    available: Rect,
+    left: Option<Rect>,
+    right: Option<Rect>,
+    bottom: Option<Rect>,
+) -> ShelfLayout {
+    let mut viewport = available;
+    let mut resolved_left = None;
+    let mut resolved_right = None;
+    let mut resolved_bottom = None;
+
+    if let Some(rect) = left {
+        let extent = rect.width().min(viewport.width().max(0.0));
+        let shelf = Rect::from_min_max(
+            viewport.min,
+            pos2(
+                (viewport.min.x + extent).min(viewport.max.x),
+                viewport.max.y,
+            ),
+        );
+        viewport.min.x = (viewport.min.x + extent).min(viewport.max.x);
+        resolved_left = Some(shelf);
+    }
+    if let Some(rect) = right {
+        let extent = rect.width().min(viewport.width().max(0.0));
+        let shelf = Rect::from_min_max(
+            pos2(
+                (viewport.max.x - extent).max(viewport.min.x),
+                viewport.min.y,
+            ),
+            viewport.max,
+        );
+        viewport.max.x = (viewport.max.x - extent).max(viewport.min.x);
+        resolved_right = Some(shelf);
+    }
+    if let Some(rect) = bottom {
+        let extent = rect.height().min(viewport.height().max(0.0));
+        let shelf = Rect::from_min_max(
+            pos2(
+                viewport.min.x,
+                (viewport.max.y - extent).max(viewport.min.y),
+            ),
+            viewport.max,
+        );
+        viewport.max.y = (viewport.max.y - extent).max(viewport.min.y);
+        resolved_bottom = Some(shelf);
+    }
+
+    ShelfLayout {
+        viewport,
+        left: resolved_left,
+        right: resolved_right,
+        bottom: resolved_bottom,
+    }
 }
 
 fn source_shelf_has_other_containers(ctx: &egui::Context, drag: ShelfContainerMoveState) -> bool {

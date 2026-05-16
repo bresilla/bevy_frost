@@ -599,11 +599,11 @@ fn item_role(item: &RibbonSlotItem, ribbon: &ResolvedSlotRibbon) -> RibbonRole {
 }
 
 fn paint_item_glyph(ui: &mut egui::Ui, rect: egui::Rect, item: &RibbonSlotItem, fg: egui::Color32) {
-    crate::icons::paint_icon(
-        ui.painter(),
+    crate::icons::paint_section_icon(
+        ui,
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        item.icon,
+        crate::icons::Icon::from(item.icon),
         18.0,
         fg,
     );
@@ -1136,7 +1136,7 @@ mod tests {
             cluster: RibbonCluster::Middle,
             accepts: &["*"],
             items: vec![
-                RibbonSlotItem::featureful("test_item", "icon", "Test", "Test", RibbonAction::Noop)
+                RibbonSlotItem::featureful("test_item", "info", "Test", "Test", RibbonAction::Noop)
                     .draggable(true),
             ],
         }

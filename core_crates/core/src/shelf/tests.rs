@@ -1819,7 +1819,7 @@ fn new_side_shelf_container_ghost_uses_target_shelf_width() {
     let ctx = egui::Context::default();
     let container_id = Id::new("dragged");
     let shelf_rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 700.0));
-    let content_rect = shelf_rect.shrink(style::theme().shelf().padding);
+    let content_rect = shelf_content_rect(ShelfEdge::Right, shelf_rect, style::theme().shelf());
 
     let ghost = new_shelf_container_ghost_rect(&ctx, container_id, ShelfEdge::Right, shelf_rect);
 
@@ -1827,6 +1827,59 @@ fn new_side_shelf_container_ghost_uses_target_shelf_width() {
     assert_eq!(ghost.width(), content_rect.width());
     assert!(ghost.height() < content_rect.height());
     assert!(content_rect.contains(ghost.max));
+}
+
+#[test]
+fn container_move_preview_layout_reserves_new_side_shelf_for_ribbons() {
+    let ctx = egui::Context::default();
+    let theme = *style::theme().shelf();
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(220.0, 0.0), pos2(1000.0, 800.0)),
+        left: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(220.0, 800.0))),
+        right: None,
+        bottom: None,
+    };
+    let drag = ShelfContainerMoveState {
+        container_id: Id::new("dragged"),
+        source_shelf: Id::new("source-shelf"),
+        source_pane: Id::new("source-pane"),
+        source_edge: ShelfEdge::Left,
+        cursor: pos2(990.0, 400.0),
+        target_edge: Some(ShelfEdge::Right),
+        target_shelf: None,
+        target_pane: None,
+        target_slot: None,
+        container_size: vec2(120.0, 260.0),
+    };
+
+    let preview = container_move_preview_layout(&ctx, layout, drag, &theme)
+        .expect("new side shelf target should publish preview layout");
+    let right = preview
+        .right
+        .expect("preview should reserve the target side shelf");
+
+    assert_eq!(right.top(), 0.0);
+    assert_eq!(right.bottom(), 800.0);
+    assert_eq!(preview.viewport.right(), right.left());
+    assert_eq!(preview.left, layout.left);
+}
+
+#[test]
+fn shelf_reservation_ghost_border_only_faces_viewport_center() {
+    let rect = Rect::from_min_max(pos2(10.0, 20.0), pos2(110.0, 220.0));
+
+    assert_eq!(
+        shelf_center_border_segment(ShelfEdge::Left, rect),
+        [pos2(110.0, 20.0), pos2(110.0, 220.0)]
+    );
+    assert_eq!(
+        shelf_center_border_segment(ShelfEdge::Right, rect),
+        [pos2(10.0, 20.0), pos2(10.0, 220.0)]
+    );
+    assert_eq!(
+        shelf_center_border_segment(ShelfEdge::Bottom, rect),
+        [pos2(10.0, 20.0), pos2(110.0, 20.0)]
+    );
 }
 
 #[test]

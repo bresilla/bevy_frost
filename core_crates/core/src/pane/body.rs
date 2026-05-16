@@ -23,7 +23,7 @@ use egui::{Color32, Id, Ui};
 use crate::container::{Normal, SeparatorOrient, Tab, container_flow, set_container_flow};
 use crate::pod::{Pod, PodResponse};
 
-use super::{PaneAnchor, active_drag, paint_container_dots, section_order_for};
+use super::{PaneAnchor, TitleSide, active_drag, paint_container_dots, section_order_for};
 
 /// One container, ready to render inside a pane.
 ///
@@ -350,6 +350,7 @@ pub(crate) fn render_containers<'a>(
         accent,
         containers,
         &mut tab_scope,
+        None,
     )
 }
 
@@ -361,6 +362,7 @@ pub(crate) fn render_containers_with_tab_scope<'a>(
     accent: Color32,
     containers: Vec<ContainerSpec<'a>>,
     tab_scope: &mut TabRoutingScope,
+    tabbed_strip_side: Option<TitleSide>,
 ) -> HashMap<Id, Vec<PodResponse>> {
     let mut seen_container_ids: HashSet<Id> = HashSet::with_capacity(containers.len());
     assert!(
@@ -415,7 +417,10 @@ pub(crate) fn render_containers_with_tab_scope<'a>(
                 // paint a phantom container.
                 continue;
             }
-            let normal = Normal::new(title.as_str(), anchor, accent, cid).icon(icon);
+            let mut normal = Normal::new(title.as_str(), anchor, accent, cid).icon(icon);
+            if let Some(side) = tabbed_strip_side {
+                normal = normal.tabbed_strip_side(side);
+            }
             let resp = normal.show_tabs(body_ui, routed_tabs);
             responses.insert(cid, resp);
             let dragging_self = active_drag(body_ui.ctx())
@@ -762,6 +767,7 @@ mod tests {
                 Color32::from_rgb(120, 160, 220),
                 target_specs,
                 &mut scope,
+                None,
             );
 
             assert!(responses.contains_key(&target));

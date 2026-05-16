@@ -339,7 +339,7 @@ const RIBBON_ITEMS: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 1,
         draggable: false,
-        glyph: RibbonGlyph::Icon("draw"),
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -423,7 +423,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 1,
         draggable: false,
-        glyph: RibbonGlyph::Icon("draw"),
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -480,7 +480,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Start,
         slot: 0,
         draggable: true,
-        glyph: RibbonGlyph::Icon("sliders"),
+        glyph: RibbonGlyph::Icon("options"),
         tooltip: "Canvas inspector",
         child_ribbon: None,
         role: None,
@@ -503,7 +503,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Start,
         slot: 0,
         draggable: true,
-        glyph: RibbonGlyph::Icon("download"),
+        glyph: RibbonGlyph::Icon("arrow-download"),
         tooltip: "Canvas export",
         child_ribbon: None,
         role: None,
@@ -584,7 +584,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 1,
         draggable: false,
-        glyph: RibbonGlyph::Icon("draw"),
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -617,7 +617,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Start,
         slot: 1,
         draggable: false,
-        glyph: RibbonGlyph::Icon("expand"),
+        glyph: RibbonGlyph::Icon("arrow-expand"),
         tooltip: "Frame all",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -628,7 +628,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Start,
         slot: 2,
         draggable: false,
-        glyph: RibbonGlyph::Icon("trash"),
+        glyph: RibbonGlyph::Icon("delete"),
         tooltip: "Clear graph",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -650,7 +650,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 0,
         draggable: false,
-        glyph: RibbonGlyph::Icon("dot"),
+        glyph: RibbonGlyph::Icon("circle"),
         tooltip: "Sources",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -672,7 +672,7 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 2,
         draggable: false,
-        glyph: RibbonGlyph::Icon("wave"),
+        glyph: RibbonGlyph::Icon("sine-wave-dots"),
         tooltip: "Noise",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -722,7 +722,7 @@ const RIBBON_ITEMS_FS_CODE: &[RibbonButtonSpec] = &[
         cluster: RibbonCluster::Middle,
         slot: 1,
         draggable: false,
-        glyph: RibbonGlyph::Icon("draw"),
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
@@ -823,6 +823,31 @@ fn find_item<'a>(items: &'a [RibbonButtonSpec], id: &'static str) -> Option<&'a 
 
 fn find_ribbon<'a>(ribbons: &'a [RibbonSpec], id: &'static str) -> Option<&'a RibbonSpec> {
     ribbons.iter().find(|ribbon| ribbon.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_ribbon_icons_are_renderable() {
+        for item in RIBBON_ITEMS
+            .iter()
+            .chain(RIBBON_ITEMS_ROOT_VIEW)
+            .chain(RIBBON_ITEMS_FS_GRAPH)
+            .chain(RIBBON_ITEMS_FS_CODE)
+        {
+            let icon = match item.glyph {
+                RibbonGlyph::Icon(icon) | RibbonGlyph::Text(icon) | RibbonGlyph::Svg(icon) => icon,
+            };
+            assert!(
+                frost_core::icons::is_icon_payload(icon),
+                "demo ribbon item {} uses a non-renderable icon payload {:?}",
+                item.id,
+                icon
+            );
+        }
+    }
 }
 
 fn ribbon_action(id: &'static str) -> RibbonAction {

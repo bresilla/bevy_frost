@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use egui::Id;
 
+use crate::icons;
 use crate::view::ViewId;
 
 use super::{RibbonAction, RibbonCluster, RibbonEdge, RibbonMode, RibbonRole};
@@ -69,10 +70,7 @@ impl RibbonSlotItem {
     ) -> Self {
         let label = label.into();
         let tooltip = tooltip.into();
-        assert!(
-            !icon.trim().is_empty(),
-            "ribbon slot items require a non-empty icon"
-        );
+        assert_ribbon_icon(icon);
         assert!(
             !label.trim().is_empty(),
             "ribbon slot items require a non-empty label"
@@ -356,10 +354,7 @@ fn assert_unique_slot_ids(slots: &[RibbonSlot]) {
 }
 
 pub(crate) fn validate_ribbon_slot_item(item: &RibbonSlotItem) {
-    assert!(
-        !item.icon.trim().is_empty(),
-        "ribbon slot items require a non-empty icon"
-    );
+    assert_ribbon_icon(item.icon);
     assert!(
         !item.label.trim().is_empty(),
         "ribbon slot items require a non-empty label"
@@ -386,6 +381,17 @@ pub(crate) fn validate_ribbon_slot_item(item: &RibbonSlotItem) {
             "featureful ribbon items require a non-empty child ribbon id"
         );
     }
+}
+
+fn assert_ribbon_icon(icon: &'static str) {
+    assert!(
+        !icon.trim().is_empty(),
+        "ribbon slot items require a non-empty icon"
+    );
+    assert!(
+        icons::is_icon_payload(icon),
+        "ribbon slot items require an icon that resolves to a bundled font icon or inline SVG"
+    );
 }
 
 pub(crate) fn validate_ribbon_slot(slot: &RibbonSlot) {

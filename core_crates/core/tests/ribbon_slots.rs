@@ -67,6 +67,29 @@ fn ribbon_slot_items_require_non_empty_icons() {
 }
 
 #[test]
+fn ribbon_slot_items_require_resolvable_font_or_svg_icons() {
+    let missing_font_icon = std::panic::catch_unwind(|| {
+        let _ = RibbonSlotItem::new(
+            egui::Id::new("missing-font-icon"),
+            "not_a_real_fluent_icon",
+            "Missing icon",
+            "Missing icon",
+            RibbonAction::Noop,
+        );
+    });
+    assert!(missing_font_icon.is_err());
+
+    let svg_icon = RibbonSlotItem::new(
+        egui::Id::new("svg-icon"),
+        r#"<svg viewBox="0 0 16 16"></svg>"#,
+        "SVG",
+        "SVG",
+        RibbonAction::Noop,
+    );
+    assert!(svg_icon.icon.starts_with("<svg"));
+}
+
+#[test]
 fn ribbon_slot_items_require_label_and_tooltip() {
     let missing_label = std::panic::catch_unwind(|| {
         let _ = RibbonSlotItem::new(
@@ -249,15 +272,15 @@ fn fixed_slot_ignores_layer_overrides() {
     let slot_id = RibbonSlotId::new("system.close_or_restore");
     let slot = RibbonSlot::new(
         slot_id,
-        Some(item("close", "x")),
+        Some(item("close", "dismiss")),
         RibbonOverridePolicy::Fixed,
     );
     let layer = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
         slot_id,
-        item("restore", "restore"),
+        item("restore", "arrow-minimize"),
     )]);
 
-    assert_eq!(resolve_slot_item(&slot, &[layer]).unwrap().icon, "x");
+    assert_eq!(resolve_slot_item(&slot, &[layer]).unwrap().icon, "dismiss");
 }
 
 #[test]
@@ -265,15 +288,18 @@ fn layer_override_replaces_default() {
     let slot_id = RibbonSlotId::new("system.close_or_restore");
     let slot = RibbonSlot::new(
         slot_id,
-        Some(item("close", "x")),
+        Some(item("close", "dismiss")),
         RibbonOverridePolicy::LayerOverride,
     );
     let layer = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
         slot_id,
-        item("restore", "restore"),
+        item("restore", "arrow-minimize"),
     )]);
 
-    assert_eq!(resolve_slot_item(&slot, &[layer]).unwrap().icon, "restore");
+    assert_eq!(
+        resolve_slot_item(&slot, &[layer]).unwrap().icon,
+        "arrow-minimize"
+    );
 }
 
 #[test]
@@ -281,7 +307,7 @@ fn deeper_workspace_override_beats_view_override() {
     let slot_id = RibbonSlotId::new("system.close_or_restore");
     let slot = RibbonSlot::new(
         slot_id,
-        Some(item("close", "x")),
+        Some(item("close", "dismiss")),
         RibbonOverridePolicy::LayerOverride,
     );
     let view_layer = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
@@ -298,7 +324,7 @@ fn deeper_workspace_override_beats_view_override() {
         slot_id,
         RibbonSlotItem::new(
             egui::Id::new("restore"),
-            "restore",
+            "arrow-minimize",
             "restore",
             "restore",
             RibbonAction::PopWorkspace,
@@ -306,7 +332,7 @@ fn deeper_workspace_override_beats_view_override() {
     )]);
 
     let resolved = resolve_slot_item(&slot, &[view_layer, l1_layer]).unwrap();
-    assert_eq!(resolved.icon, "restore");
+    assert_eq!(resolved.icon, "arrow-minimize");
     assert_eq!(resolved.action, RibbonAction::PopWorkspace);
 }
 
@@ -331,25 +357,27 @@ fn append_policy_keeps_default_and_adds_layer_items() {
     );
     let view_layer =
         RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(slot_id, item("view", "eye"))]);
-    let l1_layer =
-        RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(slot_id, item("l1", "brush"))]);
+    let l1_layer = RibbonOverrideLayer::new(vec![RibbonSlotOverride::new(
+        slot_id,
+        item("l1", "paint-brush"),
+    )]);
 
     let icons: Vec<&'static str> = resolve_slot_items(&slot, &[view_layer, l1_layer])
         .into_iter()
         .map(|item| item.icon)
         .collect();
-    assert_eq!(icons, vec!["home", "eye", "brush"]);
+    assert_eq!(icons, vec!["home", "eye", "paint-brush"]);
 }
 
 #[test]
 fn permanent_view_switcher_generates_switch_view_items() {
     let mut router = ViewRouter::new(support::MockView::new("bevy", "Bevy", "cube"));
-    router.register(support::MockView::new("graph", "Graph", "node_tree"));
+    router.register(support::MockView::new("graph", "Graph", "flowchart"));
 
     let ribbon = permanent_view_switcher_ribbon(router.entries());
     assert_eq!(ribbon.slots.len(), 2);
     let graph_item = ribbon.slots[1].default_item.as_ref().unwrap();
-    assert_eq!(graph_item.icon, "node_tree");
+    assert_eq!(graph_item.icon, "flowchart");
     assert_eq!(
         graph_item.action,
         RibbonAction::SwitchView(ViewId::new("graph"))
@@ -374,7 +402,7 @@ fn permanent_system_control_slot_can_resolve_to_restore_override() {
 #[test]
 fn dispatch_switch_view_and_workspace_actions() {
     let mut router = ViewRouter::new(support::MockView::new("bevy", "Bevy", "cube"));
-    let graph = router.register(support::MockView::new("graph", "Graph", "node_tree"));
+    let graph = router.register(support::MockView::new("graph", "Graph", "flowchart"));
 
     assert_eq!(
         dispatch_ribbon_action(RibbonAction::SwitchView(graph), &mut router),

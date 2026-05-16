@@ -217,7 +217,7 @@ pub const fn theme_pro(mode: Mode) -> Theme {
         },
         modules: ModuleTheme {
             allow_fullscreen_by_default: true,
-            workspace_restore_icon: "arrow_minimize",
+            workspace_restore_icon: "arrow-minimize",
             workspace_restore_label: "Restore",
             inline_workspace_button_label: "Open workspace",
         },

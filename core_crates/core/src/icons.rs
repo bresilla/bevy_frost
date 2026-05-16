@@ -94,6 +94,14 @@ impl<'a> From<&'a str> for Icon<'a> {
     }
 }
 
+/// `true` when `payload` can render as a Frost icon: either raw SVG
+/// markup or a bundled Fluent UI System Icon name.
+#[must_use]
+pub fn is_icon_payload(payload: &str) -> bool {
+    let trimmed = payload.trim_start();
+    trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") || icon(payload).is_some()
+}
+
 /// Paint a [`Icon`] at `pos`, aligned via `align`, sized to `size`
 /// pixels, tinted by `color`. Dispatches to the Fluent painter for
 /// `Icon::Name`, and to egui's image loader for `Icon::Svg`.

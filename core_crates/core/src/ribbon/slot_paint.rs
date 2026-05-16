@@ -38,6 +38,7 @@ pub fn draw_slot_ribbons(
     accent: Color32,
     ribbons: &[ResolvedSlotRibbon],
 ) -> Vec<RibbonSlotClick> {
+    assert_resolved_ribbon_icons(ribbons);
     let mut clicks = Vec::new();
     for ribbon in ribbons {
         draw_one_slot_ribbon(ctx, accent, ribbon, &mut clicks);
@@ -61,6 +62,7 @@ pub fn draw_slot_ribbons_featureful(
     placement: &mut RibbonPlacement,
     drag: &mut RibbonDrag,
 ) -> Vec<RibbonSlotClick> {
+    assert_resolved_ribbon_icons(ribbons);
     if !can_use_featureful_chrome(ribbons) {
         return draw_slot_ribbons(ctx, accent, ribbons);
     }
@@ -93,11 +95,24 @@ pub fn draw_slot_ribbons_featureful(
         .collect()
 }
 
+fn assert_resolved_ribbon_icons(ribbons: &[ResolvedSlotRibbon]) {
+    for ribbon in ribbons {
+        for item in &ribbon.items {
+            assert!(
+                crate::icons::is_icon_payload(item.icon),
+                "ribbon slot items require an icon that resolves to a bundled font icon or inline SVG"
+            );
+        }
+    }
+}
+
 fn can_use_featureful_chrome(ribbons: &[ResolvedSlotRibbon]) -> bool {
     ribbons.iter().all(|ribbon| {
         ribbon.chrome_id.is_some()
             && ribbon.items.iter().all(|item| {
-                item.chrome_id.is_some() && item.chrome_tooltip.is_some() && !item.icon.is_empty()
+                item.chrome_id.is_some()
+                    && item.chrome_tooltip.is_some()
+                    && crate::icons::is_icon_payload(item.icon)
             })
     })
 }
@@ -206,5 +221,9 @@ fn cluster_axis_pos(min: f32, max: f32, span: f32, cluster: RibbonCluster, margi
 }
 
 fn glyph_for_item(item: &RibbonSlotItem) -> super::RibbonGlyph {
-    super::RibbonGlyph::Icon(item.icon)
+    if item.icon.trim_start().starts_with("<svg") || item.icon.trim_start().starts_with("<?xml") {
+        super::RibbonGlyph::Svg(item.icon)
+    } else {
+        super::RibbonGlyph::Icon(item.icon)
+    }
 }
