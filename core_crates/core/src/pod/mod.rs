@@ -295,14 +295,15 @@ pub struct TagItem {
 
 impl TagItem {
     pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            fill: None,
-        }
+        let label = label.into();
+        assert_non_empty("tag chips", "label", &label);
+        Self { label, fill: None }
     }
     pub fn colored(label: impl Into<String>, fill: Color32) -> Self {
+        let label = label.into();
+        assert_non_empty("tag chips", "label", &label);
         Self {
-            label: label.into(),
+            label,
             fill: Some(fill),
         }
     }
@@ -330,10 +331,10 @@ pub struct BadgeRowSpec {
 
 impl BadgeRowSpec {
     pub fn new(label: impl Into<String>, badges: Vec<TagItem>) -> Self {
-        Self {
-            label: label.into(),
-            badges,
-        }
+        let label = label.into();
+        assert_non_empty("badge rows", "label", &label);
+        assert!(!badges.is_empty(), "badge rows require at least one badge");
+        Self { label, badges }
     }
 
     /// Convenience: build a row from plain strings — every chip uses
@@ -342,11 +343,69 @@ impl BadgeRowSpec {
         label: impl Into<String>,
         badges: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        Self {
-            label: label.into(),
-            badges: badges.into_iter().map(|s| TagItem::new(s)).collect(),
-        }
+        Self::new(label, badges.into_iter().map(TagItem::new).collect())
     }
+}
+
+fn assert_non_empty(component: &str, field: &str, value: &str) {
+    assert!(
+        !value.trim().is_empty(),
+        "{component} require a non-empty {field}"
+    );
+}
+
+fn assert_optional_non_empty(component: &str, field: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        assert_non_empty(component, field, value);
+    }
+}
+
+fn assert_non_empty_items(component: &str, items: &[String]) {
+    assert!(!items.is_empty(), "{component} require at least one item");
+    assert!(
+        items.iter().all(|item| !item.trim().is_empty()),
+        "{component} require every item to be non-empty"
+    );
+}
+
+fn assert_finite(component: &str, field: &str, value: f64) {
+    assert!(value.is_finite(), "{component} require a finite {field}");
+}
+
+fn assert_fraction(component: &str, field: &str, value: f32) {
+    assert!(
+        value.is_finite() && (0.0..=1.0).contains(&value),
+        "{component} require {field} to be finite and in 0.0..=1.0"
+    );
+}
+
+fn assert_finite_range(component: &str, range: &std::ops::RangeInclusive<f64>) {
+    let start = *range.start();
+    let end = *range.end();
+    assert_finite(component, "range start", start);
+    assert_finite(component, "range end", end);
+    assert!(
+        start <= end,
+        "{component} require range start to be <= range end"
+    );
+}
+
+fn assert_value_in_range(component: &str, value: f64, range: &std::ops::RangeInclusive<f64>) {
+    assert_finite(component, "value", value);
+    assert_finite_range(component, range);
+    assert!(
+        range.contains(&value),
+        "{component} require value to be inside the configured range"
+    );
+}
+
+fn assert_color_channels(component: &str, channels: &[f32]) {
+    assert!(
+        channels
+            .iter()
+            .all(|channel| channel.is_finite() && (0.0..=1.0).contains(channel)),
+        "{component} require every channel to be finite and in 0.0..=1.0"
+    );
 }
 
 #[derive(Clone)]
@@ -411,13 +470,9 @@ enum WidgetSpec {
     /// Typed module slot. Modules render a compact inline surface in
     /// the pod and can request entry into a full workspace level.
     Module(ModuleConfig),
-    /// Caller-supplied paint closure. Used as the integration point
-    /// for widgets that don't fit a flat config (recursive trees,
-    /// node graphs, code editors, …) — the closure draws into the
-    /// pod's `Ui`, allocating whatever vertical space it needs.
-    /// `unit_count` for `Custom` defaults to `1`; pass an explicit
-    /// hint via [`Pod::with_custom_units`] when the closure paints
-    /// significantly more rows.
+    /// Internal typed-widget paint closure. This is intentionally
+    /// private: public pod/module APIs should stay typed instead of
+    /// exposing arbitrary egui hooks.
     Custom {
         units: usize,
         paint: Box<dyn FnOnce(&mut Ui) + Send + Sync>,
@@ -679,8 +734,10 @@ impl Pod {
     /// index across the search slots, so multiple searches in the
     /// same pod persist independently.
     pub fn with_search(mut self, placeholder: impl Into<String>, accent: Color32) -> Self {
+        let placeholder = placeholder.into();
+        assert_non_empty("search widgets", "placeholder", &placeholder);
         self.widgets.push(WidgetSpec::Search(SearchConfig {
-            placeholder: placeholder.into(),
+            placeholder,
             accent,
         }));
         self
@@ -689,8 +746,10 @@ impl Pod {
     /// Add a plain button widget. `label` is the centred caption.
     /// Click status is reported in `PodResponse::buttons[i]`.
     pub fn with_button(mut self, label: impl Into<String>, accent: Color32) -> Self {
+        let label = label.into();
+        assert_non_empty("buttons", "label", &label);
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
-            label: label.into(),
+            label,
             accent,
             subtitle: None,
             glyph: None,
@@ -709,10 +768,14 @@ impl Pod {
         subtitle: impl Into<String>,
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        let subtitle = subtitle.into();
+        assert_non_empty("buttons", "label", &label);
+        assert_non_empty("buttons", "subtitle", &subtitle);
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
-            label: label.into(),
+            label,
             accent,
-            subtitle: Some(subtitle.into()),
+            subtitle: Some(subtitle),
             glyph: None,
             animation: None,
         }));
@@ -728,8 +791,10 @@ impl Pod {
         accent: Color32,
         style: FillStyle,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("buttons", "label", &label);
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
-            label: label.into(),
+            label,
             accent,
             subtitle: None,
             glyph: None,
@@ -752,11 +817,17 @@ impl Pod {
         glyph: Option<impl Into<String>>,
         animation: Option<FillStyle>,
     ) -> Self {
+        let label = label.into();
+        let subtitle = subtitle.map(Into::into);
+        let glyph = glyph.map(Into::into);
+        assert_non_empty("buttons", "label", &label);
+        assert_optional_non_empty("buttons", "subtitle", subtitle.as_deref());
+        assert_optional_non_empty("buttons", "glyph", glyph.as_deref());
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
-            label: label.into(),
+            label,
             accent,
-            subtitle: subtitle.map(Into::into),
-            glyph: glyph.map(Into::into),
+            subtitle,
+            glyph,
             animation,
         }));
         self
@@ -766,8 +837,10 @@ impl Pod {
     /// knob sit right on the same row (1U). State persists in
     /// `ctx().data` keyed off the pod's id + toggle slot index.
     pub fn with_toggle(mut self, label: impl Into<String>, accent: Color32) -> Self {
+        let label = label.into();
+        assert_non_empty("toggles", "label", &label);
         self.widgets.push(WidgetSpec::Toggle(ToggleConfig {
-            label: label.into(),
+            label,
             accent,
             initial: None,
         }));
@@ -783,8 +856,10 @@ impl Pod {
         accent: Color32,
         initial: bool,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("toggles", "label", &label);
         self.widgets.push(WidgetSpec::Toggle(ToggleConfig {
-            label: label.into(),
+            label,
             accent,
             initial: Some(initial),
         }));
@@ -799,8 +874,11 @@ impl Pod {
         text: impl Into<String>,
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("progress bars", "label", &label);
+        assert_fraction("progress bars", "fraction", fraction);
         self.widgets.push(WidgetSpec::Progress(ProgressConfig {
-            label: label.into(),
+            label,
             fraction,
             text: text.into(),
             accent,
@@ -821,8 +899,11 @@ impl Pod {
         suffix: impl Into<String>,
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("sliders", "label", &label);
+        assert_value_in_range("sliders", value, &range);
         self.widgets.push(WidgetSpec::Slider(SliderConfig {
-            label: label.into(),
+            label,
             value,
             range,
             decimals,
@@ -842,8 +923,13 @@ impl Pod {
         decimals: usize,
         suffix: impl Into<String>,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("drag values", "label", &label);
+        assert_value_in_range("drag values", value, &range);
+        assert_finite("drag values", "speed", speed);
+        assert!(speed >= 0.0, "drag values require a non-negative speed");
         self.widgets.push(WidgetSpec::DragValue(DragValueConfig {
-            label: label.into(),
+            label,
             value,
             speed,
             range,
@@ -863,11 +949,17 @@ impl Pod {
         subtitle: impl Into<String>,
         accent: Color32,
     ) -> Self {
+        let glyph = glyph.into();
+        let name = name.into();
+        let subtitle = subtitle.into();
+        assert_non_empty("card buttons", "glyph", &glyph);
+        assert_non_empty("card buttons", "name", &name);
+        assert_non_empty("card buttons", "subtitle", &subtitle);
         self.widgets.push(WidgetSpec::Button(ButtonConfig {
-            label: name.into(),
+            label: name,
             accent,
-            subtitle: Some(subtitle.into()),
-            glyph: Some(glyph.into()),
+            subtitle: Some(subtitle),
+            glyph: Some(glyph),
             animation: None,
         }));
         self
@@ -883,8 +975,14 @@ impl Pod {
         initial: usize,
         accent: Color32,
     ) -> Self {
+        let options: Vec<String> = options.into_iter().map(Into::into).collect();
+        assert_non_empty_items("dropdowns", &options);
+        assert!(
+            initial < options.len(),
+            "dropdown initial index must be within the option list"
+        );
         self.widgets.push(WidgetSpec::Dropdown(DropdownConfig {
-            options: options.into_iter().map(Into::into).collect(),
+            options,
             initial,
             accent,
         }));
@@ -902,9 +1000,13 @@ impl Pod {
         selected_initial: bool,
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        let trailing = trailing.map(Into::into);
+        assert_non_empty("select rows", "label", &label);
+        assert_optional_non_empty("select rows", "trailing", trailing.as_deref());
         self.widgets.push(WidgetSpec::Select(SelectConfig {
-            label: label.into(),
-            trailing: trailing.map(Into::into),
+            label,
+            trailing,
             selected_initial,
             accent,
         }));
@@ -922,10 +1024,14 @@ impl Pod {
         radio_initial: bool,
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        let trailing = trailing.map(Into::into);
+        assert_non_empty("hybrid select rows", "label", &label);
+        assert_optional_non_empty("hybrid select rows", "trailing", trailing.as_deref());
         self.widgets
             .push(WidgetSpec::HybridSelect(HybridSelectConfig {
-                label: label.into(),
-                trailing: trailing.map(Into::into),
+                label,
+                trailing,
                 selected_initial,
                 radio_initial,
                 accent,
@@ -942,8 +1048,11 @@ impl Pod {
         initial_rgb: [f32; 3],
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("RGB color widgets", "label", &label);
+        assert_color_channels("RGB color widgets", &initial_rgb);
         self.widgets.push(WidgetSpec::Color(ColorConfig {
-            label: label.into(),
+            label,
             initial: [initial_rgb[0], initial_rgb[1], initial_rgb[2], 1.0],
             alpha: false,
             accent,
@@ -959,8 +1068,11 @@ impl Pod {
         initial_rgba: [f32; 4],
         accent: Color32,
     ) -> Self {
+        let label = label.into();
+        assert_non_empty("RGBA color widgets", "label", &label);
+        assert_color_channels("RGBA color widgets", &initial_rgba);
         self.widgets.push(WidgetSpec::Color(ColorConfig {
-            label: label.into(),
+            label,
             initial: initial_rgba,
             alpha: true,
             accent,
@@ -975,10 +1087,12 @@ impl Pod {
     /// though the response carries no state — re-render the pod with
     /// a new `value` to update what's shown.
     pub fn with_readout(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
-        self.widgets.push(WidgetSpec::Readout(ReadoutConfig {
-            label: label.into(),
-            value: value.into(),
-        }));
+        let label = label.into();
+        let value = value.into();
+        assert_non_empty("readouts", "label", &label);
+        assert_non_empty("readouts", "value", &value);
+        self.widgets
+            .push(WidgetSpec::Readout(ReadoutConfig { label, value }));
         self
     }
 
@@ -995,6 +1109,7 @@ impl Pod {
         accent: Color32,
     ) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
+        assert_non_empty_items("select lists", &items);
         let trailing = trailing.filter(|t| t.len() == items.len());
         self.widgets.push(WidgetSpec::SelectList(SelectListConfig {
             items,
@@ -1016,6 +1131,7 @@ impl Pod {
         accent: Color32,
     ) -> Self {
         let items: Vec<String> = items.into_iter().map(Into::into).collect();
+        assert_non_empty_items("hybrid select lists", &items);
         let trailing = trailing.filter(|t| t.len() == items.len());
         self.widgets
             .push(WidgetSpec::HybridSelectList(HybridSelectListConfig {
@@ -1066,6 +1182,12 @@ impl Pod {
             .into_iter()
             .map(|(k, a)| (k.into(), a.into()))
             .collect();
+        assert!(!rows.is_empty(), "keybindings require at least one row");
+        assert!(
+            rows.iter()
+                .all(|(keys, action)| !keys.trim().is_empty() && !action.trim().is_empty()),
+            "keybindings require every key and action label to be non-empty"
+        );
         self.widgets
             .push(WidgetSpec::Keybindings(KeybindingsConfig { rows }));
         self
@@ -1141,37 +1263,18 @@ impl Pod {
     where
         M: FrostModule + Send + Sync + 'static,
     {
+        assert!(
+            !module.title().trim().is_empty(),
+            "pod modules require a non-empty title"
+        );
+        assert!(
+            !module.icon().trim().is_empty(),
+            "pod modules require a non-empty icon"
+        );
         self.widgets.push(WidgetSpec::Module(ModuleConfig {
             options,
             module: Box::new(module),
         }));
-        self
-    }
-
-    /// Add a caller-supplied paint closure as a widget slot. Use for
-    /// custom rendering that doesn't fit one of the flat configs —
-    /// the canonical case being [`crate::widget::tree_row`], which is
-    /// recursive and needs the caller to walk its model.
-    ///
-    /// The closure runs inside the pod's per-slot `push_id` scope so
-    /// any `ui.id().with(...)` derivations stay unique across pods.
-    /// Allocate vertical space normally (`ui.allocate_exact_size` /
-    /// child uis); the pod's flow accounting resizes around whatever
-    /// the closure paints.
-    ///
-    /// `Custom` widgets surface no per-frame response back through
-    /// [`PodResponse`] — the closure owns its own state and reactions.
-    /// The unit hint defaults to `1`; call [`Pod::with_custom_units`]
-    /// when the closure paints more than one 1U row's worth so the
-    /// inter-pod drag-resize math remains proportional.
-    pub(crate) fn with_custom(
-        mut self,
-        paint: impl FnOnce(&mut Ui) + Send + Sync + 'static,
-    ) -> Self {
-        self.widgets.push(WidgetSpec::Custom {
-            units: 1,
-            paint: Box::new(paint),
-        });
         self
     }
 
@@ -1181,7 +1284,7 @@ impl Pod {
     /// wrapper that exposes only `row(...)` (forwarding to
     /// `tree_row`) and ctx-data access — no raw [`egui::Ui`]
     /// leaks. `units` is the inter-pod resize hint (same shape
-    /// as `with_custom_units`).
+    /// as the internal custom slot units).
     #[must_use]
     pub fn with_tree<F>(self, units: usize, body: F) -> Self
     where
@@ -1193,10 +1296,11 @@ impl Pod {
         })
     }
 
-    /// Like [`Pod::with_custom`] but with an explicit "this slot
+    /// Internal custom paint slot with an explicit "this slot
     /// occupies N units of 1U row height" hint, used by the
     /// inter-pod resize-handle to share drag delta across pods
-    /// proportionally to their content size.
+    /// proportionally to their content size. Public APIs should
+    /// expose typed wrappers instead of raw egui closures.
     pub(crate) fn with_custom_units(
         mut self,
         units: usize,
@@ -1785,5 +1889,260 @@ fn paint_widgets(
                 paint(ui);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::module::{ModuleResponse, WorkspaceCtx};
+
+    struct MockModule {
+        title: &'static str,
+        icon: &'static str,
+    }
+
+    impl MockModule {
+        fn new(title: &'static str, icon: &'static str) -> Self {
+            Self { title, icon }
+        }
+    }
+
+    impl FrostModule for MockModule {
+        fn id(&self) -> Id {
+            Id::new(("mock-module", self.title, self.icon))
+        }
+
+        fn title(&self) -> &str {
+            self.title
+        }
+
+        fn icon(&self) -> &'static str {
+            self.icon
+        }
+
+        fn inline(&mut self, _ui: &mut egui::Ui, _ctx: ModuleInlineCtx<'_>) -> ModuleResponse {
+            ModuleResponse::none()
+        }
+
+        fn workspace(&mut self, _ws: &mut WorkspaceCtx<'_>) {}
+    }
+
+    #[test]
+    fn pod_modules_require_title_and_icon() {
+        let missing_title = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_module(MockModule::new(" ", "box"));
+        });
+        let missing_icon = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_module(MockModule::new("Module", ""));
+        });
+        let valid = Pod::new("pod").with_module(MockModule::new("Module", "box"));
+
+        assert!(missing_title.is_err());
+        assert!(missing_icon.is_err());
+        assert_eq!(valid.widgets.len(), 1);
+    }
+
+    #[test]
+    fn pod_dropdowns_require_options_and_valid_initial_index() {
+        let empty = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_dropdown(Vec::<String>::new(), 0, Color32::WHITE);
+        });
+        let blank = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_dropdown(["valid", " "], 0, Color32::WHITE);
+        });
+        let out_of_bounds = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_dropdown(["one"], 1, Color32::WHITE);
+        });
+        let valid = Pod::new("pod").with_dropdown(["one"], 0, Color32::WHITE);
+
+        assert!(empty.is_err());
+        assert!(blank.is_err());
+        assert!(out_of_bounds.is_err());
+        assert_eq!(valid.widgets.len(), 1);
+    }
+
+    #[test]
+    fn pod_select_lists_require_non_empty_items() {
+        let empty = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_select_list(Vec::<String>::new(), None, Color32::WHITE);
+        });
+        let blank = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_select_list(["one", " "], None, Color32::WHITE);
+        });
+        let hybrid_empty = std::panic::catch_unwind(|| {
+            let _ =
+                Pod::new("pod").with_hybrid_select_list(Vec::<String>::new(), None, Color32::WHITE);
+        });
+        let valid = Pod::new("pod").with_select_list(["one"], None, Color32::WHITE);
+
+        assert!(empty.is_err());
+        assert!(blank.is_err());
+        assert!(hybrid_empty.is_err());
+        assert_eq!(valid.widgets.len(), 1);
+    }
+
+    #[test]
+    fn tag_and_badge_rows_require_visible_labels() {
+        let blank_tag = std::panic::catch_unwind(|| {
+            let _ = TagItem::new(" ");
+        });
+        let blank_colored_tag = std::panic::catch_unwind(|| {
+            let _ = TagItem::colored("", Color32::WHITE);
+        });
+        let blank_row_label = std::panic::catch_unwind(|| {
+            let _ = BadgeRowSpec::from_strs(" ", ["one"]);
+        });
+        let empty_badges = std::panic::catch_unwind(|| {
+            let _ = BadgeRowSpec::from_strs("row", Vec::<String>::new());
+        });
+        let valid = BadgeRowSpec::from_strs("row", ["one"]);
+
+        assert!(blank_tag.is_err());
+        assert!(blank_colored_tag.is_err());
+        assert!(blank_row_label.is_err());
+        assert!(empty_badges.is_err());
+        assert_eq!(valid.badges.len(), 1);
+    }
+
+    #[test]
+    fn pod_numeric_widgets_require_finite_in_range_values() {
+        let progress_nan = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_progress("loading", f32::NAN, "nan", Color32::WHITE);
+        });
+        let progress_oob = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_progress("loading", 1.1, "110%", Color32::WHITE);
+        });
+        let slider_nan = std::panic::catch_unwind(|| {
+            let _ =
+                Pod::new("pod").with_slider("speed", f64::NAN, 0.0..=1.0, 2, "", Color32::WHITE);
+        });
+        let slider_bad_range = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_slider("speed", 0.5, 1.0..=0.0, 2, "", Color32::WHITE);
+        });
+        let slider_oob = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_slider("speed", 2.0, 0.0..=1.0, 2, "", Color32::WHITE);
+        });
+        let drag_bad_speed = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_drag_value("size", 1.0, -1.0, 0.0..=2.0, 1, "");
+        });
+        let valid = Pod::new("pod")
+            .with_progress("loading", 0.5, "50%", Color32::WHITE)
+            .with_slider("speed", 0.5, 0.0..=1.0, 2, "", Color32::WHITE)
+            .with_drag_value("size", 1.0, 0.1, 0.0..=2.0, 1, "");
+
+        assert!(progress_nan.is_err());
+        assert!(progress_oob.is_err());
+        assert!(slider_nan.is_err());
+        assert!(slider_bad_range.is_err());
+        assert!(slider_oob.is_err());
+        assert!(drag_bad_speed.is_err());
+        assert_eq!(valid.widgets.len(), 3);
+    }
+
+    #[test]
+    fn pod_color_widgets_require_finite_unit_channels() {
+        let blank_label = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_color_rgb(" ", [0.1, 0.2, 0.3], Color32::WHITE);
+        });
+        let rgb_nan = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_color_rgb("color", [0.1, f32::NAN, 0.3], Color32::WHITE);
+        });
+        let rgba_oob = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_color_rgba("color", [0.1, 0.2, 0.3, 2.0], Color32::WHITE);
+        });
+        let valid = Pod::new("pod")
+            .with_color_rgb("rgb", [0.1, 0.2, 0.3], Color32::WHITE)
+            .with_color_rgba("rgba", [0.1, 0.2, 0.3, 0.4], Color32::WHITE);
+
+        assert!(blank_label.is_err());
+        assert!(rgb_nan.is_err());
+        assert!(rgba_oob.is_err());
+        assert_eq!(valid.widgets.len(), 2);
+    }
+
+    #[test]
+    fn pod_text_widgets_require_visible_labels() {
+        let blank_search = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_search(" ", Color32::WHITE);
+        });
+        let blank_button = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_button("", Color32::WHITE);
+        });
+        let blank_subtitle = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_button_subtitle("Button", " ", Color32::WHITE);
+        });
+        let blank_styled_glyph = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_button_styled(
+                "Button",
+                Color32::WHITE,
+                None::<String>,
+                Some(" "),
+                None,
+            );
+        });
+        let blank_toggle = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_toggle(" ", Color32::WHITE);
+        });
+        let blank_card_glyph = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_card_button("", "Card", "Sub", Color32::WHITE);
+        });
+        let valid = Pod::new("pod")
+            .with_search("search", Color32::WHITE)
+            .with_button("Button", Color32::WHITE)
+            .with_button_subtitle("Button", "Sub", Color32::WHITE)
+            .with_button_styled("Button", Color32::WHITE, Some("Sub"), Some("info"), None)
+            .with_toggle("Toggle", Color32::WHITE)
+            .with_toggle_initial("Toggle 2", Color32::WHITE, true)
+            .with_card_button("info", "Card", "Sub", Color32::WHITE);
+
+        assert!(blank_search.is_err());
+        assert!(blank_button.is_err());
+        assert!(blank_subtitle.is_err());
+        assert!(blank_styled_glyph.is_err());
+        assert!(blank_toggle.is_err());
+        assert!(blank_card_glyph.is_err());
+        assert_eq!(valid.widgets.len(), 7);
+    }
+
+    #[test]
+    fn pod_select_readout_and_keybinding_widgets_require_visible_text() {
+        let blank_select = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_select(" ", None::<String>, false, Color32::WHITE);
+        });
+        let blank_select_trailing = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_select("Row", Some(" "), false, Color32::WHITE);
+        });
+        let blank_hybrid = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_hybrid_select(
+                "",
+                None::<String>,
+                false,
+                false,
+                Color32::WHITE,
+            );
+        });
+        let blank_readout_value = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_readout("Version", " ");
+        });
+        let empty_keybindings = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_keybindings(Vec::<(String, String)>::new());
+        });
+        let blank_keybinding = std::panic::catch_unwind(|| {
+            let _ = Pod::new("pod").with_keybindings([("Ctrl+K", " ")]);
+        });
+        let valid = Pod::new("pod")
+            .with_select("Row", Some("tail"), false, Color32::WHITE)
+            .with_hybrid_select("Hybrid", Some("tail"), false, false, Color32::WHITE)
+            .with_readout("Version", "1")
+            .with_keybindings([("Ctrl+K", "Command")]);
+
+        assert!(blank_select.is_err());
+        assert!(blank_select_trailing.is_err());
+        assert!(blank_hybrid.is_err());
+        assert!(blank_readout_value.is_err());
+        assert!(empty_keybindings.is_err());
+        assert!(blank_keybinding.is_err());
+        assert_eq!(valid.widgets.len(), 4);
     }
 }

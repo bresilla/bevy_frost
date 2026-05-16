@@ -1,5 +1,6 @@
 use super::{
     RibbonOverrideLayer, RibbonOverridePolicy, RibbonSlot, RibbonSlotItem, RibbonSlotOverride,
+    slot::{validate_ribbon_override_layer, validate_ribbon_slot},
 };
 
 /// Resolve a slot to the items that should paint in that slot.
@@ -14,6 +15,8 @@ pub fn resolve_slot_items(
     slot: &RibbonSlot,
     layers: &[RibbonOverrideLayer],
 ) -> Vec<RibbonSlotItem> {
+    validate_ribbon_slot(slot);
+    layers.iter().for_each(validate_ribbon_override_layer);
     match slot.override_policy {
         RibbonOverridePolicy::Fixed => slot.default_item.iter().cloned().collect(),
         RibbonOverridePolicy::LayerOverride => {

@@ -1,8 +1,13 @@
+use std::collections::HashSet;
+
 use egui::{Color32, Id};
 
 use crate::{
-    ribbon::{RibbonOverrideLayer, RibbonSlotDef},
-    workspace::{WorkspaceBar, WorkspaceLevelState, WorkspacePolicy, WorkspaceStack},
+    ribbon::{RibbonAvoidance, RibbonOverrideLayer, RibbonScope, RibbonSlotDef},
+    workspace::{
+        WorkspaceBar, WorkspaceLevelState, WorkspacePolicy, WorkspaceStack,
+        validate_workspace_bar_item,
+    },
 };
 
 /// Options for a module's inline pod representation.
@@ -34,9 +39,10 @@ impl ModuleInlineCtx<'_> {
     #[must_use]
     pub fn can_enter_workspace(&self) -> bool {
         self.options.allow_workspace
-            && self.workspace.as_ref().map_or(true, |stack| {
-                stack.current_policy().allow_module_workspace_push
-            })
+            && self
+                .workspace
+                .as_ref()
+                .is_none_or(|stack| stack.current_policy().allow_module_workspace_push)
     }
 }
 
@@ -95,6 +101,18 @@ impl<'a> WorkspaceCtx<'a> {
     }
 
     pub fn add_bar(&mut self, bar: WorkspaceBar) {
+        assert!(
+            !self.bars.iter().any(|existing| existing.id == bar.id),
+            "workspace bars require unique ids within one workspace level"
+        );
+        let mut seen_items = HashSet::with_capacity(bar.items.len());
+        for item in &bar.items {
+            assert!(
+                seen_items.insert(item.id),
+                "workspace bar items require unique ids within one bar"
+            );
+            validate_workspace_bar_item(item);
+        }
         self.bars.push(bar);
     }
 
@@ -104,6 +122,14 @@ impl<'a> WorkspaceCtx<'a> {
     }
 
     pub fn add_ribbon(&mut self, ribbon: RibbonSlotDef) {
+        assert!(
+            matches!(ribbon.scope, RibbonScope::WorkspaceLevel(id) if id == self.level.id),
+            "WorkspaceCtx::add_ribbon only accepts ribbons scoped to the current workspace level"
+        );
+        assert!(
+            !self.ribbons.iter().any(|existing| existing.id == ribbon.id),
+            "workspace ribbons require unique ids within one workspace level"
+        );
         self.ribbons.push(ribbon);
     }
 
@@ -129,5 +155,137 @@ impl<'a> WorkspaceCtx<'a> {
         &mut self,
     ) -> Result<WorkspaceLevelState, crate::workspace::WorkspaceStackError> {
         self.stack.pop()
+    }
+
+    #[must_use]
+    pub fn ribbon_avoiding_rect(
+        &self,
+        egui_ctx: &egui::Context,
+        avoidance: RibbonAvoidance,
+    ) -> egui::Rect {
+        crate::ribbon_avoiding_rect(egui_ctx, avoidance)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        RibbonCluster, RibbonEdge, WorkspaceBarItem,
+        ribbon::{RibbonScope, RibbonSlotDef},
+    };
+
+    fn module_workspace_ctx() -> (WorkspaceStack, Color32) {
+        let mut stack = WorkspaceStack::new(egui::Id::new("root"));
+        stack.push_module(egui::Id::new("module"));
+        (stack, Color32::WHITE)
+    }
+
+    #[test]
+    fn workspace_ctx_rejects_duplicate_bar_ids() {
+        let (mut stack, accent) = module_workspace_ctx();
+        let mut ctx = WorkspaceCtx::new(&mut stack, accent);
+        let id = egui::Id::new("bar");
+        ctx.add_bar(WorkspaceBar::new(
+            id,
+            crate::WorkspaceBarEdge::Top,
+            crate::WorkspaceBarCluster::Middle,
+        ));
+
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.add_bar(WorkspaceBar::new(
+                id,
+                crate::WorkspaceBarEdge::Left,
+                crate::WorkspaceBarCluster::Start,
+            ));
+        }));
+
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn workspace_ctx_rejects_duplicate_bar_item_ids() {
+        let (mut stack, accent) = module_workspace_ctx();
+        let mut ctx = WorkspaceCtx::new(&mut stack, accent);
+        let item_id = egui::Id::new("item");
+        let bar = WorkspaceBar {
+            id: egui::Id::new("bar"),
+            edge: crate::WorkspaceBarEdge::Top,
+            cluster: crate::WorkspaceBarCluster::Middle,
+            items: vec![
+                WorkspaceBarItem::command(item_id, "Add", Some("add")),
+                WorkspaceBarItem::command(item_id, "Remove", Some("dismiss")),
+            ],
+        };
+
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.add_bar(bar);
+        }));
+
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn workspace_ctx_rejects_ribbons_scoped_outside_current_level() {
+        let (mut stack, accent) = module_workspace_ctx();
+        let mut ctx = WorkspaceCtx::new(&mut stack, accent);
+        let wrong_scope = RibbonSlotDef::new(
+            egui::Id::new("wrong.ribbon"),
+            RibbonScope::View(crate::ViewId::new("canvas")),
+            RibbonEdge::Top,
+            RibbonCluster::Middle,
+            Vec::new(),
+        );
+
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.add_ribbon(wrong_scope);
+        }));
+
+        assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn workspace_ctx_rejects_duplicate_ribbon_ids() {
+        let (mut stack, accent) = module_workspace_ctx();
+        let mut ctx = WorkspaceCtx::new(&mut stack, accent);
+        let ribbon_id = egui::Id::new("duplicate.ribbon");
+        let first = RibbonSlotDef::new(
+            ribbon_id,
+            RibbonScope::WorkspaceLevel(ctx.level.id),
+            RibbonEdge::Top,
+            RibbonCluster::Middle,
+            Vec::new(),
+        );
+        let second = RibbonSlotDef::new(
+            ribbon_id,
+            RibbonScope::WorkspaceLevel(ctx.level.id),
+            RibbonEdge::Right,
+            RibbonCluster::Middle,
+            Vec::new(),
+        );
+
+        ctx.add_ribbon(first);
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.add_ribbon(second);
+        }));
+
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn workspace_ctx_accepts_current_level_ribbons() {
+        let (mut stack, accent) = module_workspace_ctx();
+        let mut ctx = WorkspaceCtx::new(&mut stack, accent);
+        let ribbon = RibbonSlotDef::new(
+            egui::Id::new("level.ribbon"),
+            RibbonScope::WorkspaceLevel(ctx.level.id),
+            RibbonEdge::Top,
+            RibbonCluster::Middle,
+            Vec::new(),
+        );
+
+        ctx.add_ribbon(ribbon);
+
+        assert_eq!(ctx.ribbons().len(), 1);
     }
 }

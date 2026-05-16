@@ -130,6 +130,7 @@ pub fn hybrid_select_row(
 }
 
 /// Variable-height hybrid select row.
+#[allow(clippy::too_many_arguments)]
 pub fn hybrid_select_row_h(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,

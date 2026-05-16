@@ -20,7 +20,7 @@
 //! 2. Every interesting widget calls [`tag`] with its rect and a
 //!    descriptive label, e.g.
 //!    ```ignore
-//!    frost_core::debug::tag(ui, frame_rect, "Pane2[settings]");
+//!    frost_core::debug::tag(ui, frame_rect, "Pane[settings]");
 //!    frost_core::debug::tag(ui, body_rect, "  Container[Settings 2] > body");
 //!    frost_core::debug::tag(ui, pod_rect,  "    SearchPod[…/newui_search_pod]");
 //!    ```

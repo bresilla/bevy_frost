@@ -74,7 +74,7 @@ fn built_in_themes_have_typed_identity_and_tab_layouts() {
     assert_eq!(pro.views.switcher_layout, ViewSwitcherLayout::Horizontal);
     assert_eq!(game.views.switcher_layout, ViewSwitcherLayout::VerticalRail);
     assert!(pro.modules.allow_fullscreen_by_default);
-    assert_eq!(pro.modules.workspace_restore_icon, "arrow_minimize");
+    assert_eq!(pro.modules.workspace_restore_icon, "arrow-minimize");
     assert!(pro.ribbon.permanent.button_size > 0.0);
     assert!(game.ribbon.workspace.ghost_fill_alpha >= game.ribbon.view_local.ghost_fill_alpha);
     assert!(flat.ribbon.slot_override_transition >= 0.0);

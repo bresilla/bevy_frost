@@ -186,6 +186,25 @@ impl crate::pod::Pod {
         syntax: Syntax,
         default_text: impl Into<String>,
     ) -> Self {
+        self.with_code_editor_opts(
+            text_id,
+            syntax,
+            default_text,
+            OverlayOpts::default().avoid_ribbons(crate::RibbonAvoidance::all()),
+        )
+    }
+
+    /// Append a frost-themed code editor with explicit fullscreen
+    /// overlay options. The fullscreen background stays full-window;
+    /// these options only affect the body/chip.
+    #[must_use]
+    pub fn with_code_editor_opts(
+        self,
+        text_id: egui::Id,
+        syntax: Syntax,
+        default_text: impl Into<String>,
+        fs_opts: OverlayOpts,
+    ) -> Self {
         let default = default_text.into();
         self.with_custom_units(10, move |ui| {
             let mut text: String = ui
@@ -201,7 +220,7 @@ impl crate::pod::Pod {
                 syntax.clone(),
                 accent,
                 avail,
-                OverlayOpts::default(),
+                fs_opts,
             );
             ui.ctx().data_mut(|d| d.insert_temp(text_id, text));
         })
@@ -280,6 +299,7 @@ impl CodeEditorSurface {
 
     fn show_editor(&mut self, ui: &mut egui::Ui) {
         let min_size = ui.available_size_before_wrap();
+        let content_avoidance = crate::module::FrostModule::fullscreen_content_avoidance(self);
         frost_code_editor_with_opts(
             ui,
             self.id,
@@ -287,7 +307,7 @@ impl CodeEditorSurface {
             self.syntax.clone(),
             crate::style::active_accent(),
             min_size,
-            OverlayOpts::default(),
+            OverlayOpts::default().avoid_ribbons(content_avoidance),
         );
     }
 }
@@ -309,9 +329,19 @@ impl crate::FrostView for CodeEditorSurface {
         vec![self.toolbar(crate::RibbonScope::View(crate::ViewId(self.id)))]
     }
 
+    fn content_avoidance(&self) -> crate::RibbonAvoidance {
+        crate::RibbonAvoidance::all()
+    }
+
     fn show(&mut self, ctx: &mut crate::ViewCtx<'_>) {
+        let rect = ctx.content_rect();
         egui::CentralPanel::default().show(ctx.egui_ctx, |ui| {
-            self.show_editor(ui);
+            let mut body = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            self.show_editor(&mut body);
         });
     }
 }
@@ -327,6 +357,10 @@ impl crate::FrostModule for CodeEditorSurface {
 
     fn icon(&self) -> &'static str {
         "code"
+    }
+
+    fn fullscreen_content_avoidance(&self) -> crate::RibbonAvoidance {
+        crate::RibbonAvoidance::all()
     }
 
     fn inline(

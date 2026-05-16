@@ -178,10 +178,10 @@ impl NodeViewState {
     /// instance is being torn down, or when the host wants to
     /// force a re-allocation on the next frame.
     pub fn release(&mut self, backend: &mut dyn NodeViewBackend) {
-        if let Some(t) = self.target.take() {
-            if let Some(id) = t.parent_tex_id {
-                backend.unregister_native(id);
-            }
+        if let Some(t) = self.target.take()
+            && let Some(id) = t.parent_tex_id
+        {
+            backend.unregister_native(id);
         }
         self.renderer = None;
     }
@@ -200,10 +200,10 @@ impl NodeViewState {
         // Drop the old texture (and its parent registration) before
         // allocating a new one — keeps the renderer's internal
         // texture map tidy.
-        if let Some(old) = self.target.take() {
-            if let Some(id) = old.parent_tex_id {
-                backend.unregister_native(id);
-            }
+        if let Some(old) = self.target.take()
+            && let Some(id) = old.parent_tex_id
+        {
+            backend.unregister_native(id);
         }
         let (device, _queue) = backend.wgpu();
         let format = backend.target_format();
@@ -539,12 +539,12 @@ pub fn show_with_anchor<R>(
         // Cursor-anchor for THIS frame's sub-step. Each smoothing
         // tick shifts content by a tiny delta so the scene point
         // under the cursor stays put for the whole animation.
-        if (z_new - z_old).abs() > f32::EPSILON {
-            if let Some(p) = parent_hover {
-                let cursor_offset = p - rect.min;
-                let delta = cursor_offset / z_new - cursor_offset / z_old;
-                on_zoom_anchor(&state.sub_ctx.clone(), delta);
-            }
+        if (z_new - z_old).abs() > f32::EPSILON
+            && let Some(p) = parent_hover
+        {
+            let cursor_offset = p - rect.min;
+            let delta = cursor_offset / z_new - cursor_offset / z_old;
+            on_zoom_anchor(&state.sub_ctx.clone(), delta);
         }
         // Keep repainting until we've settled — egui can otherwise
         // idle-sleep mid-animation.
@@ -604,12 +604,10 @@ pub fn show_with_anchor<R>(
         // motion frames are left untouched so we never replay the
         // user's pointer history (which manifested as judder during
         // drags).
-        if !parent_had_motion {
-            if let Some(p) = parent_hover {
-                let local = (p - rect.min.to_vec2()) * pos_scale;
-                raw.events
-                    .push(egui::Event::PointerMoved(egui::pos2(local.x, local.y)));
-            }
+        if !parent_had_motion && let Some(p) = parent_hover {
+            let local = (p - rect.min.to_vec2()) * pos_scale;
+            raw.events
+                .push(egui::Event::PointerMoved(egui::pos2(local.x, local.y)));
         }
     } else {
         // Pointer left the rect — tell the sub context so it drops
@@ -642,19 +640,19 @@ pub fn show_with_anchor<R>(
     );
 
     // Composite the rendered texture into the parent UI.
-    if let Some(target) = &state.target {
-        if let Some(tex_id) = target.parent_tex_id {
-            parent_ui.painter().image(
-                tex_id,
-                rect,
-                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-            // Per-frame backend hook — Bevy queues the
-            // source-to-GpuImage copy here so the parent UI sees
-            // this frame's render. eframe ignores it.
-            backend.after_render(&target.texture, tex_id, target.size_pixels);
-        }
+    if let Some(target) = &state.target
+        && let Some(tex_id) = target.parent_tex_id
+    {
+        parent_ui.painter().image(
+            tex_id,
+            rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        // Per-frame backend hook — Bevy queues the
+        // source-to-GpuImage copy here so the parent UI sees
+        // this frame's render. eframe ignores it.
+        backend.after_render(&target.texture, tex_id, target.size_pixels);
     }
 
     response

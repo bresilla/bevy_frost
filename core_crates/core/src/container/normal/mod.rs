@@ -1,5 +1,5 @@
 //! `Normal` container — a flex-based, two-part block (title zone +
-//! body zone) dropped into a [`crate::pane::Pane2`] body. The
+//! body zone) dropped into a [`crate::pane::Pane`] body. The
 //! container's title sits on the **same side** of the block as the
 //! parent pane's title strip, so nested chrome chords with the pane
 //! chrome.
@@ -46,7 +46,7 @@ const _BODY_PAD: f32 = 6.0;
 /// vertical-title containers. The MAIN axis stays content-driven
 /// (capped via `Body::max_flow` for vertical-title to stop a body
 /// like `text_input` from growing the pane unboundedly along X).
-/// Pane2's locked span axis matches this constant so the pane and
+/// Pane's locked span axis matches this constant so the pane and
 /// container share the same outer cross dimension.
 pub const CONTAINER_DEFAULT_WIDTH: f32 = 280.0;
 pub const CONTAINER_DEFAULT_HEIGHT: f32 = 280.0;
@@ -70,7 +70,7 @@ pub const CONTAINER_DEFAULT_MIN_WIDTH: f32 = 286.0;
 /// A labelled, single-body container. Build with [`Normal::new`],
 /// then [`Normal::show`] each frame. The `anchor` is forwarded to
 /// pick the title side; pass the same anchor the parent
-/// [`crate::pane::Pane2`] uses. The `accent` drives the frame fill,
+/// [`crate::pane::Pane`] uses. The `accent` drives the frame fill,
 /// border, and (in PRO theme) title text colour.
 pub struct Normal {
     title: String,
@@ -78,7 +78,7 @@ pub struct Normal {
     accent: Color32,
     /// Parent pane's id. Used to look up / toggle the shared
     /// `body_open` state and the animation's `openness`, so
-    /// `Pane2` and the container animate in lockstep.
+    /// `Pane` and the container animate in lockstep.
     pane_id: Id,
     /// Optional title icon. Either a Fluent name or raw SVG markup.
     /// In PRO theme (`section_icon_at_end = false`) the icon is
@@ -132,6 +132,12 @@ pub struct Normal {
     /// them, transparent inactive cells reveal the pane bg
     /// (instead of the title's accent fill bleeding through).
     suppress_banner: bool,
+    reserve_tab_strip_in_parent: bool,
+    /// Minimum body flow-axis size requested by container chrome
+    /// outside the active tab content. Used by folder-tabbed
+    /// containers so a short active tab body cannot collapse the
+    /// container until side/top tab buttons are clipped away.
+    min_body_flow: Option<f32>,
 }
 
 impl Normal {
@@ -153,7 +159,28 @@ impl Normal {
             tabbed_strip_side: None,
             title_thickness_override: None,
             suppress_banner: false,
+            reserve_tab_strip_in_parent: true,
+            min_body_flow: None,
         }
+    }
+
+    /// Control whether folder tabs reserve parent layout space.
+    ///
+    /// Floating panes need this so auto-sizing can include the
+    /// projected tab strip. Docked shelves already own a fixed
+    /// viewport rect, and reserving the tab-strip union in the
+    /// parent corrupts subsequent container placement after tab
+    /// clicks/resizes.
+    #[must_use]
+    pub fn reserve_tab_strip_in_parent(mut self, reserve: bool) -> Self {
+        self.reserve_tab_strip_in_parent = reserve;
+        self
+    }
+
+    #[must_use]
+    pub fn min_body_flow(mut self, flow: f32) -> Self {
+        self.min_body_flow = Some(flow.max(0.0));
+        self
     }
 
     /// Override the per-container default flow size. Replaces the
@@ -191,6 +218,15 @@ impl Normal {
     /// the right variant from the leading characters.
     pub fn icon(mut self, icon: impl Into<Icon<'static>>) -> Self {
         self.icon = Some(icon.into());
+        self
+    }
+
+    /// Override which edge hosts the folder-tab strip for tabbed
+    /// containers. This is used by structural shelves so the right
+    /// shelf can mirror the left shelf instead of sharing the same
+    /// left-side tab strip.
+    pub(crate) fn tabbed_strip_side(mut self, side: TitleSide) -> Self {
+        self.tabbed_strip_side = Some(side);
         self
     }
 
@@ -235,9 +271,13 @@ impl Normal {
     /// through them.
     ///
     /// 0 tabs: no-op (returns empty `Vec`).
-    /// 1 tab : delegates to [`Normal::show`] with that tab's pods, no
-    ///         strip is drawn (single tab → no choice to present).
-    /// ≥2    : strip rendered, active tab's pods drive the body.
+    /// ≥1    : strip rendered, active tab's pods drive the body.
+    ///
+    /// Even a single-tab container paints its tab affordance. Shelves
+    /// and panes rely on tab buttons as structural chrome, so hiding
+    /// the strip for the one-tab case makes a tabbed container look
+    /// like a different container kind and breaks drag/drop affordance
+    /// consistency.
     ///
     /// The active index persists per-container (keyed on `pane_id`)
     /// across frames.
@@ -248,16 +288,6 @@ impl Normal {
     pub fn show_tabs(self, ui: &mut Ui, tabs: Vec<super::Tab>) -> Vec<crate::pod::PodResponse> {
         if tabs.is_empty() {
             return Vec::new();
-        }
-        if tabs.len() == 1 {
-            let mut tabs = tabs;
-            let only = tabs.pop().unwrap();
-            let me = Self {
-                title: only.title,
-                icon: Some(only.icon),
-                ..self
-            };
-            return me.show(ui, only.pods);
         }
         let pane_id = self.pane_id;
         ui.push_id(pane_id, |ui| self.show_inner_tabbed(ui, tabs))
@@ -271,39 +301,49 @@ impl Normal {
         }
 
         let mut tabs = tabs;
+        // Container flow extent is locked to the tallest tab. Switching
+        // tabs never resizes the container; shorter tabs sit with
+        // trailing whitespace, taller content (= a tab content larger
+        // than the user-set container size) overflows into the body's
+        // own clip just like any over-tall section. The user can drag
+        // the inter-container dot handle to resize the container; that
+        // resize sticks regardless of which tab is active.
+        let max_tab_body_h = max_tab_natural_body_h(&tabs);
         let title_side = self.anchor.title_side();
         // Strip ALWAYS sits perpendicular to the title:
         //   Top/Bottom title (horizontal title) → strip on Left.
         //   Left/Right title (vertical title)   → strip on Top.
         // The strip projects FROM that container edge, so corner
         // squaring + outer-margin zeroing live on the same edge.
-        let strip_side = match title_side {
+        let strip_side = self.tabbed_strip_side.unwrap_or(match title_side {
             TitleSide::Top | TitleSide::Bottom => TitleSide::Left,
             TitleSide::Left | TitleSide::Right => TitleSide::Top,
-        };
-
-        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
-        let active_idx: usize = ui.ctx().data_mut(|d| {
-            let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
-            let clamped = stored.min(tabs.len() - 1);
-            if clamped != stored {
-                d.insert_persisted(active_idx_key, clamped);
-            }
-            clamped
         });
 
         let tab_meta: Vec<(String, Icon<'static>)> =
             tabs.iter().map(|t| (t.title.clone(), t.icon)).collect();
+        let tab_ids: Vec<Id> = tabs.iter().map(|t| t.id).collect();
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx = resolve_active_tab_idx(ui.ctx(), active_idx_key, &tab_ids);
         let active_pods = std::mem::take(&mut tabs[active_idx].pods);
         let active_title = tab_meta[active_idx].0.clone();
         let active_icon = tab_meta[active_idx].1;
+        let tab_buttons_extent = (tabs.len() as f32 * tab_theme.tab_len)
+            + (tabs.len().saturating_sub(1) as f32 * tab_theme.tab_gap);
 
         let me = Self {
             title: active_title,
             icon: Some(active_icon),
             tabbed_strip_side: Some(strip_side),
+            min_body_flow: Some(
+                self.min_body_flow
+                    .unwrap_or(0.0)
+                    .max(tab_buttons_extent)
+                    .max(max_tab_body_h),
+            ),
             ..self
         };
+        let reserve_tab_strip_in_parent = me.reserve_tab_strip_in_parent;
         let accent = me.accent;
         let pane_id = me.pane_id;
 
@@ -346,31 +386,34 @@ impl Normal {
                 (theme_now.section_outer_margin_span as f32) + (theme_now.section_pad_x as f32)
             }
         };
-        let container_max_rect = match strip_side {
-            TitleSide::Left => egui::Rect::from_min_max(
-                pos2(
-                    avail.left() + strip_outer_inset + strip_thickness,
-                    avail.top(),
-                ),
-                avail.right_bottom(),
-            ),
-            TitleSide::Top => egui::Rect::from_min_max(
-                pos2(
-                    avail.left(),
-                    avail.top() + strip_outer_inset + strip_thickness,
-                ),
-                avail.right_bottom(),
-            ),
-            // strip_side is always Left or Top under the match above.
-            _ => avail,
-        };
+        let container_max_rect =
+            tabbed_container_max_rect(avail, strip_side, strip_thickness, strip_outer_inset);
+        ui.ctx().data_mut(|d| {
+            let key = pane::active_container_frame_rect_key();
+            d.remove::<egui::Rect>(key);
+        });
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(container_max_rect)
                 .layout(parent_layout),
         );
         let out = me.show(&mut child, active_pods);
-        let used = child.min_rect();
+        if pane::active_drag(ui.ctx())
+            .and_then(|(_, state)| state.item)
+            .map(|dragged| dragged == pane_id)
+            .unwrap_or(false)
+        {
+            return out;
+        }
+        let used = ui
+            .ctx()
+            .data_mut(|d| {
+                let key = pane::active_container_frame_rect_key();
+                let rect = d.get_temp::<egui::Rect>(key);
+                d.remove::<egui::Rect>(key);
+                rect
+            })
+            .unwrap_or_else(|| child.min_rect());
 
         // Place the strip ALIGNED to where the container actually
         // rendered. `used` already accounts for parent layout
@@ -388,6 +431,14 @@ impl Normal {
                 pos2(used.left() - strip_thickness, used.top()),
                 pos2(used.left(), used.bottom() - title_offset),
             ),
+            (TitleSide::Right, TitleSide::Top) => egui::Rect::from_min_max(
+                pos2(used.right(), used.top() + title_offset),
+                pos2(used.right() + strip_thickness, used.bottom()),
+            ),
+            (TitleSide::Right, TitleSide::Bottom) => egui::Rect::from_min_max(
+                pos2(used.right(), used.top()),
+                pos2(used.right() + strip_thickness, used.bottom() - title_offset),
+            ),
             (TitleSide::Top, TitleSide::Left) => egui::Rect::from_min_max(
                 pos2(used.left() + title_offset, used.top() - strip_thickness),
                 pos2(used.right(), used.top()),
@@ -404,6 +455,7 @@ impl Normal {
             ui,
             strip_rect,
             &tab_meta,
+            &tab_ids,
             active_idx,
             accent,
             pane_id,
@@ -420,7 +472,37 @@ impl Normal {
         // which works for any layout direction (TopDown advances
         // downward, BottomUp upward, etc.).
         let union_rect = strip_rect.union(used);
-        ui.allocate_rect(union_rect, Sense::hover());
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(pane::active_tabbed_container_rect_key(), union_rect);
+        });
+        // Overwrite the drag snapshot entry: `me.show()` already
+        // pushed the body-only frame rect to the parent pane's
+        // current cache (it runs BEFORE `strip_rect` is known), so
+        // the ghost-gap allocator would size itself to just the
+        // body and clip the tab strip out. Re-push the full
+        // strip+body union so the ghost matches what's actually
+        // dragged.
+        //
+        // SKIP when THIS container is the one being dragged:
+        // `show_with_body` early-returns in that case (so `used`
+        // is the empty `new_child` rect, making `union_rect`
+        // degenerate), and `finalize_snapshot` is designed to
+        // carry the dragged container's PREV-frame rect forward
+        // exactly when no push happens. A wrong push here would
+        // overwrite the carry-forward with garbage.
+        let dragging_self = pane::active_drag(ui.ctx())
+            .and_then(|(_, s)| s.item)
+            .map(|item| item == pane_id)
+            .unwrap_or(false);
+        if !dragging_self
+            && let Some(parent_pane_id) =
+                ui.ctx().data(|d| d.get_temp::<Id>(pane::active_pane_key()))
+        {
+            pane::push_rect_with_frame(ui.ctx(), parent_pane_id, pane_id, union_rect, Some(used));
+        }
+        if reserve_tab_strip_in_parent {
+            ui.allocate_rect(union_rect, Sense::hover());
+        }
         out
     }
 
@@ -435,17 +517,15 @@ impl Normal {
         ui: &mut Ui,
         mut tabs: Vec<super::Tab>,
     ) -> Vec<crate::pod::PodResponse> {
-        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
-        let active_idx: usize = ui.ctx().data_mut(|d| {
-            let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
-            let clamped = stored.min(tabs.len() - 1);
-            if clamped != stored {
-                d.insert_persisted(active_idx_key, clamped);
-            }
-            clamped
-        });
+        // Lock the body flow to the tallest tab so switching tabs
+        // doesn't resize the container — see `show_inner_tabbed` for
+        // the same logic.
+        let max_tab_body_h = max_tab_natural_body_h(&tabs);
         let tab_meta: Vec<(String, Icon<'static>)> =
             tabs.iter().map(|t| (t.title.clone(), t.icon)).collect();
+        let tab_ids: Vec<Id> = tabs.iter().map(|t| t.id).collect();
+        let active_idx_key = self.pane_id.with("frost_normal_active_tab");
+        let active_idx = resolve_active_tab_idx(ui.ctx(), active_idx_key, &tab_ids);
         let active_pods = std::mem::take(&mut tabs[active_idx].pods);
 
         // Render the container with NO title text and NO floating
@@ -464,6 +544,7 @@ impl Normal {
                 theme_now.container.title_zone_thickness * title_multiplier,
             ),
             suppress_banner: true,
+            min_body_flow: Some(self.min_body_flow.unwrap_or(0.0).max(max_tab_body_h)),
             ..self
         };
         let out = me.show(ui, active_pods);
@@ -492,6 +573,7 @@ impl Normal {
             ui,
             title_rect,
             &tab_meta,
+            &tab_ids,
             active_idx,
             accent,
             pane_id,
@@ -539,6 +621,7 @@ impl Normal {
             .map(|p| p.natural_h() + pod_chrome_each)
             .sum::<f32>()
             + separator_total_h;
+        let body_flow_floor = pods_natural_total_h.max(self.min_body_flow.unwrap_or(0.0));
         let fill_pod_id_and_others_h: Option<(egui::Id, f32)> = fill_pod_idx.map(|fi| {
             let mut others_h = 0.0_f32;
             for (i, p) in pods.iter().enumerate() {
@@ -558,13 +641,17 @@ impl Normal {
         let intrinsic_override_key = self
             .pane_id
             .with("frost_container_intrinsic_natural_override");
+        let intrinsic_floor_key = self.pane_id.with("frost_container_intrinsic_natural_floor");
         if fill_pod_idx.is_some() {
             ui.ctx().data_mut(|d| {
-                d.insert_temp::<f32>(intrinsic_override_key, pods_natural_total_h);
+                d.insert_temp::<f32>(intrinsic_override_key, body_flow_floor);
+                d.remove::<f32>(intrinsic_floor_key);
             });
         } else {
-            ui.ctx()
-                .data_mut(|d| d.remove::<f32>(intrinsic_override_key));
+            ui.ctx().data_mut(|d| {
+                d.remove::<f32>(intrinsic_override_key);
+                d.insert_temp::<f32>(intrinsic_floor_key, body_flow_floor);
+            });
         }
         self.show_with_body(ui, |body_ui| {
             // Compute the fill pod's height NOW that we're inside
@@ -717,7 +804,7 @@ impl Normal {
         // so the pane's resize handles can refuse to shrink the
         // pane below the union of its containers' bounds. Keyed
         // on the active pane id (`pane::active_pane_key`) which
-        // `Pane2::show` writes at the top of every frame, then
+        // `Pane::show` writes at the top of every frame, then
         // clears the accumulator before running the body callback.
         // First-frame fallback: if no active pane is set yet,
         // register against the container's own pane_id so the
@@ -739,7 +826,7 @@ impl Normal {
         // Per-container default-flow override (set via
         // `Normal::initial_flow`). Persist on every frame the
         // builder supplies a value so `crate::container::container_flow`
-        // (called from both this Normal AND the parent Pane2's
+        // (called from both this Normal AND the parent Pane's
         // auto-flow sum) sees the same target.
         if let Some(initial) = self.initial_flow {
             crate::container::set_container_initial_flow(ui.ctx(), self.pane_id, initial);
@@ -867,7 +954,7 @@ impl Normal {
         let banner_filled = style::theme().title_strip_filled && !self.suppress_banner;
 
         // Open state + animation are stored on the parent pane's
-        // id (NOT `ui.id()`) so `Pane2::show` and `Normal::show`
+        // id (NOT `ui.id()`) so `Pane::show` and `Normal::show`
         // both compute the SAME `openness` from the same
         // `animate_bool` call within a frame. That synchronises the
         // pane's outer size and the container's body slot — no
@@ -896,10 +983,10 @@ impl Normal {
             crate::container::container_flow(ui.ctx(), pane_id, horizontal_strip)
         });
         // Publish this container's cid to the parent pane so
-        // `Pane2::show` can sum each container's LIVE persisted
+        // `Pane::show` can sum each container's LIVE persisted
         // flow when it auto-sizes (`PaneResize::flow` off).
         pane::publish_container_cid(ui.ctx(), parent_pane_id, pane_id);
-        // Body slot size LERPS with `openness` to match Pane2's
+        // Body slot size LERPS with `openness` to match Pane's
         // lerp (both compute openness from the SAME `animate_bool`
         // call, so they animate in lockstep — no anchor drift).
         let body_visible = openness > 0.0;
@@ -909,10 +996,10 @@ impl Normal {
         // ── Per-section staggered fade-in (verbatim port of
         //    `frostcore::PaneBuilder::section_with`) ──
         //
-        // Look up the parent Pane2's id via the global "active
+        // Look up the parent Pane's id via the global "active
         // pane" pointer (Normal's own `pane_id` field is the
-        // container's body-open id, NOT Pane2's id, so we can't
-        // use it for the stagger lookup). Pane2::show populates
+        // container's body-open id, NOT Pane's id, so we can't
+        // use it for the stagger lookup). Pane::show populates
         // `frost_pane_open_elapsed` and resets
         // `frost_pane_section_idx` to 0 on every frame; we
         // post-increment to claim THIS container's index.
@@ -944,7 +1031,7 @@ impl Normal {
         // Drag-lift: if this container IS the one being dragged,
         // bail out entirely — no layout slot, no paint. The other
         // containers below collapse upward to fill the gap, and
-        // the floating preview painted by `Pane2`'s finalize
+        // the floating preview painted by `Pane`'s finalize
         // shows what's being held. Matches frostcore's
         // `section_with` early-return.
         let active = pane::active_drag(ui.ctx());
@@ -962,19 +1049,19 @@ impl Normal {
         // allocate + paint a ghost rect of the dragged size
         // BEFORE rendering. Pushes this container (and the rest)
         // along the stack axis so the drop slot is visible.
-        if let Some((parent_pane_id, drag_state)) = active {
-            if let (Some(dragged_id), Some(cursor)) = (drag_state.item, drag_state.cursor) {
-                let snap = pane::snapshot(ui.ctx(), parent_pane_id);
-                let horizontal_stack = !title_side.is_horizontal_strip();
-                let cursor_axis = if horizontal_stack { cursor.x } else { cursor.y };
-                let target_idx =
-                    pane::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
-                let cur_idx = pane::current_cache(ui.ctx(), parent_pane_id).len();
-                if cur_idx == target_idx {
-                    if let Some(size) = pane::dragged_size(&snap, dragged_id) {
-                        pane::paint_ghost_gap_inline(ui, size, accent, horizontal_stack);
-                    }
-                }
+        if let Some((parent_pane_id, drag_state)) = active
+            && let (Some(dragged_id), Some(cursor)) = (drag_state.item, drag_state.cursor)
+            && !pane::ghost_gap_suppressed(ui.ctx(), parent_pane_id)
+        {
+            let snap = pane::snapshot(ui.ctx(), parent_pane_id);
+            let horizontal_stack = !title_side.is_horizontal_strip();
+            let cursor_axis = if horizontal_stack { cursor.x } else { cursor.y };
+            let target_idx = pane::compute_target(&snap, dragged_id, cursor_axis, horizontal_stack);
+            let cur_idx = pane::current_cache(ui.ctx(), parent_pane_id).len();
+            if cur_idx == target_idx
+                && let Some(entry) = pane::dragged_entry(&snap, dragged_id)
+            {
+                pane::paint_ghost_gap_entry_inline(ui, entry, accent, horizontal_stack);
             }
         }
 
@@ -1034,19 +1121,18 @@ impl Normal {
                 if resp.clicked() {
                     pane::toggle_body(ui.ctx(), pane_id);
                 }
-                if resp.drag_started() {
-                    if let Some(active_pane_id) =
+                if resp.drag_started()
+                    && let Some(active_pane_id) =
                         ui.ctx().data(|d| d.get_temp::<Id>(pane::active_pane_key()))
-                    {
-                        pane::set_drag(
-                            ui.ctx(),
-                            active_pane_id,
-                            pane::DragState {
-                                item: Some(pane_id),
-                                cursor: ui.ctx().pointer_interact_pos(),
-                            },
-                        );
-                    }
+                {
+                    pane::set_drag(
+                        ui.ctx(),
+                        active_pane_id,
+                        pane::DragState {
+                            item: Some(pane_id),
+                            cursor: ui.ctx().pointer_interact_pos(),
+                        },
+                    );
                 }
                 paint_title(
                     ui,
@@ -1137,14 +1223,20 @@ impl Normal {
                 //   use the measurement directly. Lets expandable
                 //   widgets (color picker, etc.) still grow the
                 //   container.
-                let recorded_h = child
-                    .ctx()
-                    .data(|d| {
-                        d.get_temp::<f32>(
-                            pane_id.with("frost_container_intrinsic_natural_override"),
-                        )
-                    })
-                    .unwrap_or(content_h);
+                let recorded_h = child.ctx().data(|d| {
+                    if let Some(exact) = d
+                        .get_temp::<f32>(pane_id.with("frost_container_intrinsic_natural_override"))
+                    {
+                        exact
+                    } else {
+                        let floor = d
+                            .get_temp::<f32>(
+                                pane_id.with("frost_container_intrinsic_natural_floor"),
+                            )
+                            .unwrap_or(0.0);
+                        content_h.max(floor)
+                    }
+                });
                 crate::container::record_container_intrinsic(
                     child.ctx(),
                     pane_id,
@@ -1244,18 +1336,28 @@ impl Normal {
         // Restore the parent ui's opacity so subsequent containers
         // in the same body callback start from a clean baseline.
         ui.set_opacity(prev_opacity);
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(
+                pane::active_container_frame_rect_key(),
+                frame_response.response.rect,
+            );
+        });
 
         // Publish the rendered Frame's outer rect to the parent
-        // pane's per-frame cache. `Pane2`'s finalize builds next
+        // pane's per-frame cache. `Pane`'s finalize builds next
         // frame's snapshot from this (with the dragged
         // container's prev rect carried forward).
         if let Some((active_pane_id, _)) = active {
-            pane::push_rect(
-                ui.ctx(),
-                active_pane_id,
-                pane_id,
-                frame_response.response.rect,
-            );
+            let published_rect = ui
+                .ctx()
+                .data_mut(|d| {
+                    let key = pane::active_tabbed_container_rect_key();
+                    let rect = d.get_temp::<egui::Rect>(key);
+                    d.remove::<egui::Rect>(key);
+                    rect
+                })
+                .unwrap_or(frame_response.response.rect);
+            pane::push_rect(ui.ctx(), active_pane_id, pane_id, published_rect);
         }
         // Custom debug inspector — outline the container's full
         // painted Frame rect with a `Normal[<title>]` label.
@@ -1316,34 +1418,26 @@ impl Normal {
                 right: main_title,
             },
         };
-        let mut corners = style::radius_for(style::RadiusRole::Section);
+        let corners = style::radius_for(style::RadiusRole::Section);
         if let Some(side) = self.tabbed_strip_side {
             // Zero the strip-side outer margin so the active tab
             // (allocated to that side in the outer wrapper) can
             // extend across the Frame's painted edge with no gap of
-            // pane bg between them. Square the two corners adjacent
-            // to that edge so the active-tab notch lands on a flat
-            // edge, not a rounded curve.
+            // pane bg between them. Keep the container's own corners
+            // rounded: tabs are attached chrome, not a reason to
+            // flatten the card/shelf container shape.
             match side {
                 TitleSide::Top => {
                     outer.top = 0;
-                    corners.nw = 0;
-                    corners.ne = 0;
                 }
                 TitleSide::Bottom => {
                     outer.bottom = 0;
-                    corners.sw = 0;
-                    corners.se = 0;
                 }
                 TitleSide::Left => {
                     outer.left = 0;
-                    corners.nw = 0;
-                    corners.sw = 0;
                 }
                 TitleSide::Right => {
                     outer.right = 0;
-                    corners.ne = 0;
-                    corners.se = 0;
                 }
             }
         }
@@ -1365,6 +1459,57 @@ impl Normal {
     }
 }
 
+fn tabbed_container_max_rect(
+    avail: egui::Rect,
+    strip_side: TitleSide,
+    strip_thickness: f32,
+    strip_outer_inset: f32,
+) -> egui::Rect {
+    let reserved = strip_outer_inset + strip_thickness;
+    match strip_side {
+        TitleSide::Left => egui::Rect::from_min_max(
+            pos2((avail.left() + reserved).min(avail.right()), avail.top()),
+            avail.right_bottom(),
+        ),
+        TitleSide::Right => egui::Rect::from_min_max(
+            avail.left_top(),
+            pos2((avail.right() - reserved).max(avail.left()), avail.bottom()),
+        ),
+        TitleSide::Top => egui::Rect::from_min_max(
+            pos2(avail.left(), (avail.top() + reserved).min(avail.bottom())),
+            avail.right_bottom(),
+        ),
+        TitleSide::Bottom => egui::Rect::from_min_max(
+            avail.left_top(),
+            pos2(avail.right(), (avail.bottom() - reserved).max(avail.top())),
+        ),
+    }
+}
+
+fn active_tab_id_key(active_idx_key: Id) -> Id {
+    active_idx_key.with("tab_id")
+}
+
+fn resolve_active_tab_idx(ctx: &egui::Context, active_idx_key: Id, tab_ids: &[Id]) -> usize {
+    debug_assert!(!tab_ids.is_empty());
+    ctx.data_mut(|d| {
+        if let Some(active_id) = d.get_persisted::<Id>(active_tab_id_key(active_idx_key))
+            && let Some(idx) = tab_ids.iter().position(|id| *id == active_id)
+        {
+            d.insert_persisted(active_idx_key, idx);
+            return idx;
+        }
+
+        let stored = d.get_persisted::<usize>(active_idx_key).unwrap_or(0);
+        let clamped = stored.min(tab_ids.len() - 1);
+        if clamped != stored {
+            d.insert_persisted(active_idx_key, clamped);
+        }
+        d.insert_persisted(active_tab_id_key(active_idx_key), tab_ids[clamped]);
+        clamped
+    })
+}
+
 /// Paint folder-style tabs into `strip_rect`, projecting from
 /// `strip_side` of the container.
 ///
@@ -1380,10 +1525,12 @@ impl Normal {
 ///   visible seam between tab and body — they read as one shape.
 /// * **Inactive tab**: 1 px stroke around all four sides, no fill.
 ///   Pane bg shows through. Hover adds a faint accent overlay.
+#[allow(clippy::too_many_arguments)]
 fn paint_folder_tabs(
     ui: &mut Ui,
     strip_rect: egui::Rect,
     tab_meta: &[(String, Icon<'static>)],
+    tab_ids: &[Id],
     active_idx: usize,
     accent: Color32,
     pane_id: Id,
@@ -1420,10 +1567,64 @@ fn paint_folder_tabs(
     // strips, horizontal (flow left-to-right) for Top/Bottom strips.
     let strip_horizontal = matches!(strip_side, TitleSide::Top | TitleSide::Bottom);
 
-    for (i, (_title, icn)) in tab_meta.iter().enumerate() {
+    // ── Tab drag state (cross-container reorder within this pane) ──
+    //
+    // `find_drop_target` slots are computed against the cached
+    // button rects — which are LAST frame's positions until we
+    // push this frame's. Read the drop target FIRST (last-frame
+    // basis), then reset this container's button cache so this
+    // frame's `push_button` calls replace the stale entries
+    // cleanly.
+    let parent_pane_id: Id = ui
+        .ctx()
+        .data(|d| d.get_temp(pane::active_pane_key()))
+        .unwrap_or(pane_id);
+    let drag = pane::tab_drag::drag_state(ui.ctx(), parent_pane_id);
+    let cursor_pos = ui.ctx().pointer_latest_pos();
+    let drop_target = match (drag, cursor_pos) {
+        (Some(drag), Some(p)) => {
+            pane::tab_drag::find_drop_target_for_drag(ui.ctx(), parent_pane_id, p, drag)
+        }
+        _ => None,
+    };
+    pane::tab_drag::reset_container_buttons(ui.ctx(), parent_pane_id, pane_id);
+
+    // Build the visible cell list. `Some(i)` = paint tab_meta[i] in
+    // this cell; `None` = ghost gap (drop preview). Filters out the
+    // source-dragged tab when this strip is its source, and inserts
+    // a gap at the drop slot when this strip is the drop target.
+    let visible: Vec<Option<usize>> = {
+        let mut out: Vec<Option<usize>> = Vec::with_capacity(tab_meta.len() + 1);
+        if let Some(d) = drag {
+            let source_idx_here = if d.source_container == pane_id {
+                tab_ids.iter().position(|id| *id == d.tab_id)
+            } else {
+                None
+            };
+            for i in 0..tab_meta.len() {
+                if Some(i) == source_idx_here {
+                    continue;
+                }
+                out.push(Some(i));
+            }
+            if let Some((tgt_cid, slot)) = drop_target
+                && tgt_cid == pane_id
+            {
+                let s = slot.min(out.len());
+                out.insert(s, None);
+            }
+        } else {
+            for i in 0..tab_meta.len() {
+                out.push(Some(i));
+            }
+        }
+        out
+    };
+
+    for (cell_idx, slot) in visible.iter().enumerate() {
         let (base_rect, active_rect, corners) = match strip_side {
             TitleSide::Left => {
-                let cell_top = strip_rect.top() + (i as f32) * (tab_len + tab_gap);
+                let cell_top = strip_rect.top() + (cell_idx as f32) * (tab_len + tab_gap);
                 if cell_top + tab_len > strip_rect.bottom() + 0.5 {
                     break;
                 }
@@ -1443,7 +1644,7 @@ fn paint_folder_tabs(
                 (base, active, corners)
             }
             TitleSide::Right => {
-                let cell_top = strip_rect.top() + (i as f32) * (tab_len + tab_gap);
+                let cell_top = strip_rect.top() + (cell_idx as f32) * (tab_len + tab_gap);
                 if cell_top + tab_len > strip_rect.bottom() + 0.5 {
                     break;
                 }
@@ -1462,7 +1663,7 @@ fn paint_folder_tabs(
                 (base, active, corners)
             }
             TitleSide::Top => {
-                let cell_left = strip_rect.left() + (i as f32) * (tab_len + tab_gap);
+                let cell_left = strip_rect.left() + (cell_idx as f32) * (tab_len + tab_gap);
                 if cell_left + tab_len > strip_rect.right() + 0.5 {
                     break;
                 }
@@ -1481,7 +1682,7 @@ fn paint_folder_tabs(
                 (base, active, corners)
             }
             TitleSide::Bottom => {
-                let cell_left = strip_rect.left() + (i as f32) * (tab_len + tab_gap);
+                let cell_left = strip_rect.left() + (cell_idx as f32) * (tab_len + tab_gap);
                 if cell_left + tab_len > strip_rect.right() + 0.5 {
                     break;
                 }
@@ -1500,18 +1701,56 @@ fn paint_folder_tabs(
                 (base, active, corners)
             }
         };
+        let Some(&i) = slot.as_ref() else {
+            // Drop-slot ghost gap — translucent accent fill so the
+            // user sees exactly where the tab will land.
+            ui.painter().rect(
+                base_rect,
+                corners,
+                Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36),
+                egui::Stroke::new(1.5, accent),
+                egui::StrokeKind::Inside,
+            );
+            continue;
+        };
+        let icn = &tab_meta[i].1;
+        let tab_id = tab_ids[i];
         let is_active = i == active_idx;
         let paint_rect = if is_active { active_rect } else { base_rect };
         let resp = ui.interact(
             base_rect,
-            pane_id.with("frost_tab_btn").with(i),
-            Sense::click(),
+            pane_id.with("frost_tab_btn").with(tab_id),
+            Sense::click_and_drag(),
         );
-        if resp.hovered() {
+        pane::tab_drag::push_button(
+            ui.ctx(),
+            parent_pane_id,
+            pane::tab_drag::TabButtonEntry {
+                container_id: pane_id,
+                tab_id,
+                rect: base_rect,
+            },
+        );
+        if resp.hovered() && drag.is_none() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        if resp.clicked() {
-            ui.ctx().data_mut(|d| d.insert_persisted(active_idx_key, i));
+        if resp.clicked() && drag.is_none() {
+            ui.ctx().data_mut(|d| {
+                d.insert_persisted(active_idx_key, i);
+                d.insert_persisted(active_tab_id_key(active_idx_key), tab_id);
+            });
+        }
+        if resp.drag_started() {
+            pane::tab_drag::set_drag(
+                ui.ctx(),
+                parent_pane_id,
+                pane::tab_drag::TabDragState {
+                    tab_id,
+                    source_container: pane_id,
+                    cursor: ui.ctx().pointer_latest_pos(),
+                    icon: Some(*icn),
+                },
+            );
         }
         if is_active {
             // Active tab background — same rounded rect we had before
@@ -1520,63 +1759,14 @@ fn paint_folder_tabs(
             // body's edge so the fill overpaints the container's
             // adjacent stroke at this tab's range).
             ui.painter().rect_filled(paint_rect, corners, active_fill);
-            // Active tab GLYPH — replace the Fluent icon with a solid
-            // triangle pointing INTO the container. Filled with raw
-            // accent. Sized to MATCH the visual mass of the Fluent
-            // glyphs the inactive tabs use: a 20 px FontId glyph
-            // typically renders at ~70 % of the nominal size after
-            // line-height padding, so the triangle scales to that.
-            let triangle_extent = icon_size * 0.7;
-            let half = triangle_extent * 0.5;
-            // Inset from the body-facing edge of the cell. The
-            // triangle is shifted so its TIP sits this many px in
-            // from the body edge, biasing the whole arrow toward
-            // the body and leaving more breathing room on the
-            // outer (corner / pane) edge — the user explicitly
-            // wanted the "<" arrow tucked closer to the body.
-            const TIP_INSET_FROM_BODY: f32 = 2.0;
-            let centre = match strip_side {
-                TitleSide::Left => pos2(
-                    base_rect.right() - TIP_INSET_FROM_BODY - half,
-                    base_rect.center().y,
-                ),
-                TitleSide::Right => pos2(
-                    base_rect.left() + TIP_INSET_FROM_BODY + half,
-                    base_rect.center().y,
-                ),
-                TitleSide::Top => pos2(
-                    base_rect.center().x,
-                    base_rect.bottom() - TIP_INSET_FROM_BODY - half,
-                ),
-                TitleSide::Bottom => pos2(
-                    base_rect.center().x,
-                    base_rect.top() + TIP_INSET_FROM_BODY + half,
-                ),
-            };
-            let pts = match strip_side {
-                TitleSide::Left => vec![
-                    pos2(centre.x - half, centre.y - half),
-                    pos2(centre.x - half, centre.y + half),
-                    pos2(centre.x + half, centre.y),
-                ],
-                TitleSide::Right => vec![
-                    pos2(centre.x + half, centre.y - half),
-                    pos2(centre.x + half, centre.y + half),
-                    pos2(centre.x - half, centre.y),
-                ],
-                TitleSide::Top => vec![
-                    pos2(centre.x - half, centre.y - half),
-                    pos2(centre.x + half, centre.y - half),
-                    pos2(centre.x, centre.y + half),
-                ],
-                TitleSide::Bottom => vec![
-                    pos2(centre.x - half, centre.y + half),
-                    pos2(centre.x + half, centre.y + half),
-                    pos2(centre.x, centre.y - half),
-                ],
-            };
-            ui.painter()
-                .add(egui::Shape::convex_polygon(pts, accent, Stroke::NONE));
+            crate::icons::paint_section_icon(
+                ui,
+                base_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                *icn,
+                icon_size,
+                style::contrast_text_for(active_fill),
+            );
         } else {
             // Inactive tabs paint NO background — bare icon at
             // reduced alpha so the active tab dominates the strip.
@@ -1595,7 +1785,15 @@ fn paint_folder_tabs(
             format!("Tab[{}]{}", i, if is_active { "*" } else { "" }),
         );
     }
-    let _ = strip_horizontal;
+    pane::tab_drag::push_strip(
+        ui.ctx(),
+        parent_pane_id,
+        pane::tab_drag::TabStripEntry {
+            container_id: pane_id,
+            rect: strip_rect,
+            axis_horizontal: strip_horizontal,
+        },
+    );
     crate::debug::tag(ui, strip_rect, "TabStrip".to_string());
 }
 
@@ -1606,10 +1804,12 @@ fn paint_folder_tabs(
 /// out of the surrounding accent banner; inactive slots stay
 /// transparent and let the banner show through. Click on any slot
 /// persists the new active idx for next frame.
+#[allow(clippy::too_many_arguments)]
 fn paint_top_tabs(
     ui: &mut Ui,
     title_rect: egui::Rect,
     tab_meta: &[(String, Icon<'static>)],
+    tab_ids: &[Id],
     active_idx: usize,
     accent: Color32,
     pane_id: Id,
@@ -1618,6 +1818,49 @@ fn paint_top_tabs(
     if tab_meta.is_empty() {
         return;
     }
+    // ── Tab drag state (cross-container reorder within this pane) ──
+    let parent_pane_id: Id = ui
+        .ctx()
+        .data(|d| d.get_temp(pane::active_pane_key()))
+        .unwrap_or(pane_id);
+    let drag = pane::tab_drag::drag_state(ui.ctx(), parent_pane_id);
+    let cursor_pos = ui.ctx().pointer_latest_pos();
+    let drop_target = match (drag, cursor_pos) {
+        (Some(drag), Some(p)) => {
+            pane::tab_drag::find_drop_target_for_drag(ui.ctx(), parent_pane_id, p, drag)
+        }
+        _ => None,
+    };
+    pane::tab_drag::reset_container_buttons(ui.ctx(), parent_pane_id, pane_id);
+
+    // Visible cell list — same logic as paint_folder_tabs.
+    let visible: Vec<Option<usize>> = {
+        let mut out: Vec<Option<usize>> = Vec::with_capacity(tab_meta.len() + 1);
+        if let Some(d) = drag {
+            let source_idx_here = if d.source_container == pane_id {
+                tab_ids.iter().position(|id| *id == d.tab_id)
+            } else {
+                None
+            };
+            for i in 0..tab_meta.len() {
+                if Some(i) == source_idx_here {
+                    continue;
+                }
+                out.push(Some(i));
+            }
+            if let Some((tgt_cid, slot)) = drop_target
+                && tgt_cid == pane_id
+            {
+                let s = slot.min(out.len());
+                out.insert(s, None);
+            }
+        } else {
+            for i in 0..tab_meta.len() {
+                out.push(Some(i));
+            }
+        }
+        out
+    };
     // Inverted-from-default tab states for testing:
     //   inactive → solid accent fill.
     //   active   → transparent (pane bg shows through).
@@ -1641,27 +1884,63 @@ fn paint_top_tabs(
     let openness_t = smoothstep(openness);
     let active_icon_size = egui::lerp(active_folded..=active_unfolded, openness_t);
     let label_font_size: f32 = 11.0;
-    let n = tab_meta.len() as f32;
+    let n = visible.len() as f32;
     let cell_w = (title_rect.width() / n).max(0.0);
     if cell_w <= 0.0 {
         return;
     }
-    for (i, (title, icn)) in tab_meta.iter().enumerate() {
-        let cell_left = title_rect.left() + (i as f32) * cell_w;
+    for (cell_idx, slot) in visible.iter().enumerate() {
+        let cell_left = title_rect.left() + (cell_idx as f32) * cell_w;
         let cell_rect = egui::Rect::from_min_size(
             pos2(cell_left, title_rect.top()),
             vec2(cell_w, title_rect.height()),
         );
+        let Some(&i) = slot.as_ref() else {
+            ui.painter().rect(
+                cell_rect,
+                CornerRadius::ZERO,
+                Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 56),
+                egui::Stroke::new(1.5, accent),
+                egui::StrokeKind::Inside,
+            );
+            continue;
+        };
+        let (title, icn) = (&tab_meta[i].0, &tab_meta[i].1);
+        let tab_id = tab_ids[i];
         let resp = ui.interact(
             cell_rect,
-            pane_id.with("frost_top_tab").with(i),
-            Sense::click(),
+            pane_id.with("frost_top_tab").with(tab_id),
+            Sense::click_and_drag(),
         );
-        if resp.hovered() {
+        pane::tab_drag::push_button(
+            ui.ctx(),
+            parent_pane_id,
+            pane::tab_drag::TabButtonEntry {
+                container_id: pane_id,
+                tab_id,
+                rect: cell_rect,
+            },
+        );
+        if resp.hovered() && drag.is_none() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        if resp.clicked() {
-            ui.ctx().data_mut(|d| d.insert_persisted(active_idx_key, i));
+        if resp.clicked() && drag.is_none() {
+            ui.ctx().data_mut(|d| {
+                d.insert_persisted(active_idx_key, i);
+                d.insert_persisted(active_tab_id_key(active_idx_key), tab_id);
+            });
+        }
+        if resp.drag_started() {
+            pane::tab_drag::set_drag(
+                ui.ctx(),
+                parent_pane_id,
+                pane::tab_drag::TabDragState {
+                    tab_id,
+                    source_container: pane_id,
+                    cursor: ui.ctx().pointer_latest_pos(),
+                    icon: Some(*icn),
+                },
+            );
         }
         let is_active = i == active_idx;
         let glyph_col = if is_active {
@@ -1721,6 +2000,15 @@ fn paint_top_tabs(
             format!("TopTab[{}]{}", i, if is_active { "*" } else { "" }),
         );
     }
+    pane::tab_drag::push_strip(
+        ui.ctx(),
+        parent_pane_id,
+        pane::tab_drag::TabStripEntry {
+            container_id: pane_id,
+            rect: title_rect,
+            axis_horizontal: true,
+        },
+    );
     crate::debug::tag(ui, title_rect, "TopTabStrip".to_string());
 }
 
@@ -1734,6 +2022,7 @@ fn paint_top_tabs(
 /// * Chevron prefix when `theme.show_section_chevron` (PRO).
 /// * Hairline divider on the body-facing edge in PRO; banner cover
 ///   in GAME (painted by caller).
+#[allow(clippy::too_many_arguments)]
 fn paint_title(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -1766,7 +2055,13 @@ fn paint_title(
     let title_painter = ui.painter_at(rect);
     let painter = ui.painter();
 
-    let title_font = FontId::new(theme.section_title_size, style::title_font_family());
+    let title_family = style::title_font_family();
+    let title_family = if ui.fonts(|fonts| fonts.families().contains(&title_family)) {
+        title_family
+    } else {
+        egui::FontFamily::Proportional
+    };
+    let title_font = FontId::new(theme.section_title_size, title_family);
     let bracket_visible = theme.section_title_brackets && !open;
     let any_brackets = theme.section_title_brackets;
     let title_uc = title.to_uppercase();
@@ -1852,9 +2147,10 @@ fn paint_title(
     let icon_after_title = title_side.is_horizontal_strip() && anchor.title_reversed();
     let inline_glyph: Option<(String, egui::FontFamily)> = if inline_icon {
         match icon {
-            Some(Icon::Name(name)) => {
-                crate::icons::icon(name).map(|(g, family)| (g.to_string(), family))
-            }
+            Some(Icon::Name(name)) => crate::icons::icon(name).and_then(|(g, family)| {
+                ui.fonts(|fonts| fonts.families().contains(&family))
+                    .then(|| (g.to_string(), family))
+            }),
             _ => None,
         }
     } else {
@@ -1874,10 +2170,8 @@ fn paint_title(
         color: title_col,
         ..Default::default()
     };
-    if !icon_after_title {
-        if let Some((glyph, family)) = &inline_glyph {
-            job.append(glyph, 0.0, icon_format_for(family.clone()));
-        }
+    if !icon_after_title && let Some((glyph, family)) = &inline_glyph {
+        job.append(glyph, 0.0, icon_format_for(family.clone()));
     }
     let title_lead = if !icon_after_title && inline_glyph.is_some() {
         icon_theme.section_icon_title_gap
@@ -1885,14 +2179,12 @@ fn paint_title(
         0.0
     };
     job.append(&displayed, title_lead, default_format.clone());
-    if icon_after_title {
-        if let Some((glyph, family)) = &inline_glyph {
-            job.append(
-                glyph,
-                icon_theme.section_icon_title_gap,
-                icon_format_for(family.clone()),
-            );
-        }
+    if icon_after_title && let Some((glyph, family)) = &inline_glyph {
+        job.append(
+            glyph,
+            icon_theme.section_icon_title_gap,
+            icon_format_for(family.clone()),
+        );
     }
     if any_brackets {
         job.append(" ]", 0.0, bracket_format);
@@ -2012,10 +2304,8 @@ fn paint_title(
     // banner, big when open so it overflows the strip and reads as a
     // floating ornament. The growth is `smoothstep`-eased so it pops
     // through `cubic-bezier(0.42, 0, 0.58, 1)` rather than linear.
-    if !inline_icon {
-        if let Some(icon_src) = icon {
-            paint_floating_icon(ui, rect, anchor, title_col, openness, icon_src);
-        }
+    if !inline_icon && let Some(icon_src) = icon {
+        paint_floating_icon(ui, rect, anchor, title_col, openness, icon_src);
     }
 }
 
@@ -2496,4 +2786,88 @@ fn paint_corner_ticks(
         crate::layer::z::CONTAINER_TICKS,
     );
     p.extend(shapes);
+}
+
+/// Compute the maximum natural body height across a tabbed
+/// container's [`super::Tab`] list. The body height of one tab is
+/// `sum(pod.natural_h() + per-pod chrome)` plus inter-pod separator
+/// strips. The container body's flow extent is locked to this max
+/// so the container's size stays constant when switching tabs:
+/// shorter tabs leave trailing whitespace; the body's own clip
+/// rect handles any rare case where a tab's content exceeds the
+/// max (it shouldn't, since max is by definition ≥ every tab).
+fn max_tab_natural_body_h(tabs: &[super::Tab]) -> f32 {
+    let container_theme = style::theme().container;
+    let pod_chrome_each = (container_theme.pod_pad_y as f32) * 2.0;
+    let sep_h = crate::container::separator::separator_strip_h();
+    tabs.iter()
+        .map(|t| {
+            let n = t.pods.len();
+            let pods_h: f32 = t.pods.iter().map(|p| p.natural_h() + pod_chrome_each).sum();
+            let sep_total = if n > 1 { (n - 1) as f32 * sep_h } else { 0.0 };
+            pods_h + sep_total
+        })
+        .fold(0.0_f32, f32::max)
+}
+
+#[cfg(test)]
+mod active_tab_tests {
+    use super::*;
+
+    #[test]
+    fn tabbed_container_max_rect_reserves_right_strip_inside_available_rect() {
+        let avail = egui::Rect::from_min_max(pos2(10.0, 20.0), pos2(310.0, 620.0));
+        let rect = tabbed_container_max_rect(avail, TitleSide::Right, 26.0, 14.0);
+
+        assert_eq!(rect.left(), avail.left());
+        assert_eq!(rect.right(), avail.right() - 40.0);
+        assert_eq!(rect.top(), avail.top());
+        assert_eq!(rect.bottom(), avail.bottom());
+    }
+
+    #[test]
+    fn tabbed_container_max_rect_mirrors_left_and_right_strip_reservation() {
+        let avail = egui::Rect::from_min_max(pos2(10.0, 20.0), pos2(310.0, 620.0));
+        let left = tabbed_container_max_rect(avail, TitleSide::Left, 26.0, 14.0);
+        let right = tabbed_container_max_rect(avail, TitleSide::Right, 26.0, 14.0);
+
+        assert_eq!(left.width(), right.width());
+        assert_eq!(left.left(), avail.left() + 40.0);
+        assert_eq!(right.right(), avail.right() - 40.0);
+    }
+
+    #[test]
+    fn active_tab_resolution_prefers_stable_tab_id_over_stale_index() {
+        let ctx = egui::Context::default();
+        let key = Id::new("active-tabs");
+        let first = Id::new("first");
+        let moved = Id::new("moved");
+        let last = Id::new("last");
+        ctx.data_mut(|d| {
+            d.insert_persisted(key, 0usize);
+            d.insert_persisted(active_tab_id_key(key), moved);
+        });
+
+        let idx = resolve_active_tab_idx(&ctx, key, &[first, moved, last]);
+
+        assert_eq!(idx, 1);
+        assert_eq!(ctx.data_mut(|d| d.get_persisted::<usize>(key)), Some(1));
+    }
+
+    #[test]
+    fn active_tab_resolution_clamps_index_and_repairs_active_id() {
+        let ctx = egui::Context::default();
+        let key = Id::new("active-tabs");
+        let only = Id::new("only");
+        ctx.data_mut(|d| d.insert_persisted(key, 99usize));
+
+        let idx = resolve_active_tab_idx(&ctx, key, &[only]);
+
+        assert_eq!(idx, 0);
+        assert_eq!(ctx.data_mut(|d| d.get_persisted::<usize>(key)), Some(0));
+        assert_eq!(
+            ctx.data_mut(|d| d.get_persisted::<Id>(active_tab_id_key(key))),
+            Some(only)
+        );
+    }
 }

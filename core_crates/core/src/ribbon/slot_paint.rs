@@ -1,16 +1,22 @@
 use egui::{Color32, Context, Id, Rect, Response, Sense, Vec2, pos2, vec2};
 
 use super::{
-    RibbonAction, RibbonCluster, RibbonEdge, RibbonScope, RibbonSlotItem,
+    RibbonAction, RibbonCluster, RibbonDrag, RibbonEdge, RibbonOpen, RibbonPlacement, RibbonScope,
+    RibbonSlotItem,
+    chrome::draw_unified_ribbon_chrome,
     paint::{paint_ribbon_button, paint_ribbon_glyph, ribbon_button_fg},
 };
 
 #[derive(Clone, Debug)]
 pub struct ResolvedSlotRibbon {
     pub id: Id,
+    pub chrome_id: Option<&'static str>,
     pub scope: RibbonScope,
     pub edge: RibbonEdge,
+    pub role: super::RibbonRole,
+    pub mode: super::RibbonMode,
     pub cluster: RibbonCluster,
+    pub accepts: &'static [&'static str],
     pub items: Vec<RibbonSlotItem>,
 }
 
@@ -19,25 +25,96 @@ pub struct RibbonSlotClick {
     pub ribbon: Id,
     pub item: Id,
     pub action: RibbonAction,
-    pub response: Response,
+    pub response: Option<Response>,
 }
 
 /// Paint already-resolved slot ribbons as simple icon/button rails.
 ///
-/// This is the bridge renderer for the new permanent/view/workspace
-/// slot model. It intentionally omits legacy drag and panel-open
-/// behavior: those remain in `draw_assembly` while hosts migrate
-/// root chrome to resolved slot ribbons.
+/// Simple renderer for resolved slot ribbons. Most app chrome should
+/// use [`draw_slot_ribbons_featureful`] so it gets drag/reorder,
+/// panel toggles, placement, and fullscreen layering too.
 pub fn draw_slot_ribbons(
     ctx: &Context,
     accent: Color32,
     ribbons: &[ResolvedSlotRibbon],
 ) -> Vec<RibbonSlotClick> {
+    assert_resolved_ribbon_icons(ribbons);
     let mut clicks = Vec::new();
     for ribbon in ribbons {
         draw_one_slot_ribbon(ctx, accent, ribbon, &mut clicks);
     }
     clicks
+}
+
+/// Draw slot ribbons through the featureful chrome path whenever
+/// the slot declarations provide static chrome ids.
+///
+/// This is the convergence point for the single ribbon API and the
+/// featureful renderer capabilities: drag/reorder, cross-ribbon
+/// placement, panel toggle state, pane anchoring, and fullscreen rail
+/// layering are preserved. If any ribbon/item lacks a chrome id, the
+/// function falls back to the simple slot painter for that frame.
+pub fn draw_slot_ribbons_featureful(
+    ctx: &Context,
+    accent: Color32,
+    ribbons: &[ResolvedSlotRibbon],
+    open: &mut RibbonOpen,
+    placement: &mut RibbonPlacement,
+    drag: &mut RibbonDrag,
+) -> Vec<RibbonSlotClick> {
+    assert_resolved_ribbon_icons(ribbons);
+    if !can_use_featureful_chrome(ribbons) {
+        return draw_slot_ribbons(ctx, accent, ribbons);
+    }
+    let clicks = draw_unified_ribbon_chrome(ctx, accent, ribbons, open, placement, drag, |id| {
+        ribbons
+            .iter()
+            .flat_map(|ribbon| ribbon.items.iter())
+            .find(|item| item.chrome_id == Some(id))
+            .is_some_and(|item| item.active)
+    });
+    clicks
+        .into_iter()
+        .filter_map(|click| {
+            ribbons
+                .iter()
+                .find_map(|ribbon| {
+                    ribbon
+                        .items
+                        .iter()
+                        .find(|item| item.id == click)
+                        .map(|item| (ribbon.id, item))
+                })
+                .map(|(ribbon_id, item)| RibbonSlotClick {
+                    ribbon: ribbon_id,
+                    item: item.id,
+                    action: item.action,
+                    response: None,
+                })
+        })
+        .collect()
+}
+
+fn assert_resolved_ribbon_icons(ribbons: &[ResolvedSlotRibbon]) {
+    for ribbon in ribbons {
+        for item in &ribbon.items {
+            assert!(
+                crate::icons::is_icon_payload(item.icon),
+                "ribbon slot items require an icon that resolves to a bundled font icon or inline SVG"
+            );
+        }
+    }
+}
+
+fn can_use_featureful_chrome(ribbons: &[ResolvedSlotRibbon]) -> bool {
+    ribbons.iter().all(|ribbon| {
+        ribbon.chrome_id.is_some()
+            && ribbon.items.iter().all(|item| {
+                item.chrome_id.is_some()
+                    && item.chrome_tooltip.is_some()
+                    && crate::icons::is_icon_payload(item.icon)
+            })
+    })
 }
 
 fn draw_one_slot_ribbon(
@@ -92,7 +169,7 @@ fn draw_one_slot_ribbon(
                         ribbon: ribbon.id,
                         item: item.id,
                         action: item.action,
-                        response,
+                        response: Some(response),
                     });
                 }
             }
@@ -144,5 +221,9 @@ fn cluster_axis_pos(min: f32, max: f32, span: f32, cluster: RibbonCluster, margi
 }
 
 fn glyph_for_item(item: &RibbonSlotItem) -> super::RibbonGlyph {
-    super::RibbonGlyph::Icon(item.icon)
+    if item.icon.trim_start().starts_with("<svg") || item.icon.trim_start().starts_with("<?xml") {
+        super::RibbonGlyph::Svg(item.icon)
+    } else {
+        super::RibbonGlyph::Icon(item.icon)
+    }
 }

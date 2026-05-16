@@ -33,6 +33,7 @@ pub fn drag_value(
 }
 
 /// Variable-height drag-value row — used by resizable pods.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_value_h(
     ui: &mut egui::Ui,
     label: &str,
@@ -113,6 +114,7 @@ pub fn axis_drag(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn axis_drag_h(
     ui: &mut egui::Ui,
     glyph: &str,

@@ -52,7 +52,13 @@ bevy = { workspace = true, features = [
     "ktx2",
     "zstd_rust",
     "png",
+    # Compile both winit windowing backends. `wayland` lets the demo
+    # open a native Wayland surface; `x11` keeps plain Xorg / XWayland
+    # working as a fallback. winit auto-prefers Wayland when
+    # $WAYLAND_DISPLAY is set — the Makefile clears it to force X11 in
+    # nix / sandbox shells where the socket isn't reachable.
     "x11",
+    "wayland",
     "reflect_auto_register",
 ] }
 bevy_egui = { workspace = true, features = [

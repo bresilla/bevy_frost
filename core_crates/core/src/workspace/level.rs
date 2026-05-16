@@ -29,7 +29,7 @@ impl WorkspaceLevelState {
 
     #[must_use]
     pub fn module(id: impl Into<Id>, depth: u8, module_id: Id) -> Self {
-        debug_assert!(depth > 0, "module workspace levels must be L1+");
+        assert!(depth > 0, "module workspace levels must be L1+");
         Self {
             id: id.into(),
             depth,

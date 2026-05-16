@@ -8,12 +8,13 @@ repository.workspace = true
 
 [dependencies]
 egui = { workspace = true, default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 # Silent markers for the upstream `egui_code_editor` cfg gates that
 # survived vendoring. The crate now compiles its egui/editor code
-# unconditionally; these features stay as no-op opt-ins for the
-# residual `#[cfg(feature = "serde")]` / `#[cfg(feature = "egui-probe")]`
-# annotations on theme + token types.
-serde = []
+# unconditionally.
+serde = ["dep:serde"]
+# No-op compatibility marker; the vendored code currently has no
+# probe annotations.
 egui-probe = []

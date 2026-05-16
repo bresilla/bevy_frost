@@ -24,6 +24,8 @@
 //!   the active `Theme` into egui's `Style`; `set_theme` swaps the
 //!   global theme.
 //! * [`ribbon`] — edge button strips.
+//! * [`shelf`] — persistent docked tabbed container regions that
+//!   reserve viewport space.
 //! * [`icons`] — Fluent UI System Icon glyph painter.
 
 pub mod app_shell;
@@ -38,6 +40,7 @@ pub mod module;
 pub mod pane;
 pub mod pod;
 pub mod ribbon;
+pub mod shelf;
 pub mod style;
 pub mod themes;
 pub mod view;
@@ -70,14 +73,18 @@ pub use app_shell::{
 pub use command_palette::{CommandPaletteState, PaletteItem, command_palette};
 pub use module::{FrostModule, ModuleInlineCtx, ModuleInlineOptions, ModuleResponse, WorkspaceCtx};
 pub use ribbon::{
-    ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult, RibbonClick,
-    RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
-    RibbonOpen, RibbonOverrideLayer, RibbonOverridePolicy, RibbonPlacement, RibbonRole,
-    RibbonScope, RibbonSlot, RibbonSlotClick, RibbonSlotDef, RibbonSlotId, RibbonSlotItem,
-    RibbonSlotOverride, RibbonWidth, dispatch_ribbon_action, draw_assembly, draw_slot_ribbons,
-    find_item, find_ribbon, main_bar_empty_drag_started, permanent_system_control_ribbon,
-    permanent_view_switcher_ribbon, resolve_slot_item, resolve_slot_items,
-    restore_workspace_slot_override, system_close_or_restore_slot_id,
+    ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult, RibbonAvoidance,
+    RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonMode, RibbonOpen,
+    RibbonOverrideLayer, RibbonOverridePolicy, RibbonPlacement, RibbonRole, RibbonScope,
+    RibbonSlot, RibbonSlotClick, RibbonSlotDef, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride,
+    RibbonWidth, dispatch_ribbon_action, draw_slot_ribbons, draw_slot_ribbons_featureful,
+    main_bar_empty_drag_started, permanent_system_control_slot, permanent_view_switcher_ribbon,
+    resolve_slot_item, resolve_slot_items, restore_workspace_slot_override, ribbon_avoiding_rect,
+    ribbon_clearance, system_close_or_restore_slot_id,
+};
+pub use shelf::{
+    ShelfContainer, ShelfDef, ShelfEdge, ShelfEdgeError, ShelfLayout, ShelfState, layout_shelves,
+    publish_shelf_layout, shelf_insets, show_shelves,
 };
 pub use style::{AccentColor, GlassOpacity, apply_theme, set_glass_opacity};
 pub use view::{FrostView, ViewCtx, ViewEntry, ViewId, ViewRouter, ViewRouterError};

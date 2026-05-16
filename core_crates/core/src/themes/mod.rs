@@ -100,7 +100,7 @@
 //!
 //! # Theme Authoring Rules
 //!
-//! - Keep the `Pane2 -> PaneBody -> Container -> Body -> Pod` hierarchy.
+//! - Keep the `Pane -> PaneBody -> Container -> Body -> Pod` hierarchy.
 //! - Put visual/layout dialect choices in nested theme structs.
 //! - Do not add theme-name checks in renderers.
 //! - Do not put custom renderer closures in theme files.

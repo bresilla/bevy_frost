@@ -9,12 +9,10 @@ use crate::style::{
     DragValueTheme, DropdownTheme, GlassTheme, GraphCanvasPattern, GraphTheme, IconTheme,
     KeybindingTheme, Mode, ModuleTheme, MotionTheme, OverlayTheme, PaletteTheme, PaneTheme,
     PodTheme, ProgressTheme, ReadoutTheme, RibbonChromeTheme, RibbonTheme, SelectTheme, ShapeTheme,
-    SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset, TabTheme,
-    TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
+    ShelfTheme, SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset,
+    TabTheme, TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
     ViewTheme, WidgetTheme,
 };
-
-use super::pro::theme_pro;
 
 pub const FLAT_DARK_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x00, 0x00, 0x00);
 pub const FLAT_DARK_BG_PANEL: egui::Color32 = egui::Color32::from_rgb(0x10, 0x10, 0x10);
@@ -193,7 +191,7 @@ pub const fn theme_flat(mode: Mode) -> Theme {
         },
         modules: ModuleTheme {
             allow_fullscreen_by_default: true,
-            workspace_restore_icon: "arrow_minimize",
+            workspace_restore_icon: "arrow-minimize",
             workspace_restore_label: "Restore",
             inline_workspace_button_label: "Open workspace",
         },
@@ -400,6 +398,16 @@ pub const fn theme_flat(mode: Mode) -> Theme {
                 alpha: 220,
             },
         },
+        shelf: ShelfTheme {
+            side_default_size: 300.0,
+            bottom_default_size: 240.0,
+            min_size: 150.0,
+            max_size: 720.0,
+            padding: 4.0,
+            resize_handle_thickness: 8.0,
+            background_alpha: 255,
+            border_width: 1.0,
+        },
         container: crate::style::ContainerTheme {
             title_zone_thickness: 22.0,
             title_inset: 5.0,
@@ -522,6 +530,5 @@ pub const fn theme_flat(mode: Mode) -> Theme {
         ghost_fill_alpha: 100,
         ghost_stroke_width: 2.0,
         pastel_accent: false,
-        ..theme_pro(mode)
     }
 }

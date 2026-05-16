@@ -13,6 +13,14 @@
 //!
 //! Run: `cargo run -p bevy_frost --example demo`.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::doc_lazy_continuation,
+    clippy::explicit_auto_deref,
+    clippy::too_many_arguments,
+    clippy::upper_case_acronyms
+)]
+
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 use bevy::math::CompassOctant;
 use bevy::pbr::{DistanceFog, FogFalloff};
@@ -26,12 +34,14 @@ use bevy_glacial::prelude::*;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use frost_core::container::SeparatorStyle;
-use frost_core::pane::{Pane2, PaneAnchor, PaneBody, RailZone};
+use frost_core::pane::{Pane, PaneAnchor, PaneBody, RailZone};
 use frost_core::pod::Pod;
 use frost_core::ribbon::{
-    RibbonCluster, RibbonDef, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonItem, RibbonMode,
-    RibbonOpen, RibbonPlacement, RibbonRole, draw_assembly, find_item, find_ribbon,
+    ResolvedSlotRibbon, RibbonAction, RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph,
+    RibbonMode, RibbonOpen, RibbonPlacement, RibbonRole, RibbonSlotClick, RibbonSlotItem,
+    draw_slot_ribbons_featureful,
 };
+use frost_core::shelf::{ShelfContainer, ShelfDef, ShelfEdge, ShelfState};
 use frost_core::style::{AccentColor, GlassOpacity, Mode, srgb_to_egui};
 use frost_core::widget::{FillStyle, TreeIconKind, TreeIconSlot};
 // Vendored extras — node graph (`egui-graph`) and code editor
@@ -67,9 +77,17 @@ const PANE_EDITOR: &str = "demo_pane_editor";
 const PANE_THEME: &str = "demo_pane_theme";
 const PANE_KEYS: &str = "demo_pane_keys";
 const PANE_ABOUT: &str = "demo_pane_about";
+const PANE_CANVAS_BRUSH: &str = "demo_canvas_pane_brush";
+const PANE_CANVAS_LAYERS: &str = "demo_canvas_pane_layers";
+const PANE_CANVAS_ASSETS: &str = "demo_canvas_pane_assets";
+const PANE_CANVAS_INSPECTOR: &str = "demo_canvas_pane_inspector";
+const PANE_CANVAS_HISTORY: &str = "demo_canvas_pane_history";
+const PANE_CANVAS_EXPORT: &str = "demo_canvas_pane_export";
+const CANVAS_SHELF_LEFT: &str = "demo_canvas_shelf_left";
 
 const ACTION_PREV_CUBE: &str = "demo_action_prev_cube";
 const ACTION_NEXT_CUBE: &str = "demo_action_next_cube";
+const ACTION_CANVAS_CLEAR: &str = "demo_action_canvas_clear";
 const ACTION_VIEW_BEVY: &str = "demo_action_view_bevy";
 const ACTION_VIEW_CANVAS: &str = "demo_action_view_canvas";
 const ACTION_CLOSE_APP: &str = "demo_action_close_app";
@@ -139,104 +157,164 @@ const PANE_DEFS: &[(&str, &str, PaneAnchor, &str)] = &[
         PaneAnchor::BottomRail(RailZone::Start),
         "Editor",
     ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_BRUSH,
+        PaneAnchor::LeftRail(RailZone::Start),
+        "Brush",
+    ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_LAYERS,
+        PaneAnchor::LeftRail(RailZone::Middle),
+        "Layers",
+    ),
+    (
+        RIBBON_LEFT,
+        PANE_CANVAS_ASSETS,
+        PaneAnchor::LeftRail(RailZone::End),
+        "Assets",
+    ),
+    (
+        RIBBON_RIGHT,
+        PANE_CANVAS_INSPECTOR,
+        PaneAnchor::RightRail(RailZone::Start),
+        "Inspector",
+    ),
+    (
+        RIBBON_RIGHT,
+        PANE_CANVAS_HISTORY,
+        PaneAnchor::RightRail(RailZone::Middle),
+        "History",
+    ),
+    (
+        RIBBON_BOTTOM,
+        PANE_CANVAS_EXPORT,
+        PaneAnchor::BottomRail(RailZone::Start),
+        "Export",
+    ),
 ];
 
-const RIBBONS: &[RibbonDef] = &[
+#[derive(Clone, Copy, Debug)]
+struct RibbonSpec {
+    id: &'static str,
+    edge: RibbonEdge,
+    role: RibbonRole,
+    mode: RibbonMode,
+    accepts: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RibbonButtonSpec {
+    id: &'static str,
+    ribbon: &'static str,
+    cluster: RibbonCluster,
+    slot: u32,
+    draggable: bool,
+    glyph: RibbonGlyph,
+    tooltip: &'static str,
+    child_ribbon: Option<&'static str>,
+    role: Option<RibbonRole>,
+}
+
+const RIBBONS: &[RibbonSpec] = &[
     // First declared ribbon is the persistent/main app bar. Keep it
     // first so it owns the full left-to-right top edge.
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_TOP,
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_BOTTOM],
+        accepts: &[],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_LEFT,
         edge: RibbonEdge::Left,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_RIGHT, RIBBON_TOP, RIBBON_BOTTOM],
+        accepts: &[RIBBON_RIGHT, RIBBON_BOTTOM],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_RIGHT,
         edge: RibbonEdge::Right,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_TOP, RIBBON_BOTTOM],
+        accepts: &[RIBBON_LEFT, RIBBON_BOTTOM],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_BOTTOM,
         edge: RibbonEdge::Bottom,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: true,
-        accepts: &[RIBBON_LEFT, RIBBON_RIGHT, RIBBON_TOP],
+        accepts: &[RIBBON_LEFT, RIBBON_RIGHT],
     },
 ];
 
-const RIBBON_ITEMS: &[RibbonItem] = &[
+const RIBBON_ITEMS: &[RibbonButtonSpec] = &[
     // LEFT rail — primary navigation cluster.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_WIDGETS,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: true,
         glyph: RibbonGlyph::Icon("apps"),
         tooltip: "Widgets gallery",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_CONTAINERS,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
+        draggable: true,
         glyph: RibbonGlyph::Icon("box"),
         tooltip: "Containers showcase",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_SCENE,
         ribbon: RIBBON_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
+        draggable: true,
         glyph: RibbonGlyph::Icon("folder"),
         tooltip: "Scene outliner",
         child_ribbon: None,
         role: None,
     },
     // RIGHT rail — theme + input.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_THEME,
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: true,
         glyph: RibbonGlyph::Icon("color"),
         tooltip: "Theme & colour",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_KEYS,
         ribbon: RIBBON_RIGHT,
         cluster: RibbonCluster::Start,
         slot: 1,
+        draggable: true,
         glyph: RibbonGlyph::Icon("keyboard"),
         tooltip: "Keys & gestures",
         child_ribbon: None,
         role: None,
     },
     // TOP rail — meta.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
@@ -244,31 +322,34 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     },
     // TOP middle — root/L0 view switcher. These are normal ribbon
     // buttons, same style as every other demo ribbon button.
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("cube"),
         tooltip: "Bevy scene view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 1,
-        glyph: RibbonGlyph::Icon("draw"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_CLOSE_APP,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("dismiss"),
         tooltip: "Close application",
         child_ribbon: None,
@@ -277,31 +358,34 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     // BOTTOM rail — Editor (placeholder; the legacy graph + code
     // wrappers lived in `frostcore` which has been removed) and the
     // one-shot cube-cycle action buttons in the End cluster.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_EDITOR,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: true,
         glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Editor",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_PREV_CUBE,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::End,
         slot: 0,
+        draggable: true,
         glyph: RibbonGlyph::Icon("arrow-left"),
         tooltip: "Previous cube",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_NEXT_CUBE,
         ribbon: RIBBON_BOTTOM,
         cluster: RibbonCluster::End,
         slot: 1,
+        draggable: true,
         glyph: RibbonGlyph::Icon("arrow-right"),
         tooltip: "Next cube",
         child_ribbon: None,
@@ -309,47 +393,129 @@ const RIBBON_ITEMS: &[RibbonItem] = &[
     },
 ];
 
-const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
-    // Canvas view opts out of the Bevy-specific side/bottom rails,
-    // but it does NOT opt out of the persistent main top bar. Keep
-    // every top-bar item that should remain global.
-    RibbonItem {
+const RIBBON_ITEMS_ROOT_VIEW: &[RibbonButtonSpec] = &[
+    // TOP rail — the only persistent/shared bar.
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("cube"),
         tooltip: "Bevy scene view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 1,
-        glyph: RibbonGlyph::Icon("draw"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_CLOSE_APP,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("dismiss"),
         tooltip: "Close application",
+        child_ribbon: None,
+        role: Some(RibbonRole::Icon),
+    },
+    // Canvas LEFT rail — canvas-specific tools.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_BRUSH,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("paint-brush"),
+        tooltip: "Canvas brush settings",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_LAYERS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 1,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("square-multiple"),
+        tooltip: "Canvas layers",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_ASSETS,
+        ribbon: RIBBON_LEFT,
+        cluster: RibbonCluster::Start,
+        slot: 2,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("image"),
+        tooltip: "Canvas assets",
+        child_ribbon: None,
+        role: None,
+    },
+    // Canvas RIGHT rail — canvas-specific state.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_INSPECTOR,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("options"),
+        tooltip: "Canvas inspector",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: PANE_CANVAS_HISTORY,
+        ribbon: RIBBON_RIGHT,
+        cluster: RibbonCluster::Start,
+        slot: 1,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("history"),
+        tooltip: "Canvas history",
+        child_ribbon: None,
+        role: None,
+    },
+    // Canvas BOTTOM rail — canvas actions.
+    RibbonButtonSpec {
+        id: PANE_CANVAS_EXPORT,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::Start,
+        slot: 0,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("arrow-download"),
+        tooltip: "Canvas export",
+        child_ribbon: None,
+        role: None,
+    },
+    RibbonButtonSpec {
+        id: ACTION_CANVAS_CLEAR,
+        ribbon: RIBBON_BOTTOM,
+        cluster: RibbonCluster::End,
+        slot: 0,
+        draggable: true,
+        glyph: RibbonGlyph::Icon("delete"),
+        tooltip: "Clear canvas strokes",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
@@ -357,7 +523,7 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
 
 // ─── Fullscreen-only ribbon sets ───────────────────────────────────
 //
-// Painted by `draw_assembly` only while the corresponding widget is
+// Painted by `ribbon renderer` only while the corresponding widget is
 // in its fullscreen overlay — branched in the per-frame paint via
 // `is_graph_fullscreen` / `is_code_fullscreen`. Each set uses the
 // SAME ribbon API as the regular rails, so the fullscreen view is
@@ -366,21 +532,19 @@ const RIBBON_ITEMS_ROOT_VIEW: &[RibbonItem] = &[
 // Shared rail-definitions reused by both fullscreen flavours. Items
 // reference these by id; the per-widget `RIBBON_ITEMS_FS_*` slices
 // below decide which icons populate each rail.
-const RIBBONS_FS: &[RibbonDef] = &[
-    RibbonDef {
+const RIBBONS_FS: &[RibbonSpec] = &[
+    RibbonSpec {
         id: RIBBON_TOP,
         edge: RibbonEdge::Top,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: false,
         accepts: &[],
     },
-    RibbonDef {
+    RibbonSpec {
         id: RIBBON_FS_LEFT,
         edge: RibbonEdge::Left,
         role: RibbonRole::Panel,
         mode: RibbonMode::ThreeSided,
-        draggable: false,
         accepts: &[],
     },
 ];
@@ -388,125 +552,137 @@ const RIBBONS_FS: &[RibbonDef] = &[
 // Node-graph fullscreen: a graph-builder toolbar across the top
 // (Add / Frame / Clear / Save) plus a category sidebar on the left
 // (Sources / Math / Noise / Logic).
-const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
+const RIBBON_ITEMS_FS_GRAPH: &[RibbonButtonSpec] = &[
     // Persistent main bar stays present in module/fullscreen views.
     // The system-control slot changes meaning here: close becomes
     // restore-to-parent/fullscreen-exit, not app close.
-    RibbonItem {
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("cube"),
         tooltip: "Bevy scene view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 1,
-        glyph: RibbonGlyph::Icon("draw"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_RESTORE_FULLSCREEN,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("arrow-minimize"),
         tooltip: "Restore module",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_ADD,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("add"),
         tooltip: "Add node",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_FRAME,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
-        glyph: RibbonGlyph::Icon("expand"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("arrow-expand"),
         tooltip: "Frame all",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_CLEAR,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
-        glyph: RibbonGlyph::Icon("trash"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("delete"),
         tooltip: "Clear graph",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_GRAPH_SAVE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 3,
+        draggable: false,
         glyph: RibbonGlyph::Icon("save"),
         tooltip: "Save graph",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_SOURCES,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 0,
-        glyph: RibbonGlyph::Icon("dot"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("circle"),
         tooltip: "Sources",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_MATH,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 1,
+        draggable: false,
         glyph: RibbonGlyph::Icon("calculator"),
         tooltip: "Math",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_NOISE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 2,
-        glyph: RibbonGlyph::Icon("wave"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("sine-wave-dots"),
         tooltip: "Noise",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CAT_LOGIC,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 3,
+        draggable: false,
         glyph: RibbonGlyph::Icon("flowchart"),
         tooltip: "Logic",
         child_ribbon: None,
@@ -517,118 +693,239 @@ const RIBBON_ITEMS_FS_GRAPH: &[RibbonItem] = &[
 // Code-editor fullscreen: an editor toolbar across the top
 // (Save / Run / Format / Find) plus a file-switcher sidebar on the
 // left (main.rs / lib.rs / Cargo.toml).
-const RIBBON_ITEMS_FS_CODE: &[RibbonItem] = &[
-    RibbonItem {
+const RIBBON_ITEMS_FS_CODE: &[RibbonButtonSpec] = &[
+    RibbonButtonSpec {
         id: PANE_ABOUT,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("info"),
         tooltip: "About this demo",
         child_ribbon: None,
         role: None,
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_BEVY,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("cube"),
         tooltip: "Bevy scene view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_VIEW_CANVAS,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::Middle,
         slot: 1,
-        glyph: RibbonGlyph::Icon("draw"),
+        draggable: false,
+        glyph: RibbonGlyph::Icon("pen"),
         tooltip: "Canvas / whiteboard view",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: ACTION_RESTORE_FULLSCREEN,
         ribbon: RIBBON_TOP,
         cluster: RibbonCluster::End,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("arrow-minimize"),
         tooltip: "Restore module",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_SAVE,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("save"),
         tooltip: "Save",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_RUN,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 1,
+        draggable: false,
         glyph: RibbonGlyph::Icon("play"),
         tooltip: "Run",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_FORMAT,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 2,
+        draggable: false,
         glyph: RibbonGlyph::Icon("wand"),
         tooltip: "Format",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_CODE_FIND,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Start,
         slot: 3,
+        draggable: false,
         glyph: RibbonGlyph::Icon("search"),
         tooltip: "Find",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_MAIN,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 0,
+        draggable: false,
         glyph: RibbonGlyph::Icon("code"),
         tooltip: "main.rs",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_LIB,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 1,
+        draggable: false,
         glyph: RibbonGlyph::Icon("book"),
         tooltip: "lib.rs",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
-    RibbonItem {
+    RibbonButtonSpec {
         id: FS_FILE_CARGO,
         ribbon: RIBBON_FS_LEFT,
         cluster: RibbonCluster::Middle,
         slot: 2,
+        draggable: false,
         glyph: RibbonGlyph::Icon("box"),
         tooltip: "Cargo.toml",
         child_ribbon: None,
         role: Some(RibbonRole::Icon),
     },
 ];
+
+fn find_item<'a>(items: &'a [RibbonButtonSpec], id: &'static str) -> Option<&'a RibbonButtonSpec> {
+    items.iter().find(|item| item.id == id)
+}
+
+fn find_ribbon<'a>(ribbons: &'a [RibbonSpec], id: &'static str) -> Option<&'a RibbonSpec> {
+    ribbons.iter().find(|ribbon| ribbon.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_ribbon_icons_are_renderable() {
+        for item in RIBBON_ITEMS
+            .iter()
+            .chain(RIBBON_ITEMS_ROOT_VIEW)
+            .chain(RIBBON_ITEMS_FS_GRAPH)
+            .chain(RIBBON_ITEMS_FS_CODE)
+        {
+            let icon = match item.glyph {
+                RibbonGlyph::Icon(icon) | RibbonGlyph::Text(icon) | RibbonGlyph::Svg(icon) => icon,
+            };
+            assert!(
+                frost_core::icons::is_icon_payload(icon),
+                "demo ribbon item {} uses a non-renderable icon payload {:?}",
+                item.id,
+                icon
+            );
+        }
+    }
+}
+
+fn ribbon_action(id: &'static str) -> RibbonAction {
+    match id {
+        ACTION_CLOSE_APP => RibbonAction::CloseApp,
+        ACTION_RESTORE_FULLSCREEN => RibbonAction::PopWorkspace,
+        _ => RibbonAction::Command(egui::Id::new(id)),
+    }
+}
+
+fn draw_unified_ribbons(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    ribbons: &[RibbonSpec],
+    items: &[RibbonButtonSpec],
+    open: &mut RibbonOpen,
+    placement: &mut RibbonPlacement,
+    drag: &mut RibbonDrag,
+    active: impl Fn(&'static str) -> bool,
+) -> Vec<RibbonSlotClick> {
+    let mut resolved = Vec::new();
+    for ribbon in ribbons {
+        for cluster in [
+            RibbonCluster::Start,
+            RibbonCluster::Middle,
+            RibbonCluster::End,
+        ] {
+            let slot_items: Vec<RibbonSlotItem> = items
+                .iter()
+                .filter(|item| item.ribbon == ribbon.id && item.cluster == cluster)
+                .map(|item| {
+                    let icon = match item.glyph {
+                        RibbonGlyph::Icon(icon)
+                        | RibbonGlyph::Text(icon)
+                        | RibbonGlyph::Svg(icon) => icon,
+                    };
+                    let mut slot_item = RibbonSlotItem::featureful(
+                        item.id,
+                        icon,
+                        item.id,
+                        item.tooltip,
+                        ribbon_action(item.id),
+                    )
+                    .with_role(item.role.unwrap_or(ribbon.role));
+                    if let Some(child) = item.child_ribbon {
+                        slot_item = slot_item.with_child_ribbon(child);
+                    }
+                    slot_item.draggable = item.draggable;
+                    slot_item.active = active(item.id);
+                    slot_item
+                })
+                .collect();
+            if slot_items.is_empty() {
+                continue;
+            }
+            resolved.push(ResolvedSlotRibbon {
+                id: egui::Id::new((ribbon.id, cluster)),
+                chrome_id: Some(ribbon.id),
+                scope: demo_ribbon_scope(ribbon.id),
+                edge: ribbon.edge,
+                role: ribbon.role,
+                mode: ribbon.mode,
+                cluster,
+                accepts: ribbon.accepts,
+                items: slot_items,
+            });
+        }
+    }
+    draw_slot_ribbons_featureful(ctx, accent, &resolved, open, placement, drag)
+}
+
+fn demo_ribbon_scope(ribbon_id: &'static str) -> frost_core::RibbonScope {
+    if ribbon_id == RIBBON_TOP {
+        frost_core::RibbonScope::Permanent
+    } else {
+        frost_core::RibbonScope::View(frost_core::ViewId::new("demo.local_ribbons"))
+    }
+}
 
 // ─── Theme + scene state ───────────────────────────────────────────
 
@@ -674,6 +971,9 @@ struct SelectedSwatch(Option<Entity>);
 struct CanvasViewState {
     strokes: Vec<Vec<egui::Pos2>>,
 }
+
+#[derive(Resource, Default)]
+struct CanvasShelfState(ShelfState);
 
 /// Per-graph sharp-zoom state (secondary egui::Context, pan, zoom,
 /// wgpu render target). Held as a Bevy resource so the SAME state
@@ -761,6 +1061,7 @@ fn main() {
         .init_resource::<DemoRootView>()
         .init_resource::<SelectedSwatch>()
         .init_resource::<CanvasViewState>()
+        .init_resource::<CanvasShelfState>()
         .init_resource::<EditorNodeView>()
         .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
@@ -1118,6 +1419,7 @@ fn ui_system(
     mut tint: ResMut<TintRgba>,
     mut root_view: ResMut<DemoRootView>,
     mut canvas_view: ResMut<CanvasViewState>,
+    mut canvas_shelves: ResMut<CanvasShelfState>,
     mut app_exit: MessageWriter<AppExit>,
     mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     // ── Sharp-zoom node-graph plumbing (bundled to stay under
@@ -1143,12 +1445,21 @@ fn ui_system(
     frost_core::style::apply_theme(ctx, *accent, *glass);
 
     let accent_col = frost_core::style::active_accent();
+    frost_core::publish_shelf_layout(
+        ctx,
+        frost_core::ShelfLayout {
+            viewport: ctx.content_rect(),
+            left: None,
+            right: None,
+            bottom: None,
+        },
+    );
 
     // Actual root/L0 canvas switch:
     // - BevyScene is the normal demo: Bevy 3D scene plus Frost panes/ribbons.
     // - Canvas owns the whole egui canvas and replaces the Bevy scene visually.
     if *root_view == DemoRootView::Canvas {
-        canvas_root_view(ctx, accent_col, &mut canvas_view);
+        canvas_root_view(ctx, accent_col, &mut canvas_view, &mut canvas_shelves.0);
     }
 
     // Fullscreen-view branch. The fullscreen overlay paints at
@@ -1175,19 +1486,17 @@ fn ui_system(
             )
         });
     // Ribbon assembly is rendered AFTER the pane loop below — see
-    // the trailing `draw_assembly` call. The ribbon `Area`s share
+    // the trailing `ribbon renderer` call. The ribbon `Area`s share
     // `Order::Foreground` with the `embed` fullscreen overlay, so
     // they must register later to land on top of it. Click handling
     // happens during that paint; pane `open` state is read one
     // frame later (~16 ms — imperceptible).
     //
-    // IMPORTANT: persistent-bar pane buttons must resolve against
-    // the CURRENT root view's item set. Canvas opts out of the
-    // Bevy-specific side/bottom buttons, but it keeps persistent
-    // top-bar buttons like About. If we hard-skip all panes in
-    // Canvas, the persistent bar toggles state but its UI never
-    // appears over the current view.
-    let current_ribbon_items: &[RibbonItem] = if fs_active && graph_fs {
+    // IMPORTANT: pane buttons must resolve against the CURRENT root
+    // view's item set. Canvas now carries the same four-edge demo
+    // ribbon layout as the Bevy view, with only the top ribbon being
+    // persistent.
+    let current_ribbon_items: &[RibbonButtonSpec] = if fs_active && graph_fs {
         RIBBON_ITEMS_FS_GRAPH
     } else if fs_active && code_fs {
         RIBBON_ITEMS_FS_CODE
@@ -1198,19 +1507,20 @@ fn ui_system(
     } else {
         RIBBON_ITEMS
     };
-    let current_ribbons: &[RibbonDef] = if fs_active { RIBBONS_FS } else { RIBBONS };
+    let current_ribbons: &[RibbonSpec] = if fs_active { RIBBONS_FS } else { RIBBONS };
 
-    let is_open_in = |items: &[RibbonItem], id: &'static str| -> bool {
+    let is_open_in = |items: &[RibbonButtonSpec], id: &'static str| -> bool {
         let Some(item) = find_item(items, id) else {
             return false;
         };
-        let (rid, _, _) = placement.resolve(item);
+        let (rid, _, _) = placement.resolve_parts(item.id, item.ribbon, item.cluster, item.slot);
         open.is_open(rid, id)
     };
     let is_open = |id: &'static str| -> bool { is_open_in(current_ribbon_items, id) };
     let live_anchor = |id: &'static str| -> Option<PaneAnchor> {
         let item = find_item(current_ribbon_items, id)?;
-        let (rid, cluster, _) = placement.resolve(item);
+        let (rid, cluster, _) =
+            placement.resolve_parts(item.id, item.ribbon, item.cluster, item.slot);
         let def = find_ribbon(current_ribbons, rid)?;
         let zone = match cluster {
             RibbonCluster::Start => RailZone::Start,
@@ -1252,7 +1562,7 @@ fn ui_system(
         );
         let now = ctx.input(|i| i.time);
         let mut viewer = DemoViewer { time: now };
-        Pane2::new(PANE_EDITOR, "Editor", anchor, accent_col)
+        Pane::new(PANE_EDITOR, "Editor", anchor, accent_col)
             .resize(frost_core::pane::PaneResize::SPAN)
             .show(ctx, |body| {
                 editor_pane(
@@ -1286,7 +1596,7 @@ fn ui_system(
         }
         let anchor = live_anchor(button_id).unwrap_or(default_anchor);
         // Editor pane uses non-`'static` borrows that have to outlive
-        // `Pane2::show` — the typed `PaneBody::add_node_graph` stores
+        // `Pane::show` — the typed `PaneBody::add_node_graph` stores
         // them in the pending-spec list and the closure runs at
         // `body.finish()` time (after the user closure returns). Lift
         // `viewer` / `backend` to the iteration scope so they live
@@ -1318,7 +1628,7 @@ fn ui_system(
             );
             let now = ctx.input(|i| i.time);
             let mut viewer = DemoViewer { time: now };
-            Pane2::new(button_id, label, anchor, accent_col)
+            Pane::new(button_id, label, anchor, accent_col)
                 .resize(frost_core::pane::PaneResize::SPAN)
                 .show(ctx, |body| {
                     editor_pane(
@@ -1331,7 +1641,7 @@ fn ui_system(
                 });
             continue;
         }
-        Pane2::new(button_id, label, anchor, accent_col)
+        Pane::new(button_id, label, anchor, accent_col)
             .resize(frost_core::pane::PaneResize::SPAN)
             .order(if fs_active {
                 egui::Order::Foreground
@@ -1353,6 +1663,12 @@ fn ui_system(
                 ),
                 PANE_KEYS => keys_pane(body),
                 PANE_ABOUT => about_pane(body),
+                PANE_CANVAS_BRUSH => canvas_brush_pane(body),
+                PANE_CANVAS_LAYERS => canvas_layers_pane(body),
+                PANE_CANVAS_ASSETS => canvas_assets_pane(body),
+                PANE_CANVAS_INSPECTOR => canvas_inspector_pane(body),
+                PANE_CANVAS_HISTORY => canvas_history_pane(body),
+                PANE_CANVAS_EXPORT => canvas_export_pane(body),
                 _ => {}
             });
     }
@@ -1361,8 +1677,8 @@ fn ui_system(
     // `Order::Foreground` lands the ribbon `Area`s on top of the
     // `embed` fullscreen overlay, so the host's fullscreen rails
     // remain visible.
-    let clicks: Vec<frost_core::ribbon::RibbonClick> = if fs_active {
-        let fs_items: &[RibbonItem] = if graph_fs {
+    let clicks: Vec<RibbonSlotClick> = if fs_active {
+        let fs_items: &[RibbonButtonSpec] = if graph_fs {
             RIBBON_ITEMS_FS_GRAPH
         } else if code_fs {
             RIBBON_ITEMS_FS_CODE
@@ -1371,7 +1687,7 @@ fn ui_system(
         };
         let mut fs_placement = frost_core::ribbon::RibbonPlacement::default();
         let mut fs_drag = frost_core::ribbon::RibbonDrag::default();
-        draw_assembly(
+        draw_unified_ribbons(
             ctx,
             accent_col,
             RIBBONS_FS,
@@ -1382,7 +1698,7 @@ fn ui_system(
             |id| matches!(id, ACTION_RESTORE_FULLSCREEN),
         )
     } else {
-        draw_assembly(
+        draw_unified_ribbons(
             ctx,
             accent_col,
             RIBBONS,
@@ -1415,35 +1731,41 @@ fn ui_system(
         (191, 115, 242),
     ];
     for click in clicks {
-        if click.item == ACTION_VIEW_BEVY {
+        if click.item == egui::Id::new(ACTION_VIEW_BEVY) {
             if fs_active {
                 frost_core::embed::restore_fullscreen(ctx);
             }
             *root_view = DemoRootView::BevyScene;
             continue;
         }
-        if click.item == ACTION_VIEW_CANVAS {
+        if click.item == egui::Id::new(ACTION_VIEW_CANVAS) {
             if fs_active {
                 frost_core::embed::restore_fullscreen(ctx);
             }
             *root_view = DemoRootView::Canvas;
             continue;
         }
-        if click.item == ACTION_RESTORE_FULLSCREEN {
+        if click.item == egui::Id::new(ACTION_RESTORE_FULLSCREEN) {
             frost_core::embed::restore_fullscreen(ctx);
             continue;
         }
-        if click.item == ACTION_CLOSE_APP {
+        if click.item == egui::Id::new(ACTION_CLOSE_APP) {
             app_exit.write(AppExit::Success);
             continue;
         }
-        if click.item == ACTION_PREV_CUBE || click.item == ACTION_NEXT_CUBE {
+        if click.item == egui::Id::new(ACTION_CANVAS_CLEAR) {
+            canvas_view.strokes.clear();
+            continue;
+        }
+        if click.item == egui::Id::new(ACTION_PREV_CUBE)
+            || click.item == egui::Id::new(ACTION_NEXT_CUBE)
+        {
             let cur = accent.0;
             let cur_idx = SWATCH_RGB
                 .iter()
                 .position(|&(r, g, b)| egui::Color32::from_rgb(r, g, b) == cur)
                 .unwrap_or(0);
-            let next_idx = if click.item == ACTION_PREV_CUBE {
+            let next_idx = if click.item == egui::Id::new(ACTION_PREV_CUBE) {
                 (cur_idx + SWATCH_RGB.len() - 1) % SWATCH_RGB.len()
             } else {
                 (cur_idx + 1) % SWATCH_RGB.len()
@@ -1456,15 +1778,27 @@ fn ui_system(
 
 // ─── Canvas root view ──────────────────────────────────────────────
 
-fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut CanvasViewState) {
+fn canvas_root_view(
+    ctx: &egui::Context,
+    accent: egui::Color32,
+    canvas: &mut CanvasViewState,
+    shelf_state: &mut ShelfState,
+) {
+    let shelves = canvas_shelves(accent);
+    let shelf_theme = *frost_core::style::theme().shelf();
+    let layout =
+        frost_core::layout_shelves(ctx.content_rect(), &shelves, shelf_state, &shelf_theme);
+
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
         .show(ctx, |ui| {
-            let rect = ui.max_rect();
-            let response = ui.allocate_rect(rect, egui::Sense::drag());
-            let painter = ui.painter_at(rect);
+            let screen_rect = ui.max_rect();
+            let canvas_rect = layout.viewport;
+            let response = ui.allocate_rect(canvas_rect, egui::Sense::drag());
+            let painter = ui.painter_at(screen_rect);
 
-            painter.rect_filled(rect, 0, frost_core::style::theme().palette.bg_panel);
+            painter.rect_filled(screen_rect, 0, frost_core::style::theme().palette.bg_panel);
+            painter.rect_filled(canvas_rect, 0, frost_core::style::theme().palette.bg_window);
 
             let grid = 32.0;
             let grid_col = egui::Color32::from_rgba_unmultiplied(
@@ -1473,18 +1807,24 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
                 frost_core::style::on_panel_dim().b(),
                 34,
             );
-            let mut x = rect.left() + grid;
-            while x < rect.right() {
+            let mut x = canvas_rect.left() + grid;
+            while x < canvas_rect.right() {
                 painter.line_segment(
-                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    [
+                        egui::pos2(x, canvas_rect.top()),
+                        egui::pos2(x, canvas_rect.bottom()),
+                    ],
                     egui::Stroke::new(1.0, grid_col),
                 );
                 x += grid;
             }
-            let mut y = rect.top() + grid;
-            while y < rect.bottom() {
+            let mut y = canvas_rect.top() + grid;
+            while y < canvas_rect.bottom() {
                 painter.line_segment(
-                    [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    [
+                        egui::pos2(canvas_rect.left(), y),
+                        egui::pos2(canvas_rect.right(), y),
+                    ],
                     egui::Stroke::new(1.0, grid_col),
                 );
                 y += grid;
@@ -1496,7 +1836,7 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
             if response.dragged() || response.drag_started() {
                 if let Some(pos) = response
                     .interact_pointer_pos()
-                    .filter(|pos| rect.contains(*pos))
+                    .filter(|pos| canvas_rect.contains(*pos))
                 {
                     if let Some(stroke) = canvas.strokes.last_mut() {
                         if stroke.last().is_none_or(|last| last.distance(pos) > 1.5) {
@@ -1514,7 +1854,7 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
 
             if canvas.strokes.is_empty() {
                 painter.text(
-                    rect.center(),
+                    canvas_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "Canvas root view\ndrag to draw",
                     egui::FontId::proportional(24.0),
@@ -1522,6 +1862,136 @@ fn canvas_root_view(ctx: &egui::Context, accent: egui::Color32, canvas: &mut Can
                 );
             }
         });
+
+    frost_core::show_shelves(ctx, layout, shelves, shelf_state);
+}
+
+fn canvas_shelves(accent: egui::Color32) -> Vec<ShelfDef<'static>> {
+    vec![
+        ShelfDef::new(CANVAS_SHELF_LEFT, ShelfEdge::Left, accent)
+            .default_size(300.0)
+            .movable()
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "tools"),
+                "Canvas Tools",
+                "draw-shape",
+                vec![
+                    frost_core::container::Tab::new("paint.brush", "Brush", "paint-brush").pods(
+                        vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("size", 3.0, 1.0..=24.0, 1, " px", accent),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 1))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("opacity", 1.0, 0.05..=1.0, 2, "", accent),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "brush", 2))
+                                .with_separator(SeparatorStyle::None)
+                                .with_button("Clear strokes", accent),
+                        ],
+                    ),
+                    frost_core::container::Tab::new("paint.layers", "Layers", "square-multiple")
+                        .pods(vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "layers", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_select_list(
+                                    vec![
+                                        "Sketch layer".to_owned(),
+                                        "Ink layer".to_owned(),
+                                        "Notes layer".to_owned(),
+                                    ],
+                                    None::<Vec<String>>,
+                                    accent,
+                                ),
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "layers", 1))
+                                .with_separator(SeparatorStyle::None)
+                                .with_toggle_initial("show grid", accent, true),
+                        ]),
+                    frost_core::container::Tab::new("paint.assets", "Assets", "image").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "assets", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_search("search images…", accent),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "assets", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Import image", accent),
+                    ]),
+                ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "document"),
+                "Document",
+                "document",
+                vec![
+                    frost_core::container::Tab::new("paint.info", "Info", "info").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("view", "Canvas"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 1))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("shelf", "Left dock"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "info", 2))
+                            .with_separator(SeparatorStyle::None)
+                            .with_readout("content", "multiple tabbed containers"),
+                    ]),
+                    frost_core::container::Tab::new("paint.export", "Export", "save").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "export", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_dropdown(
+                                vec!["PNG".to_owned(), "SVG".to_owned(), "Frost Scene".to_owned()],
+                                0,
+                                accent,
+                            ),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "export", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Export canvas", accent),
+                    ]),
+                ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "history"),
+                "History",
+                "history",
+                vec![
+                    frost_core::container::Tab::new("paint.undo", "Undo", "arrow-undo").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "undo", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_readout("last action", "Brush stroke"),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "undo", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_button("Revert action", accent),
+                    ]),
+                    frost_core::container::Tab::new("paint.timeline", "Timeline", "clock").pods(
+                        vec![
+                            Pod::new(pid(CANVAS_SHELF_LEFT, "timeline", 0))
+                                .with_separator(SeparatorStyle::Line)
+                                .with_slider("scrub", 0.0, 0.0..=100.0, 0, " %", accent),
+                        ],
+                    ),
+                ],
+            ))
+            .container(ShelfContainer::tabbed(
+                cid(CANVAS_SHELF_LEFT, "properties"),
+                "Properties",
+                "settings",
+                vec![
+                    frost_core::container::Tab::new("paint.stroke", "Stroke", "pen").pods(vec![
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "stroke", 0))
+                            .with_separator(SeparatorStyle::Line)
+                            .with_dropdown(
+                                vec![
+                                    "Round".to_owned(),
+                                    "Square".to_owned(),
+                                    "Calligraphy".to_owned(),
+                                ],
+                                0,
+                                accent,
+                            ),
+                        Pod::new(pid(CANVAS_SHELF_LEFT, "stroke", 1))
+                            .with_separator(SeparatorStyle::None)
+                            .with_toggle_initial("pressure", accent, true),
+                    ]),
+                ],
+            )),
+    ]
 }
 
 // ─── Per-pane content ──────────────────────────────────────────────
@@ -1682,7 +2152,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Transform",
         "cube",
         vec![
-            frost_core::container::Tab::new("Position", "arrow-move").pods(vec![
+            frost_core::container::Tab::new("xform.position", "Position", "arrow-move").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "pos", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
@@ -1693,18 +2163,19 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -1000.0..=1000.0, 3, " m"),
             ]),
-            frost_core::container::Tab::new("Rotation", "arrow-rotate-clockwise").pods(vec![
-                Pod::new(pid(PANE_CONTAINERS, "rot", 0))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 1))
-                    .with_separator(SeparatorStyle::Line)
-                    .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-                Pod::new(pid(PANE_CONTAINERS, "rot", 2))
-                    .with_separator(SeparatorStyle::None)
-                    .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
-            ]),
-            frost_core::container::Tab::new("Scale", "maximize").pods(vec![
+            frost_core::container::Tab::new("xform.rotation", "Rotation", "arrow-rotate-clockwise")
+                .pods(vec![
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 0))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("X", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 1))
+                        .with_separator(SeparatorStyle::Line)
+                        .with_drag_value("Y", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                    Pod::new(pid(PANE_CONTAINERS, "rot", 2))
+                        .with_separator(SeparatorStyle::None)
+                        .with_drag_value("Z", 0.0, 1.0, -360.0..=360.0, 2, "°"),
+                ]),
+            frost_core::container::Tab::new("xform.scale", "Scale", "maximize").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "scl", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 1.0, 0.01, 0.01..=100.0, 3, "×"),
@@ -1722,7 +2193,7 @@ fn containers_pane(body: &mut PaneBody) {
         "Velocity",
         "flash",
         vec![
-            frost_core::container::Tab::new("Linear", "arrow-trending").pods(vec![
+            frost_core::container::Tab::new("vel.linear", "Linear", "arrow-trending").pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vlin", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
@@ -1733,7 +2204,12 @@ fn containers_pane(body: &mut PaneBody) {
                     .with_separator(SeparatorStyle::None)
                     .with_drag_value("Z", 0.0, 0.05, -100.0..=100.0, 2, " m/s"),
             ]),
-            frost_core::container::Tab::new("Angular", "arrow-rotate-counterclockwise").pods(vec![
+            frost_core::container::Tab::new(
+                "vel.angular",
+                "Angular",
+                "arrow-rotate-counterclockwise",
+            )
+            .pods(vec![
                 Pod::new(pid(PANE_CONTAINERS, "vang", 0))
                     .with_separator(SeparatorStyle::Line)
                     .with_drag_value("X", 0.0, 0.1, -720.0..=720.0, 2, " °/s"),
@@ -2062,6 +2538,124 @@ fn about_pane(body: &mut PaneBody) {
     );
 }
 
+fn canvas_brush_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_BRUSH, "brush"),
+        "Brush",
+        "paint-brush",
+        vec![
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_slider("size", 6.0, 1.0..=32.0, 1, " px", accent),
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 1))
+                .with_separator(SeparatorStyle::Line)
+                .with_slider("opacity", 1.0, 0.05..=1.0, 2, "", accent),
+            Pod::new(pid(PANE_CANVAS_BRUSH, "brush", 2))
+                .with_separator(SeparatorStyle::None)
+                .with_toggle_initial("pressure", accent, true),
+        ],
+    );
+}
+
+fn canvas_layers_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_LAYERS, "layers"),
+        "Layers",
+        "square-multiple",
+        vec![
+            Pod::new(pid(PANE_CANVAS_LAYERS, "layers", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_select_list(
+                    vec![
+                        "Sketch".to_owned(),
+                        "Ink".to_owned(),
+                        "Annotations".to_owned(),
+                    ],
+                    None::<Vec<String>>,
+                    accent,
+                ),
+            Pod::new(pid(PANE_CANVAS_LAYERS, "layers", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_toggle_initial("show grid", accent, true),
+        ],
+    );
+}
+
+fn canvas_assets_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_ASSETS, "assets"),
+        "Assets",
+        "image",
+        vec![
+            Pod::new(pid(PANE_CANVAS_ASSETS, "assets", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_search("search images…", accent),
+            Pod::new(pid(PANE_CANVAS_ASSETS, "assets", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_button("Import image", accent),
+        ],
+    );
+}
+
+fn canvas_inspector_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_INSPECTOR, "selection"),
+        "Selection",
+        "sliders",
+        vec![
+            Pod::new(pid(PANE_CANVAS_INSPECTOR, "selection", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_readout("selection", "none"),
+            Pod::new(pid(PANE_CANVAS_INSPECTOR, "selection", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_slider("scale", 1.0, 0.25..=4.0, 2, "x", accent),
+        ],
+    );
+}
+
+fn canvas_history_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_HISTORY, "history"),
+        "History",
+        "history",
+        vec![
+            Pod::new(pid(PANE_CANVAS_HISTORY, "history", 0))
+                .with_separator(SeparatorStyle::None)
+                .with_select_list(
+                    vec![
+                        "New stroke".to_owned(),
+                        "Brush changed".to_owned(),
+                        "Layer toggled".to_owned(),
+                    ],
+                    None::<Vec<String>>,
+                    accent,
+                ),
+        ],
+    );
+}
+
+fn canvas_export_pane(body: &mut PaneBody) {
+    let accent = body.accent();
+    body.add_normal(
+        cid(PANE_CANVAS_EXPORT, "export"),
+        "Export",
+        "download",
+        vec![
+            Pod::new(pid(PANE_CANVAS_EXPORT, "export", 0))
+                .with_separator(SeparatorStyle::Line)
+                .with_readout("format", "PNG"),
+            Pod::new(pid(PANE_CANVAS_EXPORT, "export", 1))
+                .with_separator(SeparatorStyle::None)
+                .with_button("Export canvas", accent),
+        ],
+    );
+}
+
 /// **Editor pane** — node graph (top) + code editor (bottom),
 /// each in its own container with a fill pod so they soak up the
 /// pane's available space. Mirrors the legacy demo's Editor pane,
@@ -2074,12 +2668,12 @@ fn about_pane(body: &mut PaneBody) {
 /// `frost_node_graph`. The pod-path closure has a `'static` bound
 /// that those refs can't satisfy.
 #[allow(clippy::too_many_arguments)]
-fn editor_pane(
-    body: &mut PaneBody,
-    node_view: &mut NodeViewState,
-    graph: &mut Graph<GraphNode>,
-    viewer: &mut DemoViewer,
-    backend: &mut BevyNodeViewBackend<'_>,
+fn editor_pane<'spec>(
+    body: &mut PaneBody<'_, 'spec>,
+    node_view: &'spec mut NodeViewState,
+    graph: &'spec mut Graph<GraphNode>,
+    viewer: &'spec mut DemoViewer,
+    backend: &'spec mut BevyNodeViewBackend<'_>,
 ) {
     let cid_graph = cid(PANE_EDITOR, "graph");
     let code_id = cid(PANE_EDITOR, "code_state");

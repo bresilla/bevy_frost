@@ -21,7 +21,7 @@ pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Colo
 /// Foreground (glyph / label) colour matching the recipe in
 /// [`paint_ribbon_button`]. Centralised so the static-ribbon path
 /// (`ribbon_button_area`) and the dynamic drag-aware path
-/// (`ribbon::layout`, `ribbon::assembly`) all pick text that
+/// all ribbon chrome paths pick text that
 /// contrasts with the EXACT fill the button paints, rather than
 /// each call site re-deriving it (and drifting out of sync the
 /// next time the bg recipe changes).
@@ -31,10 +31,10 @@ pub(crate) fn lerp_rgb(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Colo
 pub(crate) fn paint_ribbon_glyph(
     ui: &mut egui::Ui,
     rect: egui::Rect,
-    glyph: super::assembly::RibbonGlyph,
+    glyph: super::chrome::RibbonGlyph,
     fg: egui::Color32,
 ) {
-    use super::assembly::RibbonGlyph;
+    use super::chrome::RibbonGlyph;
     match glyph {
         RibbonGlyph::Text(s) => {
             ui.painter().text(
@@ -47,7 +47,7 @@ pub(crate) fn paint_ribbon_glyph(
         }
         RibbonGlyph::Icon(name) => {
             crate::icons::paint_icon(
-                &ui.painter(),
+                ui.painter(),
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 name,
@@ -72,7 +72,7 @@ pub(crate) fn ribbon_button_fg(
     accent: egui::Color32,
     is_active: bool,
     hovered: bool,
-    glyph: super::assembly::RibbonGlyph,
+    glyph: super::chrome::RibbonGlyph,
 ) -> egui::Color32 {
     if crate::style::theme().ribbon.button_accent_fill {
         // GAME ladder — pick contrast text against the EXACT fill
@@ -100,7 +100,7 @@ pub(crate) fn ribbon_button_fg(
     // accent-tinted button. SVG glyphs keep the contrast colour
     // because their author chose their own colours via the SVG
     // markup; tinting them accent would corrupt their look.
-    use super::assembly::RibbonGlyph;
+    use super::chrome::RibbonGlyph;
     if is_active {
         if matches!(glyph, RibbonGlyph::Svg(_)) {
             crate::style::contrast_text_for(accent)
@@ -229,5 +229,5 @@ pub(crate) fn paint_ribbon_button(
 
 // `ribbon_button_area` (the static-ribbon button area helper) lived
 // here in `frostcore::ribbon::paint`. It was only called from the
-// retired `static_ribbon` and `declare` modules; `assembly` builds
-// its own draggable Areas by hand so the helper isn't needed.
+// retired `static_ribbon` and `declare` modules are gone; the unified
+// ribbon chrome builds draggable Areas directly.

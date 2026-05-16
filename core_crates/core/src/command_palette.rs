@@ -19,6 +19,8 @@
 //! sublime-grade ranking, wrap this palette and pre-filter
 //! `items` yourself before passing them in.
 
+use std::collections::HashSet;
+
 use egui;
 
 use crate::style::{font, glass_alpha_card, glass_alpha_window, glass_fill, widget_border};
@@ -31,6 +33,29 @@ pub struct PaletteItem {
     /// each row. Use for keybindings ("Ctrl+P") or categories
     /// ("Layout").
     pub hint: Option<&'static str>,
+}
+
+impl PaletteItem {
+    #[must_use]
+    pub fn new(id: &'static str, label: &'static str) -> Self {
+        assert_palette_text(id, "command palette items require a non-empty id");
+        assert_palette_text(label, "command palette items require a non-empty label");
+        Self {
+            id,
+            label,
+            hint: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_hint(mut self, hint: &'static str) -> Self {
+        assert_palette_text(
+            hint,
+            "command palette item hints must be non-empty when provided",
+        );
+        self.hint = Some(hint);
+        self
+    }
 }
 
 /// Persistent state the palette owns. Wrap in whatever the host
@@ -58,6 +83,7 @@ pub fn command_palette(
     items: &[PaletteItem],
     accent: egui::Color32,
 ) -> Option<&'static str> {
+    validate_palette_items(items);
     if !state.open {
         return None;
     }
@@ -267,28 +293,27 @@ pub fn command_palette(
                             // that opted into dashed row separators
                             // (GAME). PRO continues with the implicit
                             // `item_spacing.y` gap.
-                            if let Some((on, off)) = dash {
-                                if i + 1 < filtered.len() && row_alpha > 0 {
-                                    let w = ui.available_width();
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(w, 1.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    let col = egui::Color32::from_rgba_unmultiplied(
-                                        row_base.r(),
-                                        row_base.g(),
-                                        row_base.b(),
-                                        row_alpha,
-                                    );
-                                    crate::style::paint_dashed_line(
-                                        ui.painter(),
-                                        rect.left_center(),
-                                        rect.right_center(),
-                                        on,
-                                        off,
-                                        egui::Stroke::new(1.0, col),
-                                    );
-                                }
+                            if let Some((on, off)) = dash
+                                && i + 1 < filtered.len()
+                                && row_alpha > 0
+                            {
+                                let w = ui.available_width();
+                                let (rect, _) = ui
+                                    .allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+                                let col = egui::Color32::from_rgba_unmultiplied(
+                                    row_base.r(),
+                                    row_base.g(),
+                                    row_base.b(),
+                                    row_alpha,
+                                );
+                                crate::style::paint_dashed_line(
+                                    ui.painter(),
+                                    rect.left_center(),
+                                    rect.right_center(),
+                                    on,
+                                    off,
+                                    egui::Stroke::new(1.0, col),
+                                );
                             }
                         }
                     });
@@ -402,6 +427,31 @@ fn items_fingerprint(items: &[PaletteItem]) -> u64 {
     h.finish()
 }
 
+fn validate_palette_items(items: &[PaletteItem]) {
+    let mut seen = HashSet::with_capacity(items.len());
+    for item in items {
+        assert_palette_text(item.id, "command palette items require a non-empty id");
+        assert_palette_text(
+            item.label,
+            "command palette items require a non-empty label",
+        );
+        if let Some(hint) = item.hint {
+            assert_palette_text(
+                hint,
+                "command palette item hints must be non-empty when provided",
+            );
+        }
+        assert!(
+            seen.insert(item.id),
+            "command palette items require unique ids"
+        );
+    }
+}
+
+fn assert_palette_text(value: &str, message: &str) {
+    assert!(!value.trim().is_empty(), "{message}");
+}
+
 /// Substring + initials match. Returns true if the LOWERCASE
 /// `label` contains `q` as a substring, OR if `q` matches the
 /// initials of the label's whitespace-separated tokens.
@@ -419,4 +469,48 @@ fn matches(label: &str, q: &str) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_items_require_visible_metadata() {
+        let blank_id = std::panic::catch_unwind(|| {
+            let _ = PaletteItem::new(" ", "Open");
+        });
+        let blank_label = std::panic::catch_unwind(|| {
+            let _ = PaletteItem::new("open", " ");
+        });
+        let blank_hint = std::panic::catch_unwind(|| {
+            let _ = PaletteItem::new("open", "Open").with_hint(" ");
+        });
+        let valid = PaletteItem::new("open", "Open").with_hint("Ctrl+O");
+
+        assert!(blank_id.is_err());
+        assert!(blank_label.is_err());
+        assert!(blank_hint.is_err());
+        assert_eq!(valid.hint, Some("Ctrl+O"));
+    }
+
+    #[test]
+    fn palette_validation_rejects_duplicate_or_directly_invalid_items() {
+        let duplicate = std::panic::catch_unwind(|| {
+            validate_palette_items(&[
+                PaletteItem::new("open", "Open"),
+                PaletteItem::new("open", "Open Again"),
+            ]);
+        });
+        let direct_invalid = std::panic::catch_unwind(|| {
+            validate_palette_items(&[PaletteItem {
+                id: "direct-invalid",
+                label: "",
+                hint: None,
+            }]);
+        });
+
+        assert!(duplicate.is_err());
+        assert!(direct_invalid.is_err());
+    }
 }

@@ -1,5 +1,6 @@
 use egui::Color32;
 
+use crate::ribbon::{RibbonAvoidance, ribbon_avoiding_rect};
 use crate::workspace::WorkspaceStack;
 
 /// Rendering context for the active L0 view.
@@ -11,4 +12,17 @@ pub struct ViewCtx<'a> {
     pub egui_ctx: &'a egui::Context,
     pub workspace: &'a mut WorkspaceStack,
     pub accent: Color32,
+    pub content_avoidance: RibbonAvoidance,
+}
+
+impl ViewCtx<'_> {
+    #[must_use]
+    pub fn content_rect(&self) -> egui::Rect {
+        ribbon_avoiding_rect(self.egui_ctx, self.content_avoidance)
+    }
+
+    #[must_use]
+    pub fn ribbon_avoiding_rect(&self, avoidance: RibbonAvoidance) -> egui::Rect {
+        ribbon_avoiding_rect(self.egui_ctx, avoidance)
+    }
 }

@@ -55,7 +55,7 @@ eframe = { version = "0.33", default-features = false, features = [
 wgpu = { version = "27", default-features = false, features = ["vulkan"] }
 
 [[example]]
-name = "demo"
+name = "egui_demo"
 path = "examples/demo.rs"
 
 [[example]]

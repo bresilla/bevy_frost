@@ -13,7 +13,7 @@ pub fn system_close_or_restore_slot_id() -> RibbonSlotId {
 }
 
 #[must_use]
-pub fn permanent_system_control_ribbon() -> RibbonSlotDef {
+pub fn permanent_system_control_slot() -> RibbonSlot {
     let slot_id = system_close_or_restore_slot_id();
     let close = RibbonSlotItem::new(
         Id::new("system.close_app"),
@@ -22,17 +22,7 @@ pub fn permanent_system_control_ribbon() -> RibbonSlotDef {
         "Close application",
         RibbonAction::CloseApp,
     );
-    RibbonSlotDef::new(
-        Id::new("frost.permanent.system_control"),
-        RibbonScope::Permanent,
-        RibbonEdge::Top,
-        RibbonCluster::End,
-        vec![RibbonSlot::new(
-            slot_id,
-            Some(close),
-            RibbonOverridePolicy::LayerOverride,
-        )],
-    )
+    RibbonSlot::new(slot_id, Some(close), RibbonOverridePolicy::LayerOverride)
 }
 
 #[must_use]

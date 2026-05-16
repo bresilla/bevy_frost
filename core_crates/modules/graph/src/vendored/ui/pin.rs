@@ -63,7 +63,7 @@ pub trait NodePin {
 /// Shape of a pin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 pub enum PinShape {
     /// Circle shape.
     #[default]

@@ -9,7 +9,7 @@ const MAX_CURVE_SAMPLES: usize = 100;
 /// Layer where wires are rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 #[derive(Default)]
 pub enum WireLayer {
     /// Wires are rendered behind nodes.
@@ -25,7 +25,7 @@ pub enum WireLayer {
 /// colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 #[derive(Default)]
 pub enum WireColorMode {
     /// Linear blend of source and target pin colours, drawn as
@@ -65,7 +65,7 @@ pub enum WireId {
 /// Variants are given in order of precedence when two pins require different styles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe))]
+#[cfg_attr(all(feature = "egui-probe", any()), derive(egui_probe::EguiProbe))]
 #[derive(Default)]
 pub enum WireStyle {
     /// Straight line from one endpoint to another.

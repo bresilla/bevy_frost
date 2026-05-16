@@ -58,6 +58,7 @@ use crate::style::{
 pub struct OverlayOpts {
     pub minimize_edge: RibbonEdge,
     pub minimize_cluster: RibbonCluster,
+    pub content_avoidance: crate::RibbonAvoidance,
 }
 
 impl Default for OverlayOpts {
@@ -65,6 +66,7 @@ impl Default for OverlayOpts {
         Self {
             minimize_edge: RibbonEdge::Right,
             minimize_cluster: RibbonCluster::Start,
+            content_avoidance: crate::RibbonAvoidance::none(),
         }
     }
 }
@@ -76,7 +78,16 @@ impl OverlayOpts {
         Self {
             minimize_edge: edge,
             minimize_cluster: cluster,
+            ..Self::default()
         }
+    }
+
+    /// Keep the fullscreen overlay/background full-window, but lay
+    /// out the body UI away from selected ribbon rails.
+    #[must_use]
+    pub fn avoid_ribbons(mut self, avoidance: crate::RibbonAvoidance) -> Self {
+        self.content_avoidance = avoidance;
+        self
     }
 }
 
@@ -247,23 +258,27 @@ pub fn maximizable_with_opts(
         // inner margin so the overlay covers edge-to-edge.
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
+        let content = opts.content_avoidance.apply_to_rect(screen);
         egui::Area::new(ui.id().with(("frost_maximize_overlay", id_salt)))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(&ctx, |ui| {
                 ui.set_min_size(screen.size());
                 ui.set_max_size(screen.size());
-                let frame = egui::Frame::new()
-                    .fill(glass_fill(
-                        crate::style::theme().bg_panel,
-                        accent,
-                        glass_alpha_window(),
-                    ))
-                    .corner_radius(egui::CornerRadius::ZERO)
-                    .inner_margin(egui::Margin::ZERO);
-                frame.show(ui, |ui| {
-                    body(ui);
-                });
+                let bg_rect = egui::Rect::from_min_size(screen.min, screen.size());
+                let bg = crate::style::theme().bg_panel;
+                let opaque_bg = egui::Color32::from_rgb(bg.r(), bg.g(), bg.b());
+                ui.painter()
+                    .rect_filled(bg_rect, egui::CornerRadius::ZERO, opaque_bg);
+                ui.allocate_rect(bg_rect, egui::Sense::hover());
+            });
+        egui::Area::new(ui.id().with(("frost_maximize_overlay_content", id_salt)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(content.min)
+            .show(&ctx, |ui| {
+                ui.set_min_size(content.size());
+                ui.set_max_size(content.size());
+                body(ui);
             });
         // Minimize button — a draggable ribbon-styled chip. The
         // initial position comes from `opts`; the user can grab the
@@ -347,14 +362,14 @@ fn max_button_overlay(
                 .on_hover_text(if maximized { "Restore" } else { "Maximize" });
             if ui.is_rect_visible(rect) {
                 paint_ribbon_style_chip(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* active */ maximized,
                     /* hovered */ resp.hovered(),
                 );
                 paint_fullscreen_arrows(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* inward */ maximized,
@@ -460,19 +475,19 @@ fn fullscreen_minimize_button(
             // each frame the chip is being dragged. On release,
             // snap to the nearest anchor and persist it.
             let mut ghost_target: Option<egui::Rect> = None;
-            if resp.dragged() {
-                if let Some(p) = ui.ctx().pointer_interact_pos() {
-                    ui.ctx().data_mut(|d| d.insert_temp(drag_pos_key, p));
-                    // Compute the live snap target so we can paint
-                    // a ghost outline showing where the chip WILL
-                    // land on release.
-                    let snap = nearest_anchor(screen, p, btn_size, edge_gap);
-                    let snap_pos = compute_chip_pos(screen, snap.0, snap.1, btn_size, edge_gap);
-                    ghost_target = Some(egui::Rect::from_min_size(
-                        snap_pos,
-                        egui::vec2(btn_size, btn_size),
-                    ));
-                }
+            if resp.dragged()
+                && let Some(p) = ui.ctx().pointer_interact_pos()
+            {
+                ui.ctx().data_mut(|d| d.insert_temp(drag_pos_key, p));
+                // Compute the live snap target so we can paint
+                // a ghost outline showing where the chip WILL
+                // land on release.
+                let snap = nearest_anchor(screen, p, btn_size, edge_gap);
+                let snap_pos = compute_chip_pos(screen, snap.0, snap.1, btn_size, edge_gap);
+                ghost_target = Some(egui::Rect::from_min_size(
+                    snap_pos,
+                    egui::vec2(btn_size, btn_size),
+                ));
             }
             if resp.drag_stopped() {
                 let cursor = ui
@@ -487,7 +502,7 @@ fn fullscreen_minimize_button(
             }
             if ui.is_rect_visible(rect) {
                 paint_ribbon_style_chip(
-                    &ui.painter(),
+                    ui.painter(),
                     rect,
                     accent,
                     /* active */ true,
@@ -499,7 +514,7 @@ fn fullscreen_minimize_button(
                     egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 220)
                 };
                 crate::icons::paint_icon(
-                    &ui.painter(),
+                    ui.painter(),
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "arrow-minimize",

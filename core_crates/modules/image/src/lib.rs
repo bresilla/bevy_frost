@@ -154,21 +154,19 @@ impl FrostModule for ImageSurface {
     }
 
     fn inline(&mut self, ui: &mut egui::Ui, ctx: ModuleInlineCtx<'_>) -> ModuleResponse {
-        let response = ui
-            .group(|ui| {
-                ui.label(format!("Image: {}", self.doc.title));
-                match &self.doc.source {
-                    ImageSource::Empty => ui.label("No image loaded"),
-                    ImageSource::Uri(uri) => ui.label(uri),
-                };
-                if ctx.can_enter_workspace() && ui.button("Open image workspace").clicked() {
-                    ModuleResponse::enter_workspace()
-                } else {
-                    ModuleResponse::none()
-                }
-            })
-            .inner;
-        response
+        ui.group(|ui| {
+            ui.label(format!("Image: {}", self.doc.title));
+            match &self.doc.source {
+                ImageSource::Empty => ui.label("No image loaded"),
+                ImageSource::Uri(uri) => ui.label(uri),
+            };
+            if ctx.can_enter_workspace() && ui.button("Open image workspace").clicked() {
+                ModuleResponse::enter_workspace()
+            } else {
+                ModuleResponse::none()
+            }
+        })
+        .inner
     }
 
     fn workspace(&mut self, ws: &mut WorkspaceCtx<'_>) {

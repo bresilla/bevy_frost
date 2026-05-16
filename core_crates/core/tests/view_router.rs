@@ -3,6 +3,7 @@ use frost_core::{FrostView, ViewCtx, ViewId, ViewRouter, ViewRouterError};
 struct MockView {
     id: ViewId,
     title: &'static str,
+    icon: &'static str,
 }
 
 impl MockView {
@@ -10,7 +11,13 @@ impl MockView {
         Self {
             id: ViewId::new(id),
             title,
+            icon: "square",
         }
+    }
+
+    fn with_icon(mut self, icon: &'static str) -> Self {
+        self.icon = icon;
+        self
     }
 }
 
@@ -24,10 +31,34 @@ impl FrostView for MockView {
     }
 
     fn icon(&self) -> &'static str {
-        "square"
+        self.icon
     }
 
     fn show(&mut self, _ctx: &mut ViewCtx<'_>) {}
+}
+
+#[test]
+fn registering_duplicate_view_id_is_rejected() {
+    let mut router = ViewRouter::new(MockView::new("bevy", "Bevy"));
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.register(MockView::new("bevy", "Duplicate"));
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn views_require_title_and_icon() {
+    let missing_title = std::panic::catch_unwind(|| {
+        let _ = ViewRouter::new(MockView::new("blank-title", "  "));
+    });
+    let missing_icon = std::panic::catch_unwind(|| {
+        let _ = ViewRouter::new(MockView::new("blank-icon", "Blank").with_icon(""));
+    });
+
+    assert!(missing_title.is_err());
+    assert!(missing_icon.is_err());
 }
 
 #[test]

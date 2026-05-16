@@ -11,6 +11,8 @@ pub struct WorkspacePolicy {
     pub allow_module_workspace_push: bool,
     pub allow_root_ribbon: bool,
     pub allow_module_bars: bool,
+    pub allow_shelves: bool,
+    pub inherit_root_shelves: bool,
     pub restore_to_parent: bool,
 }
 
@@ -22,6 +24,8 @@ impl WorkspacePolicy {
             allow_module_workspace_push: true,
             allow_root_ribbon: true,
             allow_module_bars: false,
+            allow_shelves: true,
+            inherit_root_shelves: false,
             restore_to_parent: false,
         }
     }
@@ -33,6 +37,8 @@ impl WorkspacePolicy {
             allow_module_workspace_push: true,
             allow_root_ribbon: false,
             allow_module_bars: true,
+            allow_shelves: true,
+            inherit_root_shelves: true,
             restore_to_parent: true,
         }
     }

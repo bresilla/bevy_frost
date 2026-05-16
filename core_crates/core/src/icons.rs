@@ -45,15 +45,22 @@ fn fonts_ready() -> bool {
 /// each as a named family so `FontFamily::Name(family)` resolves to
 /// the right glyph table. Called from [`crate::style::install_fonts`].
 pub(crate) fn install_iconflow_fonts(fonts_def: &mut egui::FontDefinitions) {
+    let fallback_fonts = fonts_def
+        .families
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
     for asset in fonts() {
         let key = asset.family.to_string();
         fonts_def.font_data.insert(
             key.clone(),
             Arc::new(egui::FontData::from_static(asset.bytes)),
         );
+        let mut family_fonts = vec![key];
+        family_fonts.extend(fallback_fonts.iter().cloned());
         fonts_def
             .families
-            .insert(egui::FontFamily::Name(asset.family.into()), vec![key]);
+            .insert(egui::FontFamily::Name(asset.family.into()), family_fonts);
     }
 }
 
@@ -87,6 +94,14 @@ impl<'a> From<&'a str> for Icon<'a> {
     }
 }
 
+/// `true` when `payload` can render as a Frost icon: either raw SVG
+/// markup or a bundled Fluent UI System Icon name.
+#[must_use]
+pub fn is_icon_payload(payload: &str) -> bool {
+    let trimmed = payload.trim_start();
+    trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") || icon(payload).is_some()
+}
+
 /// Paint a [`Icon`] at `pos`, aligned via `align`, sized to `size`
 /// pixels, tinted by `color`. Dispatches to the Fluent painter for
 /// `Icon::Name`, and to egui's image loader for `Icon::Svg`.
@@ -103,7 +118,7 @@ pub fn paint_section_icon(
             if !fonts_ready() {
                 return;
             }
-            paint_icon(&ui.painter(), pos, align, name, size, color);
+            paint_icon(ui.painter(), pos, align, name, size, color);
         }
         Icon::Svg(svg) => {
             let rect = align.anchor_rect(egui::Rect::from_min_size(pos, egui::vec2(size, size)));
@@ -144,6 +159,9 @@ pub fn icon(name: &str) -> Option<(char, egui::FontFamily)> {
 /// }
 /// ```
 pub fn icon_text(name: &str, size: f32, color: egui::Color32) -> Option<egui::RichText> {
+    if !fonts_ready() {
+        return None;
+    }
     let (glyph, family) = icon(name)?;
     Some(
         egui::RichText::new(glyph.to_string())
@@ -170,12 +188,48 @@ pub fn paint_icon(
         return;
     }
     if let Some((glyph, family)) = icon(name) {
+        if !painter.fonts(|fonts| fonts.families().contains(&family)) {
+            return;
+        }
         painter.text(
             pos,
             align,
             glyph.to_string(),
             egui::FontId::new(size, family),
             color,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iconflow_families_keep_proportional_fallbacks() {
+        let mut fonts = egui::FontDefinitions::default();
+        let proportional = fonts
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .cloned()
+            .expect("egui default fonts should expose a proportional fallback chain");
+
+        install_iconflow_fonts(&mut fonts);
+
+        let (_, icon_family) = icon("search").expect("search icon should be bundled");
+        let icon_chain = fonts
+            .families
+            .get(&icon_family)
+            .expect("install_iconflow_fonts should bind the icon family");
+
+        assert!(
+            icon_chain.len() > 1,
+            "icon families need normal text fallback fonts so replacement glyph lookup cannot warn or fail"
+        );
+        assert_eq!(
+            &icon_chain[1..],
+            proportional.as_slice(),
+            "icon font should be first, followed by the normal proportional fallback chain"
         );
     }
 }
