@@ -432,10 +432,12 @@ pub fn show_app_shell(
     let depth = router.active_workspace()?.depth();
     if depth == 0 {
         let entry = router.active_entry_mut()?;
+        let content_avoidance = entry.view.content_avoidance();
         let mut ctx = ViewCtx {
             egui_ctx,
             workspace: &mut entry.workspace,
             accent,
+            content_avoidance,
         };
         entry.view.show(&mut ctx);
     }
@@ -470,10 +472,12 @@ pub fn show_app_shell_with_slot_ribbons(
     let depth = router.active_workspace()?.depth();
     if depth == 0 {
         let entry = router.active_entry_mut()?;
+        let content_avoidance = entry.view.content_avoidance();
         let mut ctx = ViewCtx {
             egui_ctx,
             workspace: &mut entry.workspace,
             accent,
+            content_avoidance,
         };
         entry.view.show(&mut ctx);
     }
@@ -526,10 +530,12 @@ where
 
     if depth == 0 {
         let entry = router.active_entry_mut()?;
+        let content_avoidance = entry.view.content_avoidance();
         let mut ctx = ViewCtx {
             egui_ctx,
             workspace: &mut entry.workspace,
             accent,
+            content_avoidance,
         };
         entry.view.show(&mut ctx);
     }

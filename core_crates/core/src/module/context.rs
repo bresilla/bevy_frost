@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use egui::{Color32, Id};
 
 use crate::{
-    ribbon::{RibbonOverrideLayer, RibbonScope, RibbonSlotDef},
+    ribbon::{RibbonAvoidance, RibbonOverrideLayer, RibbonScope, RibbonSlotDef},
     workspace::{
         WorkspaceBar, WorkspaceLevelState, WorkspacePolicy, WorkspaceStack,
         validate_workspace_bar_item,
@@ -155,6 +155,15 @@ impl<'a> WorkspaceCtx<'a> {
         &mut self,
     ) -> Result<WorkspaceLevelState, crate::workspace::WorkspaceStackError> {
         self.stack.pop()
+    }
+
+    #[must_use]
+    pub fn ribbon_avoiding_rect(
+        &self,
+        egui_ctx: &egui::Context,
+        avoidance: RibbonAvoidance,
+    ) -> egui::Rect {
+        crate::ribbon_avoiding_rect(egui_ctx, avoidance)
     }
 }
 

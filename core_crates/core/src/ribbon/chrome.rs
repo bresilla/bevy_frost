@@ -24,6 +24,106 @@ impl RibbonEdge {
     }
 }
 
+/// Ribbon rails that a content body should avoid.
+///
+/// This only describes the *body/content* rect. Fullscreen module
+/// backgrounds still paint edge-to-edge; only the inner content is
+/// moved out from under the selected ribbon buttons.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RibbonAvoidance {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
+}
+
+impl RibbonAvoidance {
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            left: false,
+            right: false,
+            top: false,
+            bottom: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            left: true,
+            right: true,
+            top: true,
+            bottom: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn sides(left: bool, right: bool, top: bool, bottom: bool) -> Self {
+        Self {
+            left,
+            right,
+            top,
+            bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn edge(edge: RibbonEdge) -> Self {
+        match edge {
+            RibbonEdge::Left => Self::sides(true, false, false, false),
+            RibbonEdge::Right => Self::sides(false, true, false, false),
+            RibbonEdge::Top => Self::sides(false, false, true, false),
+            RibbonEdge::Bottom => Self::sides(false, false, false, true),
+        }
+    }
+
+    #[must_use]
+    pub const fn top() -> Self {
+        Self::edge(RibbonEdge::Top)
+    }
+
+    #[must_use]
+    pub const fn with_edge(mut self, edge: RibbonEdge) -> Self {
+        match edge {
+            RibbonEdge::Left => self.left = true,
+            RibbonEdge::Right => self.right = true,
+            RibbonEdge::Top => self.top = true,
+            RibbonEdge::Bottom => self.bottom = true,
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn apply_to_rect(self, rect: egui::Rect) -> egui::Rect {
+        let gap = ribbon_clearance();
+        let mut out = rect;
+        if self.left {
+            out.min.x = (out.min.x + gap).min(out.max.x);
+        }
+        if self.right {
+            out.max.x = (out.max.x - gap).max(out.min.x);
+        }
+        if self.top {
+            out.min.y = (out.min.y + gap).min(out.max.y);
+        }
+        if self.bottom {
+            out.max.y = (out.max.y - gap).max(out.min.y);
+        }
+        out
+    }
+}
+
+#[must_use]
+pub const fn ribbon_clearance() -> f32 {
+    EDGE_GAP + SIDE_BTN_SIZE + SIDE_BTN_GAP
+}
+
+#[must_use]
+pub fn ribbon_avoiding_rect(ctx: &egui::Context, avoidance: RibbonAvoidance) -> egui::Rect {
+    avoidance.apply_to_rect(ctx.content_rect())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RibbonCluster {
     Start,

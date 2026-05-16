@@ -1,4 +1,4 @@
-use crate::ribbon::{RibbonOverrideLayer, RibbonSlotDef};
+use crate::ribbon::{RibbonAvoidance, RibbonOverrideLayer, RibbonSlotDef};
 
 use super::{ViewCtx, ViewId};
 
@@ -18,6 +18,15 @@ pub trait FrostView {
 
     fn ribbon_overrides(&mut self) -> RibbonOverrideLayer {
         RibbonOverrideLayer::default()
+    }
+
+    /// Which ribbons the view's main content should avoid.
+    ///
+    /// This does not force the view background to shrink. Views that
+    /// want an edge-to-edge backdrop can paint the full screen and
+    /// lay out their body inside `ViewCtx::content_rect()`.
+    fn content_avoidance(&self) -> RibbonAvoidance {
+        RibbonAvoidance::none()
     }
 
     fn show(&mut self, ctx: &mut ViewCtx<'_>);

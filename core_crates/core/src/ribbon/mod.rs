@@ -28,8 +28,9 @@ pub use paint::{EDGE_GAP, SIDE_BTN_GAP, SIDE_BTN_SIZE};
 
 pub use action::RibbonAction;
 pub use chrome::{
-    RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonMode, RibbonOpen, RibbonPlacement,
-    RibbonRole, RibbonWidth, main_bar_empty_drag_started,
+    RibbonAvoidance, RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonMode, RibbonOpen,
+    RibbonPlacement, RibbonRole, RibbonWidth, main_bar_empty_drag_started, ribbon_avoiding_rect,
+    ribbon_clearance,
 };
 pub use dispatch::{RibbonActionError, RibbonActionResult, dispatch_ribbon_action};
 pub use permanent::{

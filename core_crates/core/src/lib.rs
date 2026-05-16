@@ -73,14 +73,14 @@ pub use app_shell::{
 pub use command_palette::{CommandPaletteState, PaletteItem, command_palette};
 pub use module::{FrostModule, ModuleInlineCtx, ModuleInlineOptions, ModuleResponse, WorkspaceCtx};
 pub use ribbon::{
-    ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult, RibbonCluster,
-    RibbonDrag, RibbonEdge, RibbonGlyph, RibbonMode, RibbonOpen, RibbonOverrideLayer,
-    RibbonOverridePolicy, RibbonPlacement, RibbonRole, RibbonScope, RibbonSlot, RibbonSlotClick,
-    RibbonSlotDef, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride, RibbonWidth,
-    dispatch_ribbon_action, draw_slot_ribbons, draw_slot_ribbons_featureful,
+    ResolvedSlotRibbon, RibbonAction, RibbonActionError, RibbonActionResult, RibbonAvoidance,
+    RibbonCluster, RibbonDrag, RibbonEdge, RibbonGlyph, RibbonMode, RibbonOpen,
+    RibbonOverrideLayer, RibbonOverridePolicy, RibbonPlacement, RibbonRole, RibbonScope,
+    RibbonSlot, RibbonSlotClick, RibbonSlotDef, RibbonSlotId, RibbonSlotItem, RibbonSlotOverride,
+    RibbonWidth, dispatch_ribbon_action, draw_slot_ribbons, draw_slot_ribbons_featureful,
     main_bar_empty_drag_started, permanent_system_control_slot, permanent_view_switcher_ribbon,
-    resolve_slot_item, resolve_slot_items, restore_workspace_slot_override,
-    system_close_or_restore_slot_id,
+    resolve_slot_item, resolve_slot_items, restore_workspace_slot_override, ribbon_avoiding_rect,
+    ribbon_clearance, system_close_or_restore_slot_id,
 };
 pub use shelf::{
     ShelfContainer, ShelfDef, ShelfEdge, ShelfEdgeError, ShelfLayout, ShelfState, layout_shelves,
