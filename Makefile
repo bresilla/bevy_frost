@@ -28,6 +28,12 @@ DISPLAY ?= :1
 RUN_WITH ?= nixVulkan
 # Example binary that `make run` targets. Override with `EXAMPLE=other`.
 EXAMPLE ?= demo
+# Fast interactive loop target. Keep build/run/check/test pointed at the
+# SAME package + example so `make check` doesn't drag the whole workspace
+# and then make `run` feel like a cold build. Full-workspace gates live
+# under `check-all` / `test-all` / `harden`.
+APP_PKG ?= bevy_frost
+APP_TARGET := -p $(APP_PKG) --example $(EXAMPLE)
 
 # Per-backend launch env. X11: clear the Wayland vars so winit can't be
 # lured onto an unreachable socket, pin $DISPLAY. Wayland: pin
@@ -60,10 +66,10 @@ $(info Project: $(PROJECT_NAME) v$(PROJECT_VERSION))
 $(info Display: $(BACKEND) backend$(if $(filter wayland,$(BACKEND)), ($(WL_SOCKET))))
 $(info ------------------------------------------)
 
-.PHONY: build b compile c run r smoke-gui serve-web build-web test t check fmt harden harden-gui bench clean help h
+.PHONY: build b compile c run r smoke-gui serve-web build-web test t test-all check check-all fmt harden harden-gui bench clean help h
 
 build:
-	@$(CARGO) build -p bevy_frost --example $(EXAMPLE)
+	@$(CARGO) build $(APP_TARGET)
 
 b: build
 
@@ -75,13 +81,13 @@ c: compile
 
 run:
 	@$(WL_PREFLIGHT)
-	@$(RUN_ENV) $(RUN_WITH) $(CARGO) run -p bevy_frost --example $(EXAMPLE)
+	@$(RUN_ENV) $(RUN_WITH) $(CARGO) run $(APP_TARGET)
 
 smoke-gui:
 	@set -euo pipefail; \
 	log="$${TMPDIR:-/tmp}/bevy_frost_gui_smoke.log"; \
 	rm -f "$$log"; \
-	( $(X11_ENV) $(RUN_WITH) $(CARGO) run -p bevy_frost --example $(EXAMPLE) >"$$log" 2>&1 ) & \
+	( $(X11_ENV) $(RUN_WITH) $(CARGO) run $(APP_TARGET) >"$$log" 2>&1 ) & \
 	pid=$$!; \
 	trap 'kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true' EXIT; \
 	deadline=$$((SECONDS + 20)); \
@@ -120,7 +126,7 @@ smoke-gui:
 # theme/mode cycle buttons. Doesn't touch the existing demo.
 run-newui:
 	@$(WL_PREFLIGHT)
-	@$(RUN_ENV) $(RUN_WITH) $(CARGO) run -p bevy_frost --example newui
+	@$(RUN_ENV) $(RUN_WITH) $(CARGO) run -p $(APP_PKG) --example newui
 
 # Plain-egui (no Bevy) demo — `eframe` with the `wgpu` backend,
 # same Vulkan path Bevy uses. Runs under the `nixVulkan` wrapper
@@ -146,12 +152,18 @@ build-web:
 r: run
 
 test:
-	@$(CARGO) test --all-targets
+	@$(CARGO) test $(APP_TARGET)
 
 t: test
 
+test-all:
+	@$(CARGO) test --workspace --all-targets
+
 check:
-	@$(CARGO) check --all-targets
+	@$(CARGO) check $(APP_TARGET)
+
+check-all:
+	@$(CARGO) check --workspace --all-targets
 
 fmt:
 	@$(CARGO) fmt --all
@@ -183,8 +195,10 @@ help:
 	@echo "  serve-web    Serve the egui_frost UI in a browser (trunk, wasm32)"
 	@echo "  build-web    Build the wasm bundle to api_crates/web/dist"
 	@echo "  smoke-gui    Run the example briefly and verify its X11 window appears"
-	@echo "  test         Run the all-target test suite (libs + examples + doctests)"
-	@echo "  check        Run cargo check on all targets (lib + examples)"
+	@echo "  test         Test the same app target as build/run ($(APP_PKG) example $(EXAMPLE))"
+	@echo "  test-all     Run the full workspace all-target test suite"
+	@echo "  check        Check the same app target as build/run ($(APP_PKG) example $(EXAMPLE))"
+	@echo "  check-all    Check the full workspace all-target suite"
 	@echo "  fmt          Format the crate"
 	@echo "  harden       Run diff whitespace check + fmt/check + strict clippy + all-feature tests"
 	@echo "  harden-gui   Run harden, then GUI smoke (requires X display)"

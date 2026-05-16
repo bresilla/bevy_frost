@@ -1926,6 +1926,122 @@ fn shelf_move_ghost_to_side_keeps_full_height_when_bottom_is_occupied() {
 }
 
 #[test]
+fn shelf_move_preview_layout_moves_chrome_bounds_before_drop() {
+    let theme = *style::theme().shelf();
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(240.0, 0.0), pos2(1000.0, 800.0)),
+        left: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(240.0, 800.0))),
+        right: None,
+        bottom: None,
+    };
+    let drag = state::ShelfDragState {
+        shelf_id: Id::new("source-shelf"),
+        source_edge: ShelfEdge::Left,
+        cursor: pos2(990.0, 400.0),
+        target_edge: Some(ShelfEdge::Right),
+    };
+    let state = ShelfState::default();
+
+    let preview = shelf_move_preview_layout(layout, drag, &state, &theme)
+        .expect("shelf move ghost should publish a target-edge preview layout");
+
+    assert_eq!(preview.left, None);
+    let right = preview
+        .right
+        .expect("target right shelf should be reserved before drop");
+    assert_eq!(right.height(), 800.0);
+    assert_eq!(right.width(), 240.0);
+    assert_eq!(
+        preview.viewport.right(),
+        right.left(),
+        "ribbon chrome bounds should use the preview viewport while the ghost is shown"
+    );
+}
+
+#[test]
+fn shelf_move_preview_layout_uses_target_axis_default_for_cross_axis_move() {
+    let theme = *style::theme().shelf();
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(240.0, 0.0), pos2(1000.0, 800.0)),
+        left: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(240.0, 800.0))),
+        right: None,
+        bottom: None,
+    };
+    let drag = state::ShelfDragState {
+        shelf_id: Id::new("source-shelf"),
+        source_edge: ShelfEdge::Left,
+        cursor: pos2(500.0, 790.0),
+        target_edge: Some(ShelfEdge::Bottom),
+    };
+    let state = ShelfState::default();
+
+    let preview = shelf_move_preview_layout(layout, drag, &state, &theme)
+        .expect("bottom target should produce a preview layout");
+    let bottom = preview
+        .bottom
+        .expect("preview should reserve the target bottom shelf");
+
+    assert_eq!(preview.left, None);
+    assert_eq!(bottom.height(), theme.bottom_default_size);
+    assert_eq!(preview.viewport.bottom(), bottom.top());
+}
+
+#[test]
+fn shelf_move_preview_layout_remembers_bottom_size_for_side_to_bottom() {
+    let mut state = ShelfState::default();
+    let theme = *style::theme().shelf();
+    let shelf_id = Id::new("source-shelf");
+    state.set_edge_size(shelf_id, ShelfEdge::Bottom, 188.0);
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(240.0, 0.0), pos2(1000.0, 800.0)),
+        left: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(240.0, 800.0))),
+        right: None,
+        bottom: None,
+    };
+    let drag = state::ShelfDragState {
+        shelf_id,
+        source_edge: ShelfEdge::Left,
+        cursor: pos2(500.0, 790.0),
+        target_edge: Some(ShelfEdge::Bottom),
+    };
+
+    let preview = shelf_move_preview_layout(layout, drag, &state, &theme)
+        .expect("bottom target should produce a preview layout");
+    let bottom = preview.bottom.expect("bottom should be reserved");
+
+    assert_eq!(bottom.height(), 188.0);
+    assert_eq!(preview.left, None);
+}
+
+#[test]
+fn shelf_move_preview_layout_remembers_side_size_for_bottom_to_side() {
+    let mut state = ShelfState::default();
+    let theme = *style::theme().shelf();
+    let shelf_id = Id::new("source-shelf");
+    state.set_edge_size(shelf_id, ShelfEdge::Left, 260.0);
+    state.set_edge_size(shelf_id, ShelfEdge::Bottom, 188.0);
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 612.0)),
+        left: None,
+        right: None,
+        bottom: Some(Rect::from_min_max(pos2(0.0, 612.0), pos2(1000.0, 800.0))),
+    };
+    let drag = state::ShelfDragState {
+        shelf_id,
+        source_edge: ShelfEdge::Bottom,
+        cursor: pos2(990.0, 400.0),
+        target_edge: Some(ShelfEdge::Right),
+    };
+
+    let preview = shelf_move_preview_layout(layout, drag, &state, &theme)
+        .expect("right target should produce a preview layout");
+    let right = preview.right.expect("right should be reserved");
+
+    assert_eq!(right.width(), 260.0);
+    assert_eq!(preview.bottom, None);
+}
+
+#[test]
 fn container_new_bottom_shelf_ghost_respects_source_side_shelf() {
     let theme = *style::theme().shelf();
     let layout = ShelfLayout {
@@ -1992,6 +2108,43 @@ fn container_drag_bottom_shelf_ghost_releases_empty_source_shelf() {
             pos2(1000.0, 800.0)
         ),
         "when the dragged container is the last one, the source shelf disappears, so the bottom ghost must use the full future bottom shelf width"
+    );
+}
+
+#[test]
+fn container_drag_bottom_shelf_ghost_releases_source_when_cache_not_ready() {
+    let ctx = egui::Context::default();
+    let theme = *style::theme().shelf();
+    let dragged = Id::new("dragged");
+    let layout = ShelfLayout {
+        viewport: Rect::from_min_max(pos2(240.0, 0.0), pos2(1000.0, 800.0)),
+        left: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(240.0, 800.0))),
+        right: None,
+        bottom: None,
+    };
+    let drag = ShelfContainerMoveState {
+        container_id: dragged,
+        source_shelf: Id::new("source-shelf"),
+        source_pane: Id::new("source-pane"),
+        source_edge: ShelfEdge::Left,
+        cursor: pos2(500.0, 790.0),
+        target_edge: Some(ShelfEdge::Bottom),
+        target_shelf: None,
+        target_pane: None,
+        target_slot: None,
+        container_size: vec2(200.0, 160.0),
+    };
+
+    let ghost = container_drop_rect_for_drag(&ctx, layout, drag, ShelfEdge::Bottom, &theme)
+        .expect("bottom edge should be available even before source cache is warm");
+
+    assert_eq!(
+        ghost,
+        Rect::from_min_max(
+            pos2(0.0, 800.0 - theme.bottom_default_size),
+            pos2(1000.0, 800.0)
+        ),
+        "before the source shelf cache is warm, the first drag preview should not keep a phantom side shelf reserved"
     );
 }
 
@@ -2324,6 +2477,22 @@ fn shelf_resize_direction_matches_edge_handles() {
         resized_shelf_extent(ShelfEdge::Bottom, 180.0, vec2(0.0, -40.0), 100.0, 400.0),
         220.0,
         "dragging the bottom shelf handle up should make it taller"
+    );
+}
+
+#[test]
+fn shelf_resize_cursor_matches_handle_axis() {
+    assert_eq!(
+        shelf_resize_cursor(ShelfEdge::Left),
+        egui::CursorIcon::ResizeHorizontal
+    );
+    assert_eq!(
+        shelf_resize_cursor(ShelfEdge::Right),
+        egui::CursorIcon::ResizeHorizontal
+    );
+    assert_eq!(
+        shelf_resize_cursor(ShelfEdge::Bottom),
+        egui::CursorIcon::ResizeVertical
     );
 }
 

@@ -19,4 +19,8 @@ pub use crate::{
     node_view_backend::{
         BevyNodeViewBackend, NodeViewCopy, NodeViewPlugin, NodeViewSlots, PendingNodeViewCopies,
     },
+    window_chrome::{
+        FrostWindowChromeInputClaim, FrostWindowChromePlugin, FrostWindowChromeSet,
+        FrostWindowChromeSettings,
+    },
 };

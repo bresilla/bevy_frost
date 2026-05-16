@@ -11,7 +11,7 @@ use crate::style::{
     PodTheme, ProgressTheme, ReadoutTheme, RibbonChromeTheme, RibbonTheme, SelectTheme, ShapeTheme,
     ShelfTheme, SliderTheme, StrokeTheme, TabInactiveGlyphColor, TabLayout, TabOuterInset,
     TabTheme, TextColorMode, TextTheme, Theme, ThemeId, ToggleTheme, TreeTheme, ViewSwitcherLayout,
-    ViewTheme, WidgetTheme,
+    ViewTheme, WidgetTheme, WindowChromeTheme,
 };
 
 pub const FLAT_DARK_BG_WINDOW: egui::Color32 = egui::Color32::from_rgb(0x00, 0x00, 0x00);
@@ -188,6 +188,10 @@ pub const fn theme_flat(mode: Mode) -> Theme {
             active_indicator_thickness: 2.0,
             active_indicator_inset: 2.0,
             close_icon: "dismiss",
+        },
+        window_chrome: WindowChromeTheme {
+            resize_corner_extent: 30.0,
+            resize_corner_edge_width: 4.8,
         },
         modules: ModuleTheme {
             allow_fullscreen_by_default: true,

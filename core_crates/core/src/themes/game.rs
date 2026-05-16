@@ -60,6 +60,7 @@ use crate::style::{
     ViewSwitcherLayout,
     ViewTheme,
     WidgetTheme,
+    WindowChromeTheme,
 };
 
 /// GAME Light surface palette — bright accent-tinted surfaces, dark
@@ -216,6 +217,10 @@ pub const fn theme_game(mode: Mode) -> Theme {
             active_indicator_thickness: 3.0,
             active_indicator_inset: 0.0,
             close_icon: "dismiss",
+        },
+        window_chrome: WindowChromeTheme {
+            resize_corner_extent: 30.0,
+            resize_corner_edge_width: 4.8,
         },
         modules: ModuleTheme {
             allow_fullscreen_by_default: true,

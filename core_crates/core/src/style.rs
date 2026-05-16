@@ -1446,6 +1446,23 @@ pub struct ViewTheme {
     pub close_icon: &'static str,
 }
 
+/// Theme-owned native-window chrome hit-test geometry.
+///
+/// Facades use these values when a Frost app opts into custom
+/// borderless decorations. Keeping the metrics in the theme prevents
+/// hard-coded demo constants from becoming the de facto resize feel.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct WindowChromeTheme {
+    /// Length of each diagonal resize corner along the two window
+    /// edges, in logical pixels.
+    /// Straight window sides are deliberately not resize handles.
+    pub resize_corner_extent: f32,
+    /// Thickness of the two edge strips that form the L-shaped
+    /// corner hit area. Keep this small: the side triggers should be
+    /// a few pixels, not a big square.
+    pub resize_corner_edge_width: f32,
+}
+
 /// Theme-owned module workspace semantics and restore affordance.
 #[derive(Copy, Clone, Debug)]
 pub struct ModuleTheme {
@@ -1873,6 +1890,8 @@ pub struct Theme {
     /// Top-level L0 view chrome. New app-shell renderers should use
     /// this instead of hard-coding root view switcher placement.
     pub views: ViewTheme,
+    /// Native-window chrome metrics for borderless host windows.
+    pub window_chrome: WindowChromeTheme,
     /// Module inline/workspace chrome and restore semantics.
     pub modules: ModuleTheme,
 

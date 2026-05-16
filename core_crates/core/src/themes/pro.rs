@@ -66,6 +66,7 @@ use crate::style::{
     ViewSwitcherLayout,
     ViewTheme,
     WidgetTheme,
+    WindowChromeTheme,
     radius,
 };
 
@@ -214,6 +215,10 @@ pub const fn theme_pro(mode: Mode) -> Theme {
             active_indicator_thickness: 2.0,
             active_indicator_inset: 4.0,
             close_icon: "dismiss",
+        },
+        window_chrome: WindowChromeTheme {
+            resize_corner_extent: 30.0,
+            resize_corner_edge_width: 4.8,
         },
         modules: ModuleTheme {
             allow_fullscreen_by_default: true,

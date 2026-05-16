@@ -32,6 +32,7 @@
 pub mod gizmo_material;
 pub mod node_view_backend;
 pub mod prelude;
+pub mod window_chrome;
 
 // `extras` (vendored graph + code_editor + maximize) lives in
 // `frost_core` so the egui-only `egui_frost` facade can ship the same

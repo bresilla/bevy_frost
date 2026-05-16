@@ -1078,6 +1078,32 @@ pub fn draw_unified_ribbon_chrome(
             })
         })
     });
+    let window_chrome_capabilities = crate::window_chrome::window_chrome_host_capabilities(ctx);
+    if window_chrome_capabilities.native_move || window_chrome_capabilities.native_resize {
+        let drag_regions = if window_chrome_capabilities.native_move {
+            ribbons
+                .first()
+                .map(|main| strip_rect(main, ctx, insets_for_ribbon(ribbons, main, insets)))
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        crate::window_chrome::publish_window_chrome_regions(
+            ctx,
+            drag_regions,
+            button_rects.iter().copied(),
+        );
+    } else {
+        crate::window_chrome::clear_window_chrome_regions(ctx);
+    }
+    if window_chrome_capabilities.native_resize {
+        crate::window_chrome::paint_resize_corner_hover(
+            ctx,
+            accent,
+            crate::style::theme().window_chrome,
+        );
+    }
     ctx.data_mut(|d| {
         d.insert_temp(
             main_bar_empty_drag_started_id(),

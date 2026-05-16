@@ -258,7 +258,7 @@ pub fn layout_shelves(
         let edge = entry.edge;
         let extent = state.extent_for_key(
             entry.shelf_id.with(edge),
-            layout_entry_default_extent(entry.shelf_id, shelf, edge, theme),
+            layout_entry_default_extent(state, entry.shelf_id, shelf, edge, theme),
             shelf.extent_bounds(theme),
         );
         match edge {
@@ -295,11 +295,15 @@ pub fn layout_shelves(
 }
 
 fn layout_entry_default_extent(
+    state: &ShelfState,
     shelf_id: Id,
     shelf: &ShelfDef<'_>,
     edge: ShelfEdge,
     theme: &ShelfTheme,
 ) -> f32 {
+    if let Some(size) = remembered_axis_extent(state, shelf_id, edge) {
+        return size;
+    }
     if shelf_id == shelf.id || shelf.edge.is_side() == edge.is_side() {
         shelf.default_extent_for(edge, theme)
     } else if edge.is_side() {
@@ -307,6 +311,19 @@ fn layout_entry_default_extent(
     } else {
         theme.bottom_default_size
     }
+}
+
+fn remembered_axis_extent(state: &ShelfState, shelf_id: Id, edge: ShelfEdge) -> Option<f32> {
+    let size = match edge {
+        ShelfEdge::Left => state
+            .edge_size(shelf_id, ShelfEdge::Left)
+            .or_else(|| state.edge_size(shelf_id, ShelfEdge::Right)),
+        ShelfEdge::Right => state
+            .edge_size(shelf_id, ShelfEdge::Right)
+            .or_else(|| state.edge_size(shelf_id, ShelfEdge::Left)),
+        ShelfEdge::Bottom => state.edge_size(shelf_id, ShelfEdge::Bottom),
+    };
+    size.filter(|size| size.is_finite())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -540,6 +557,7 @@ pub fn show_shelves<'a>(
 
     update_container_move_target_from_published(ctx, state);
     finish_container_move_if_released(ctx, state);
+    publish_shelf_move_preview_layout(ctx, layout, state, &shelf_theme);
     publish_container_move_preview_layout(ctx, layout, state, &shelf_theme);
     paint_shelf_move_ghost(ctx, layout, state, &shelf_theme);
     paint_container_move_ghost(ctx, layout, state, &shelf_theme);
@@ -1138,6 +1156,21 @@ fn publish_container_move_preview_layout(
     publish_shelf_layout(ctx, preview);
 }
 
+fn publish_shelf_move_preview_layout(
+    ctx: &egui::Context,
+    layout: ShelfLayout,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) {
+    let Some(drag) = state.drag else {
+        return;
+    };
+    let Some(preview) = shelf_move_preview_layout(layout, drag, state, theme) else {
+        return;
+    };
+    publish_shelf_layout(ctx, preview);
+}
+
 fn shelf_display_order<'a>(
     ctx: &egui::Context,
     pane_id: Id,
@@ -1180,7 +1213,10 @@ fn resize_shelf(
 ) -> egui::Response {
     let handle = resize_handle_rect(shelf.edge, rect, theme);
     let size_key = shelf.id.with(shelf.edge);
-    let resp = ui.interact(handle, render_id.with("resize"), Sense::drag());
+    let cursor = shelf_resize_cursor(shelf.edge);
+    let resp = ui
+        .interact(handle, render_id.with("resize"), Sense::drag())
+        .on_hover_cursor(cursor);
     if resp.drag_started() {
         let cur = state
             .edge_size(shelf.id, shelf.edge)
@@ -1228,6 +1264,9 @@ fn resize_shelf(
     }
     if resp.drag_stopped() {
         state.resize_starts.remove(&size_key);
+    }
+    if resp.hovered() || resp.dragged() || state.resize_starts.contains_key(&size_key) {
+        ui.ctx().set_cursor_icon(cursor);
     }
     resp
 }
@@ -1590,6 +1629,13 @@ fn resize_handle_rect(edge: ShelfEdge, rect: Rect, theme: &ShelfTheme) -> Rect {
     }
 }
 
+fn shelf_resize_cursor(edge: ShelfEdge) -> egui::CursorIcon {
+    match edge {
+        ShelfEdge::Left | ShelfEdge::Right => egui::CursorIcon::ResizeHorizontal,
+        ShelfEdge::Bottom => egui::CursorIcon::ResizeVertical,
+    }
+}
+
 struct ShelfMoveDragInput<'a, 'state> {
     ctx: &'a egui::Context,
     shelf_id: Id,
@@ -1775,7 +1821,7 @@ fn paint_shelf_move_ghost(
     let Some(target) = drag.target_edge else {
         return;
     };
-    let Some(rect) = shelf_drop_rect(layout, drag.source_edge, target, theme) else {
+    let Some(rect) = shelf_move_drop_rect(layout, drag, state, theme) else {
         return;
     };
 
@@ -1934,6 +1980,7 @@ fn container_move_ghost_size_for_edge(
     }
 }
 
+#[cfg(test)]
 fn shelf_drop_rect(
     layout: ShelfLayout,
     source: ShelfEdge,
@@ -1949,6 +1996,76 @@ fn shelf_drop_rect(
         target,
         drop_extent_for(layout, source, target, theme),
         occupied,
+    ))
+}
+
+fn shelf_move_drop_rect(
+    layout: ShelfLayout,
+    drag: state::ShelfDragState,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) -> Option<Rect> {
+    let target = drag.target_edge?;
+    let occupied = occupied_edges_for_layout(layout, Some(drag.source_edge));
+    if occupied.has(target) {
+        return None;
+    }
+    let extent = shelf_move_drop_extent_for(layout, drag, target, state, theme);
+    Some(drop_rect_for_occupied_edges(
+        layout, target, extent, occupied,
+    ))
+}
+
+fn shelf_move_drop_extent_for(
+    layout: ShelfLayout,
+    drag: state::ShelfDragState,
+    target: ShelfEdge,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) -> f32 {
+    if drag.source_edge.is_side() == target.is_side() {
+        return source_extent_for(layout, drag.source_edge, theme);
+    }
+    remembered_axis_extent(state, drag.shelf_id, target).unwrap_or_else(|| {
+        if target.is_side() {
+            theme.side_default_size
+        } else {
+            theme.bottom_default_size
+        }
+    })
+}
+
+fn shelf_move_preview_layout(
+    layout: ShelfLayout,
+    drag: state::ShelfDragState,
+    state: &ShelfState,
+    theme: &ShelfTheme,
+) -> Option<ShelfLayout> {
+    let target = drag.target_edge?;
+    if target == drag.source_edge {
+        return None;
+    }
+    let target_rect = shelf_move_drop_rect(layout, drag, state, theme)?;
+    let mut left = layout.left;
+    let mut right = layout.right;
+    let mut bottom = layout.bottom;
+
+    match drag.source_edge {
+        ShelfEdge::Left => left = None,
+        ShelfEdge::Right => right = None,
+        ShelfEdge::Bottom => bottom = None,
+    }
+    match target {
+        ShelfEdge::Left => left = Some(target_rect),
+        ShelfEdge::Right => right = Some(target_rect),
+        ShelfEdge::Bottom => bottom = Some(target_rect),
+    }
+
+    Some(layout_from_reserved_shelves(
+        layout.available(),
+        left,
+        right,
+        bottom,
     ))
 }
 
@@ -1983,7 +2100,7 @@ fn container_drop_rect_for_drag(
     if layout.rect_for(target).is_some() {
         return None;
     }
-    let source_remains = source_shelf_has_other_containers(ctx, drag);
+    let source_remains = source_shelf_has_other_containers(ctx, drag, target);
     let occupied = occupied_edges_for_layout(layout, (!source_remains).then_some(drag.source_edge));
     if occupied.has(target) {
         return None;
@@ -2007,7 +2124,7 @@ fn container_move_preview_layout(
         return None;
     }
     let target_rect = container_drop_rect_for_drag(ctx, layout, drag, target, theme)?;
-    let source_remains = source_shelf_has_other_containers(ctx, drag);
+    let source_remains = source_shelf_has_other_containers(ctx, drag, target);
     let mut left = layout.left;
     let mut right = layout.right;
     let mut bottom = layout.bottom;
@@ -2089,9 +2206,21 @@ fn layout_from_reserved_shelves(
     }
 }
 
-fn source_shelf_has_other_containers(ctx: &egui::Context, drag: ShelfContainerMoveState) -> bool {
+fn source_shelf_has_other_containers(
+    ctx: &egui::Context,
+    drag: ShelfContainerMoveState,
+    target: ShelfEdge,
+) -> bool {
     let cache = shelf_target_cache(ctx, drag.source_pane);
-    cache.is_empty() || cache.iter().any(|entry| entry.id != drag.container_id)
+    if cache.is_empty() {
+        // On the first drag frame the source shelf target cache can
+        // still be cold. For side -> bottom creation, keeping the
+        // source side reserved produces a visibly too-small bottom
+        // ghost. Prefer the "last container" preview there; existing
+        // side-target previews keep the conservative old behavior.
+        return !(drag.source_edge.is_side() && target == ShelfEdge::Bottom);
+    }
+    cache.iter().any(|entry| entry.id != drag.container_id)
 }
 
 fn drop_extent_for(

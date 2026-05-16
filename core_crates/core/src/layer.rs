@@ -66,6 +66,10 @@ pub mod z {
     /// F10 debug inspector — sits above everything except tiers
     /// 999–1000 reserved for future top-of-stack overlays.
     pub const INSPECTOR: u16 = 998;
+    /// Native window resize/move affordances. These must stay above
+    /// every Frost view because they describe host-level interaction
+    /// zones, not normal app content.
+    pub const WINDOW_CHROME: u16 = 1000;
 }
 
 /// Map a tier number to its egui [`Order`] tier. Tier `0` reads

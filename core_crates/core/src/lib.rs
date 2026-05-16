@@ -45,6 +45,7 @@ pub mod style;
 pub mod themes;
 pub mod view;
 pub mod widget;
+pub mod window_chrome;
 pub mod workspace;
 
 // Foundational row-height unit — re-exported at crate root so the
@@ -88,6 +89,14 @@ pub use shelf::{
 };
 pub use style::{AccentColor, GlassOpacity, apply_theme, set_glass_opacity};
 pub use view::{FrostView, ViewCtx, ViewEntry, ViewId, ViewRouter, ViewRouterError};
+pub use window_chrome::{
+    WindowChromeHit, WindowChromeHostCapabilities, WindowChromeInput, WindowChromePolicy,
+    WindowChromeRegions, WindowChromeState, WindowChromeUpdate, WindowResizeDirection,
+    claim_window_chrome_input, clear_window_chrome_regions, hit_test_window_chrome,
+    hit_test_window_chrome_regions, hovered_resize_corner, paint_resize_corner_hover,
+    publish_window_chrome_host_capabilities, publish_window_chrome_regions, resize_direction,
+    window_chrome_host_capabilities, window_chrome_input_claimed, window_chrome_regions,
+};
 pub use workspace::{
     WorkspaceBar, WorkspaceBarCluster, WorkspaceBarEdge, WorkspaceBarItem, WorkspaceBarItemKind,
     WorkspaceLevelState, WorkspaceOwner, WorkspacePolicy, WorkspaceStack, WorkspaceStackError,

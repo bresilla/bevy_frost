@@ -22,10 +22,9 @@
 )]
 
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
-use bevy::math::CompassOctant;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon, Window};
+use bevy::window::{PrimaryWindow, Window};
 use bevy_egui::{EguiContext, EguiContexts, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use bevy_glacial::prelude::*;
 
@@ -970,6 +969,7 @@ struct SelectedSwatch(Option<Entity>);
 #[derive(Resource, Default)]
 struct CanvasViewState {
     strokes: Vec<Vec<egui::Pos2>>,
+    drawing: bool,
 }
 
 #[derive(Resource, Default)]
@@ -1041,6 +1041,7 @@ fn main() {
         )
         .add_plugins(bevy_egui::EguiPlugin::default())
         .add_plugins(bevy_frost::EguiInputAbsorbPlugin)
+        .add_plugins(bevy_frost::window_chrome::FrostWindowChromePlugin)
         .add_plugins(bevy_frost::node_view_backend::NodeViewPlugin)
         .add_plugins(GlacialPlugins)
         .add_plugins(WindowSettingsPlugin::new("bevy_frost_demo"))
@@ -1065,15 +1066,13 @@ fn main() {
         .init_resource::<EditorNodeView>()
         .init_resource::<EditorGraph>()
         .add_systems(Startup, setup_scene)
+        .add_systems(Update, (pick_cube, update_swatch_selection))
         .add_systems(
-            Update,
-            (
-                borderless_window_resize_system,
-                pick_cube,
-                update_swatch_selection,
-            ),
+            EguiPrimaryContextPass,
+            ui_system
+                .after(bevy_frost::window_chrome::FrostWindowChromeSet::ReleaseClaim)
+                .before(bevy_frost::window_chrome::FrostWindowChromeSet::SyncRegions),
         )
-        .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
     // NOTE: an earlier revision of this file gated the 3D camera's
     // `is_active` on `is_any_fullscreen(ctx)` to skip scene rendering
@@ -1326,76 +1325,6 @@ fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f
     Some(tmin.max(0.0))
 }
 
-fn borderless_resize_direction(pos: Vec2, size: Vec2) -> Option<CompassOctant> {
-    const EDGE: f32 = 7.0;
-    const CORNER: f32 = 18.0;
-
-    let near_left = pos.x <= EDGE;
-    let near_right = pos.x >= size.x - EDGE;
-    let near_top = pos.y <= EDGE;
-    let near_bottom = pos.y >= size.y - EDGE;
-    let corner_left = pos.x <= CORNER;
-    let corner_right = pos.x >= size.x - CORNER;
-    let corner_top = pos.y <= CORNER;
-    let corner_bottom = pos.y >= size.y - CORNER;
-
-    match (
-        near_left || corner_left,
-        near_right || corner_right,
-        near_top || corner_top,
-        near_bottom || corner_bottom,
-    ) {
-        (true, _, true, _) if corner_left && corner_top => Some(CompassOctant::NorthWest),
-        (_, true, true, _) if corner_right && corner_top => Some(CompassOctant::NorthEast),
-        (true, _, _, true) if corner_left && corner_bottom => Some(CompassOctant::SouthWest),
-        (_, true, _, true) if corner_right && corner_bottom => Some(CompassOctant::SouthEast),
-        (true, _, _, _) if near_left => Some(CompassOctant::West),
-        (_, true, _, _) if near_right => Some(CompassOctant::East),
-        (_, _, true, _) if near_top => Some(CompassOctant::North),
-        (_, _, _, true) if near_bottom => Some(CompassOctant::South),
-        _ => None,
-    }
-}
-
-fn resize_cursor_icon(direction: CompassOctant) -> SystemCursorIcon {
-    match direction {
-        CompassOctant::North => SystemCursorIcon::NResize,
-        CompassOctant::NorthEast => SystemCursorIcon::NeResize,
-        CompassOctant::East => SystemCursorIcon::EResize,
-        CompassOctant::SouthEast => SystemCursorIcon::SeResize,
-        CompassOctant::South => SystemCursorIcon::SResize,
-        CompassOctant::SouthWest => SystemCursorIcon::SwResize,
-        CompassOctant::West => SystemCursorIcon::WResize,
-        CompassOctant::NorthWest => SystemCursorIcon::NwResize,
-    }
-}
-
-fn borderless_window_resize_system(
-    mut commands: Commands,
-    mouse: Res<ButtonInput<MouseButton>>,
-    mut primary_window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
-) {
-    let Ok((entity, mut window)) = primary_window.single_mut() else {
-        return;
-    };
-    let direction = window.cursor_position().and_then(|pos| {
-        borderless_resize_direction(pos, Vec2::new(window.width(), window.height()))
-    });
-
-    if let Some(direction) = direction {
-        commands
-            .entity(entity)
-            .insert(CursorIcon::from(resize_cursor_icon(direction)));
-        if mouse.just_pressed(MouseButton::Left) {
-            window.start_drag_resize(direction);
-        }
-    } else {
-        commands
-            .entity(entity)
-            .insert(CursorIcon::from(SystemCursorIcon::Default));
-    }
-}
-
 // ─── UI ─────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -1420,8 +1349,8 @@ fn ui_system(
     mut root_view: ResMut<DemoRootView>,
     mut canvas_view: ResMut<CanvasViewState>,
     mut canvas_shelves: ResMut<CanvasShelfState>,
+    chrome_input_claim: Res<bevy_frost::window_chrome::FrostWindowChromeInputClaim>,
     mut app_exit: MessageWriter<AppExit>,
-    mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     // ── Sharp-zoom node-graph plumbing (bundled to stay under
     //    Bevy's 16-system-param cap) ──
     mut node_view_params: NodeViewSystemParams,
@@ -1459,7 +1388,13 @@ fn ui_system(
     // - BevyScene is the normal demo: Bevy 3D scene plus Frost panes/ribbons.
     // - Canvas owns the whole egui canvas and replaces the Bevy scene visually.
     if *root_view == DemoRootView::Canvas {
-        canvas_root_view(ctx, accent_col, &mut canvas_view, &mut canvas_shelves.0);
+        canvas_root_view(
+            ctx,
+            accent_col,
+            &mut canvas_view,
+            &mut canvas_shelves.0,
+            chrome_input_claim.claimed(),
+        );
     }
 
     // Fullscreen-view branch. The fullscreen overlay paints at
@@ -1713,12 +1648,6 @@ fn ui_system(
         )
     };
 
-    if frost_core::ribbon::main_bar_empty_drag_started(ctx) {
-        if let Ok(mut window) = primary_window.single_mut() {
-            window.start_drag_move();
-        }
-    }
-
     // PREV / NEXT cube — one-shot icon buttons in the BOTTOM rail's
     // End cluster. Each click rotates the AccentColor through the
     // hardcoded swatch row.
@@ -1783,6 +1712,7 @@ fn canvas_root_view(
     accent: egui::Color32,
     canvas: &mut CanvasViewState,
     shelf_state: &mut ShelfState,
+    native_chrome_claimed: bool,
 ) {
     let shelves = canvas_shelves(accent);
     let shelf_theme = *frost_core::style::theme().shelf();
@@ -1795,7 +1725,11 @@ fn canvas_root_view(
             let screen_rect = ui.max_rect();
             let canvas_rect = layout.viewport;
             let response = ui.allocate_rect(canvas_rect, egui::Sense::drag());
+            let canvas_accepts_input = !native_chrome_claimed;
             let painter = ui.painter_at(screen_rect);
+            if !canvas_accepts_input || !ctx.input(|input| input.pointer.primary_down()) {
+                canvas.drawing = false;
+            }
 
             painter.rect_filled(screen_rect, 0, frost_core::style::theme().palette.bg_panel);
             painter.rect_filled(canvas_rect, 0, frost_core::style::theme().palette.bg_window);
@@ -1830,10 +1764,14 @@ fn canvas_root_view(
                 y += grid;
             }
 
-            if response.drag_started() {
+            if canvas_accepts_input && response.drag_started() {
+                canvas.drawing = true;
                 canvas.strokes.push(Vec::new());
             }
-            if response.dragged() || response.drag_started() {
+            if canvas_accepts_input
+                && canvas.drawing
+                && (response.dragged() || response.drag_started())
+            {
                 if let Some(pos) = response
                     .interact_pointer_pos()
                     .filter(|pos| canvas_rect.contains(*pos))
